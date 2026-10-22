@@ -15,7 +15,8 @@ export async function signOrderId(
   assertHex32(orderId);
   return signer.signMessage({ message: { raw: orderId } });
 }
-/** Uses the identical raw-byte convention; malformed signatures/addresses return false. */
+/** Identical raw-byte convention; malformed signatures/addresses return false.
+ * address is the trusted configured EVM signing identity, distinct from non-EVM recipient addresses. */
 export async function verifyOrderSignature(
   orderId: Hex32,
   signature: Hex,

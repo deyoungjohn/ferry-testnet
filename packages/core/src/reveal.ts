@@ -1,6 +1,7 @@
 import type { CounterChain } from './terms.js';
 export type Lane = 'fast' | 'safe';
 export interface LockEvidence {
+  /** True only for a matching, funded, currently live lock; claimed/refunded means false. */
   exists: boolean;
   confirmations: number;
   safe?: boolean;
