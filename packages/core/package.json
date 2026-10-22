@@ -18,5 +18,13 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src test",
     "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "viem": "2.57.10",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "cborg": "6.1.4",
+    "fast-check": "4.10.2"
   }
 }
