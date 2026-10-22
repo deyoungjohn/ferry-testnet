@@ -31,3 +31,19 @@ Versions, addresses, chain IDs, decimals, endpoints. Never guess: every row need
 | FACT-A2-025 · core scaffold version | 0.0.0 | packages/core/package.json; packages/core/test/index.test.ts | 2026-10-22 | 2 | Local private package; smoke test checks VERSION export |
 | FACT-A2-026 · Project-selected SBF tools | platform-tools v1.57; rustc 1.95.0-dev (ae660768a 2026-08-17) | avm platform-tools resolve --anchor-version 1.2.1; ~/.cache/solana/v1.57/platform-tools/rust/bin/rustc --version | 2026-10-22 | 2 | Resolves via Solana 4.1.2; already present at first task probe; differs from latest-release reminder |
 | FACT-A2-027 · Requested latest SBF cache | platform-tools v1.58; rustc 1.95.0-dev (1e20dd0d5 2026-10-05) | https://api.github.com/repos/anza-xyz/platform-tools/releases/tags/v1.58 ; ~/.cache/solana/v1.58/platform-tools/rust/bin/rustc --version | 2026-10-22 | 2 | Official archive 531406444 bytes; SHA-256 7b82eb420b5aebd1e5590db0ae25c523eca06724d4238ae02139690535636c37 verified before extraction; install-only then succeeds with an actual Rust executable present |
+| FACT-A3-001 · tsx version | 4.23.15 | npm view tsx version | 2026-10-22 | 3 | Workspace script execution |
+| FACT-A3-002 · vitest version | 5.0.5 | npm view vitest version | 2026-10-22 | 3 | Test runner |
+| FACT-A3-003 · typescript version | 7.0.2 | npm view typescript version | 2026-10-22 | 3 | Superseded by FACT-A3-015 (pinned to 5.9.3) |
+| FACT-A3-004 · @types/node version | 26.6.5 | npm view @types/node version | 2026-10-22 | 3 | Superseded by FACT-A3-016 (pinned to 22.20.5) |
+| FACT-A3-005 · viem version | 2.57.10 | npm view viem version | 2026-10-22 | 3 | EVM client |
+| FACT-A3-006 · @bitauth/libauth version | 3.0.0 | npm view @bitauth/libauth version | 2026-10-22 | 3 | BCH primitives & address encoding |
+| FACT-A3-007 · @electrum-cash/network version | 4.4.8 | npm view @electrum-cash/network version | 2026-10-22 | 3 | Recorded, not yet used (scripts uses ws directly) |
+| FACT-A3-008 · ws version | 8.22.0 | npm view ws version | 2026-10-22 | 3 | WebSocket client for Fulcrum |
+| FACT-A3-009 · @types/ws version | 8.18.2 | npm view @types/ws version | 2026-10-22 | 3 | WebSocket typings |
+| FACT-A3-010 · BCH Chipnet Fulcrum URL | wss://chipnet.imaginary.cash:50004 | docs/Ferry_Engineering_Blueprint.md §7.5 & live query | 2026-10-22 | 3 | Returns Fulcrum 2.1.4, protocol 1.4, tip ~329042 |
+| FACT-A3-011 · Base Sepolia RPC URL | https://sepolia.base.org | Base official docs & live query | 2026-10-22 | 3 | Chain ID 84532; supports safe, finalized tags, and eth_getLogs |
+| FACT-A3-012 · Base Sepolia Circle USDC address | 0x036CbD53842c5426634e7929541eC2318f3dCF7e | Circle Developer Docs & on-chain query | 2026-10-22 | 3 | name='USDC', symbol='USDC', decimals=6, version='2', DOMAIN_SEPARATOR=0x71f17a3b2ff373b803d70a5a07c046c1a2bc8e89c09ef722fcb047abe94c9818 |
+| FACT-A3-013 · BCH Chipnet Faucet | https://tbch.googol.cash/ | Community faucet & live form check | 2026-10-22 | 3 | Chipnet network radio; simple math captcha |
+| FACT-A3-014 · Base Sepolia USDC Faucet | https://faucet.circle.com/ | Circle Developer Portal | 2026-10-22 | 3 | Dispenses 10 USDC on Base Sepolia, 2h cooldown |
+| FACT-A3-015 · typescript workspace alignment | 5.9.3 | npm view typescript@5.9.3 version; package.json | 2026-10-23 | 3 | Supersedes FACT-A3-003; aligns with root workspace and typescript-eslint (D-A1-001) |
+| FACT-A3-016 · @types/node runtime alignment | 22.20.5 | npm view @types/node@22.20.5 version; package.json | 2026-10-23 | 3 | Supersedes FACT-A3-004; matches Node 22 LTS runtime |
