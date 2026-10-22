@@ -12,7 +12,7 @@
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "pnpm lint:root && pnpm -r --if-present lint",
-    "lint:root": "eslint *.mjs *.ts",
+    "lint:root": "eslint *.mjs *.ts eslint-rules test",
     "test:unit": "vitest run",
     "format:check": "prettier --check .",
     "toolchain:check": "bash scripts/toolchain/check.sh"
