@@ -1,0 +1,31 @@
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-hairline: var(--hairline);
+
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-dim: var(--text-dim);
+
+  --color-lime: var(--lime);
+  --color-lime-ink: var(--lime-ink);
+  --color-olive: var(--olive);
+  --color-olive-ink: var(--olive-ink);
+  --color-olive-soft: var(--olive-soft);
+
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+
+  --radius-card: var(--r-card);
+  --radius-well: var(--r-well);
+  --radius-pill: var(--r-pill);
+
+  --font-body: var(--font-sans);
+  --font-accent: var(--font-serif);
+
+  --shadow-card: var(--shadow-elev-card);
+  --shadow-pill: var(--shadow-elev-pill);
+}
