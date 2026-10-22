@@ -1,0 +1,46 @@
+# secrets
+.env
+.env.local
+.env*.local
+*.key
+*.wif
+keypair*.json
+id.json
+
+# deps / builds
+node_modules/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+coverage/
+
+# foundry
+packages/htlc-evm/out/
+packages/htlc-evm/cache/
+packages/htlc-evm/broadcast/*/31337/
+
+# anchor / rust
+target/
+.anchor/
+test-ledger/
+
+# tron
+packages/htlc-tron/build/
+
+# solver data
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# web / test output
+playwright-report/
+test-results/
+.vite/
+
+# os / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
