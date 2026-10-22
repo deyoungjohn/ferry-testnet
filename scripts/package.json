@@ -1,0 +1,25 @@
+{
+  "name": "@ferry/scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "keys:generate": "tsx keys/generate.ts",
+    "keys:addresses": "tsx keys/addresses.ts",
+    "balances": "tsx balances/index.ts"
+  },
+  "dependencies": {
+    "@bitauth/libauth": "3.0.0",
+    "viem": "2.57.10",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@types/ws": "8.18.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}
