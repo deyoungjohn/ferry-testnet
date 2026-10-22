@@ -18,7 +18,10 @@ const STEPS = [
 
 export function HowItWorks() {
   return (
-    <section id="how-it-works" className="mt-24 scroll-mt-24 border-t border-hairline pt-12">
+    <section
+      id="how-it-works"
+      className="mt-24 scroll-mt-24 border-t border-hairline pt-12"
+    >
       <div className="grid gap-10 lg:grid-cols-[0.7fr_2fr] lg:gap-16">
         <div>
           <p className="text-[10px] font-medium tracking-[0.18em] text-lime uppercase">
@@ -28,17 +31,23 @@ export function HowItWorks() {
             Two locks. One secret.
           </h2>
           <p className="mt-3 max-w-sm text-sm leading-6 text-text-muted">
-            Every swap is two hash-time-locked contracts. Either both sides complete, or both
-            refund.
+            Every swap is two hash-time-locked contracts. Either both sides
+            complete, or both refund.
           </p>
         </div>
 
         <ol className="grid gap-6 sm:grid-cols-3">
           {STEPS.map((step) => (
             <li key={step.number} className="border-t border-hairline pt-5">
-              <span className="font-mono text-[11px] text-lime">{step.number}</span>
-              <h3 className="mt-3 text-sm font-semibold text-text">{step.title}</h3>
-              <p className="mt-2 text-xs leading-5 text-text-muted">{step.body}</p>
+              <span className="font-mono text-[11px] text-lime">
+                {step.number}
+              </span>
+              <h3 className="mt-3 text-sm font-semibold text-text">
+                {step.title}
+              </h3>
+              <p className="mt-2 text-xs leading-5 text-text-muted">
+                {step.body}
+              </p>
             </li>
           ))}
         </ol>

@@ -26,7 +26,7 @@ export function SwapCard() {
           className="flex shrink-0 items-center gap-0.5 rounded-pill bg-surface-2 p-0.5 text-[10px] ring-1 ring-hairline"
         >
           <span
-            className="rounded-pill px-2 py-1 text-text-dim"
+            className="rounded-pill px-2 py-1 text-text-muted"
             aria-disabled="true"
             title="Fast lane is limited to swaps under $25"
           >
@@ -71,11 +71,17 @@ export function SwapCard() {
       <dl className="mt-5 divide-y divide-hairline border-y border-hairline text-xs">
         <div className="flex items-baseline justify-between gap-4 py-2.5">
           <dt className="text-text-muted">Rate</dt>
-          <dd className="text-right font-medium tabular-nums text-text">{quote.rate}</dd>
+          <dd className="text-right font-medium tabular-nums text-text">
+            {quote.rate}
+          </dd>
         </div>
         <div className="flex items-baseline justify-between gap-4 py-2.5">
           <dt className="text-text-muted">Spread</dt>
           <dd className="font-medium tabular-nums text-text">{quote.spread}</dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-4 py-2.5">
+          <dt className="text-text-muted">Fixed fee</dt>
+          <dd className="font-medium tabular-nums text-text">{quote.fee}</dd>
         </div>
         <div className="flex items-baseline justify-between gap-4 py-2.5">
           <dt className="text-text-muted">Arrival</dt>
@@ -87,7 +93,7 @@ export function SwapCard() {
         type="button"
         aria-disabled="true"
         title="Swap wiring lands in L5"
-        className="mt-5 flex h-13 w-full items-center justify-center gap-1.5 rounded-pill bg-olive px-5 text-sm font-semibold text-olive-ink shadow-pill transition-[filter,transform] hover:brightness-110 active:translate-y-px"
+        className="mt-5 flex h-13 w-full items-center justify-center gap-1.5 rounded-pill bg-olive px-5 text-sm font-semibold text-text shadow-pill transition-[filter,transform] hover:brightness-110 active:translate-y-px"
       >
         Ferry it
         <span aria-hidden="true" className="text-base leading-none">
@@ -95,7 +101,7 @@ export function SwapCard() {
         </span>
       </button>
 
-      <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-text-dim">
+      <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-text-muted">
         <ShieldIcon className="size-3.5 text-ok" />
         Refunds are automatic if the swap stalls.
       </p>

@@ -1,4 +1,5 @@
 import { Link } from 'react-router';
+import { NETWORK_LABEL } from '../lib/config';
 import { WalletIcon } from './icons';
 
 export function NavBar() {
@@ -38,7 +39,7 @@ export function NavBar() {
               className="size-1.5 rounded-full bg-ok shadow-[0_0_10px_var(--ok)]"
               aria-hidden="true"
             />
-            Mainnet
+            {NETWORK_LABEL}
           </span>
           <button
             type="button"

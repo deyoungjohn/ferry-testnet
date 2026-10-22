@@ -6,8 +6,13 @@ const VIEWPORTS = [
 ] as const;
 
 for (const viewport of VIEWPORTS) {
-  test(`home renders at ${viewport.width}x${viewport.height}`, async ({ page }) => {
-    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+  test(`home renders at ${viewport.width}x${viewport.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({
+      width: viewport.width,
+      height: viewport.height,
+    });
     await page.goto('/');
 
     await expect(

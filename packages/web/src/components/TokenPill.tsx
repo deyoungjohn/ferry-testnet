@@ -14,15 +14,21 @@ export function TokenPill({ token, pinned = false }: TokenPillProps) {
       <span
         className={[
           'grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-semibold',
-          pinned ? 'bg-lime text-lime-ink' : 'bg-surface-1 text-text ring-1 ring-hairline',
+          pinned
+            ? 'bg-lime text-lime-ink'
+            : 'bg-surface-1 text-text ring-1 ring-hairline',
         ].join(' ')}
         aria-hidden="true"
       >
         {glyph}
       </span>
       <span className="min-w-0 text-left">
-        <span className="block text-sm font-medium leading-tight text-text">{token.symbol}</span>
-        <span className="block text-[10px] leading-tight text-text-dim">{token.chain}</span>
+        <span className="block text-sm font-medium leading-tight text-text">
+          {token.symbol}
+        </span>
+        <span className="block text-[10px] leading-tight text-text-muted">
+          {token.chain}
+        </span>
       </span>
     </>
   );
@@ -48,7 +54,7 @@ export function TokenPill({ token, pinned = false }: TokenPillProps) {
       className="flex shrink-0 items-center gap-2 rounded-pill bg-surface-3 py-1.5 pr-2.5 pl-1.5 ring-1 ring-hairline transition-colors hover:ring-white/15"
     >
       {inner}
-      <ChevronDownIcon className="size-3.5 shrink-0 text-text-dim" />
+      <ChevronDownIcon className="size-3.5 shrink-0 text-text-muted" />
     </button>
   );
 }

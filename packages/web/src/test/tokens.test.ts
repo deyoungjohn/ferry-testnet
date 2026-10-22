@@ -1,8 +1,13 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const srcDir = join(process.cwd(), 'src');
+const srcDir = join(
+  existsSync(join(process.cwd(), 'src'))
+    ? process.cwd()
+    : join(process.cwd(), 'packages/web'),
+  'src',
+);
 const HEX_COLOUR = /#[0-9a-fA-F]{3,8}\b/;
 
 function collectTsx(dir: string): string[] {

@@ -27,7 +27,8 @@ describe('isLensSupported', () => {
     expect(
       isLensSupported({
         supports: () => false,
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0',
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0',
         brands: [],
       }),
     ).toBe(false);
@@ -37,14 +38,16 @@ describe('isLensSupported', () => {
     expect(
       isLensSupported({
         supports: () => true,
-        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chromium/140.0',
+        userAgent:
+          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chromium/140.0',
       }),
     ).toBe(true);
 
     expect(
       isLensSupported({
         supports: () => true,
-        userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0',
+        userAgent:
+          'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0',
       }),
     ).toBe(false);
   });

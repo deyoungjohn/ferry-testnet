@@ -1,7 +1,12 @@
-import { render, screen } from '@testing-library/react';
+// @vitest-environment jsdom
+import '@testing-library/jest-dom/vitest';
+import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { App } from '../App';
+import { MOCK_SWAP } from '../lib/mock/swap';
+
+afterEach(cleanup);
 
 function renderAt(path: string) {
   return render(
@@ -29,10 +34,12 @@ describe('home page', () => {
     expect(screen.getByRole('region', { name: 'Swap' })).toBeInTheDocument();
     expect(screen.getByText('You send')).toBeInTheDocument();
     expect(screen.getByText('You receive')).toBeInTheDocument();
-    expect(screen.getByText('250.00')).toBeInTheDocument();
-    expect(screen.getByText('248.80')).toBeInTheDocument();
+    expect(screen.getByText(MOCK_SWAP.send.amount)).toBeInTheDocument();
+    expect(screen.getByText(MOCK_SWAP.receive.amount)).toBeInTheDocument();
     expect(screen.getByText('Mock quote')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /ferry it/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /ferry it/i }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -40,7 +47,9 @@ describe('placeholder routes', () => {
   it('renders the recover page', () => {
     renderAt('/recover');
 
-    expect(screen.getByRole('heading', { level: 1, name: /recover a swap/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 1, name: /recover a swap/i }),
+    ).toBeInTheDocument();
   });
 
   it('renders the pay link page with the link id', () => {

@@ -1,7 +1,7 @@
-@import "tailwindcss";
-@import "./tokens.css";
-@import "./theme.css";
-@import "./glass.css";
+@import 'tailwindcss';
+@import './tokens.css';
+@import './theme.css';
+@import './glass.css';
 
 @layer base {
   html {
@@ -51,7 +51,7 @@
   }
 
   .ferry-page::before {
-    content: "";
+    content: '';
     position: absolute;
     z-index: -1;
     top: -14rem;
@@ -73,7 +73,7 @@
   }
 
   .swap-stage::before {
-    content: "";
+    content: '';
     position: absolute;
     z-index: -1;
     inset: 8% 4% -12% -4%;
