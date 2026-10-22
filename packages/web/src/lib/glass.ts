@@ -30,15 +30,19 @@ type NavigatorWithBrands = Navigator & {
 };
 
 export function detectLensSupport(): boolean {
-  if (typeof window === 'undefined' || typeof window.CSS?.supports !== 'function') {
+  if (
+    typeof window === 'undefined' ||
+    typeof window.CSS?.supports !== 'function'
+  ) {
     return false;
   }
 
   const nav = window.navigator as NavigatorWithBrands;
+  const brands = nav.userAgentData?.brands;
 
   return isLensSupported({
     supports: (property, value) => window.CSS.supports(property, value),
     userAgent: nav.userAgent,
-    brands: nav.userAgentData?.brands,
+    ...(brands ? { brands } : {}),
   });
 }
