@@ -1,0 +1,136 @@
+{
+  "contractName": "FerryHTLC",
+  "constructorInputs": [
+    {
+      "name": "hashLock",
+      "type": "bytes32"
+    },
+    {
+      "name": "recipientLockingBytecode",
+      "type": "bytes"
+    },
+    {
+      "name": "refundLockingBytecode",
+      "type": "bytes"
+    },
+    {
+      "name": "tokenCategory",
+      "type": "bytes32"
+    },
+    {
+      "name": "tokenAmount",
+      "type": "int"
+    },
+    {
+      "name": "refundHeight",
+      "type": "int"
+    },
+    {
+      "name": "maxFee",
+      "type": "int"
+    }
+  ],
+  "abi": [
+    {
+      "name": "claim",
+      "inputs": [
+        {
+          "name": "secret",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "refund",
+      "inputs": []
+    }
+  ],
+  "bytecode": "OP_7 OP_PICK OP_0 OP_NUMEQUAL OP_IF OP_8 OP_PICK OP_SIZE OP_NIP 20 OP_NUMEQUALVERIFY OP_8 OP_ROLL OP_SHA256 OP_EQUALVERIFY OP_INPUTINDEX OP_0 OP_NUMEQUALVERIFY OP_TXINPUTCOUNT OP_1 OP_NUMEQUALVERIFY OP_TXOUTPUTCOUNT OP_1 OP_NUMEQUALVERIFY OP_0 OP_OUTPUTBYTECODE OP_EQUALVERIFY OP_0 OP_OUTPUTTOKENCATEGORY OP_ROT OP_EQUALVERIFY OP_0 OP_OUTPUTTOKENAMOUNT OP_ROT OP_NUMEQUALVERIFY OP_0 OP_OUTPUTVALUE OP_0 OP_UTXOVALUE OP_4 OP_ROLL OP_SUB OP_GREATERTHANOREQUAL OP_NIP OP_NIP OP_NIP OP_ELSE OP_7 OP_ROLL OP_1 OP_NUMEQUALVERIFY OP_5 OP_ROLL OP_CHECKLOCKTIMEVERIFY OP_DROP OP_INPUTINDEX OP_0 OP_NUMEQUALVERIFY OP_TXINPUTCOUNT OP_1 OP_NUMEQUALVERIFY OP_TXOUTPUTCOUNT OP_1 OP_NUMEQUALVERIFY OP_0 OP_OUTPUTBYTECODE OP_3 OP_ROLL OP_EQUALVERIFY OP_0 OP_OUTPUTTOKENCATEGORY OP_3 OP_ROLL OP_EQUALVERIFY OP_0 OP_OUTPUTTOKENAMOUNT OP_3 OP_ROLL OP_NUMEQUALVERIFY OP_0 OP_OUTPUTVALUE OP_0 OP_UTXOVALUE OP_4 OP_ROLL OP_SUB OP_GREATERTHANOREQUAL OP_NIP OP_NIP OP_ENDIF",
+  "source": "pragma cashscript >=0.11.0 <=0.14.0;\n\n// One instance per swap. All parameters are public on-chain once spent.\ncontract FerryHTLC(\n    bytes32 hashLock,                 // sha256(secret)\n    bytes   recipientLockingBytecode, // claim payee\n    bytes   refundLockingBytecode,    // refund payee\n    bytes32 tokenCategory,            // INTERNAL byte order (reversed vs display hex)\n    int     tokenAmount,\n    int     refundHeight,             // absolute block height (< 500,000,000)\n    int     maxFee                    // sats the spend may burn as miner fee\n) {\n    function claim(bytes secret) {\n        require(secret.length == 32);\n        require(sha256(secret) == hashLock);\n        require(this.activeInputIndex == 0);\n        require(tx.inputs.length == 1);\n        require(tx.outputs.length == 1);\n        require(tx.outputs[0].lockingBytecode == recipientLockingBytecode);\n        require(tx.outputs[0].tokenCategory == tokenCategory);\n        require(tx.outputs[0].tokenAmount == tokenAmount);\n        require(tx.outputs[0].value >= tx.inputs[0].value - maxFee);\n    }\n\n    function refund() {\n        require(tx.time >= refundHeight);      // CLTV on block height\n        require(this.activeInputIndex == 0);\n        require(tx.inputs.length == 1);\n        require(tx.outputs.length == 1);\n        require(tx.outputs[0].lockingBytecode == refundLockingBytecode);\n        require(tx.outputs[0].tokenCategory == tokenCategory);\n        require(tx.outputs[0].tokenAmount == tokenAmount);\n        require(tx.outputs[0].value >= tx.inputs[0].value - maxFee);\n    }\n}\n",
+  "fingerprint": "e1955c46718366edca94450026dec8e4faf133139fb5fce4a305eacb540695e2",
+  "debug": {
+    "bytecode": "5779009c635879827701209d587aa888c0009dc3519dc4519d00cd8800d17b8800d37b9d00cc00c6547a94a277777767577a519d557ab175c0009dc3519dc4519d00cd537a8800d1537a8800d3537a9d00cc00c6547a94a2777768",
+    "sourceMap": "13:4:23:5;;;;;14:16:14:22;;:::29:1;;:33::35:0;:8::37:1;15:23:15:29:0;;:16::30:1;:8::44;16:16:16:37:0;:41::42;:8::44:1;17:16:17:32:0;:36::37;:8::39:1;18:16:18:33:0;:37::38;:8::40:1;19:27:19:28:0;:16::45:1;:8::75;20:27:20:28:0;:16::43:1;:47::60:0;:8::62:1;21:27:21:28:0;:16::41:1;:45::56:0;:8::58:1;22:27:22:28:0;:16::35:1;:49::50:0;:39::57:1;:60::66:0;;:39:::1;:8::68;13:33:23:5;;;:4;25::34::0;;;;26:27:26:39;;:8::41:1;;27:16:27:37:0;:41::42;:8::44:1;28:16:28:32:0;:36::37;:8::39:1;29:16:29:33:0;:37::38;:8::40:1;30:27:30:28:0;:16::45:1;:49::70:0;;:8::72:1;31:27:31:28:0;:16::43:1;:47::60:0;;:8::62:1;32:27:32:28:0;:16::41:1;:45::56:0;;:8::58:1;33:27:33:28:0;:16::35:1;:49::50:0;:39::57:1;:60::66:0;;:39:::1;:8::68;25:22:34:5;;4:0:35:1",
+    "logs": [],
+    "requires": [
+      {
+        "ip": 17,
+        "line": 14
+      },
+      {
+        "ip": 21,
+        "line": 15
+      },
+      {
+        "ip": 24,
+        "line": 16
+      },
+      {
+        "ip": 27,
+        "line": 17
+      },
+      {
+        "ip": 30,
+        "line": 18
+      },
+      {
+        "ip": 33,
+        "line": 19
+      },
+      {
+        "ip": 37,
+        "line": 20
+      },
+      {
+        "ip": 41,
+        "line": 21
+      },
+      {
+        "ip": 50,
+        "line": 22
+      },
+      {
+        "ip": 60,
+        "line": 26
+      },
+      {
+        "ip": 64,
+        "line": 27
+      },
+      {
+        "ip": 67,
+        "line": 28
+      },
+      {
+        "ip": 70,
+        "line": 29
+      },
+      {
+        "ip": 75,
+        "line": 30
+      },
+      {
+        "ip": 80,
+        "line": 31
+      },
+      {
+        "ip": 85,
+        "line": 32
+      },
+      {
+        "ip": 94,
+        "line": 33
+      }
+    ],
+    "sourceTags": "43:45:sc;87:88:sc"
+  },
+  "compiler": {
+    "name": "cashc",
+    "version": "0.14.0",
+    "options": {
+      "enforceFunctionParameterTypes": true,
+      "enforceLocktimeGuard": true
+    }
+  },
+  "updatedAt": "2026-10-23T13:52:22.348Z"
+}
