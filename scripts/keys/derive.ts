@@ -6,10 +6,12 @@ import {
   CashAddressType,
   secp256k1,
   sha256,
-  ripemd160
+  ripemd160,
 } from '@bitauth/libauth';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { BchAddressInfo } from './types.js';
+
+export type CashAddressNetworkPrefix = 'bchtest' | 'bitcoincash' | 'bchreg';
 
 /**
  * Generate a random 32-byte private key.
@@ -34,7 +36,35 @@ export function generateEvmPrivateKey(): `0x${string}` {
   return `0x${bytes.toString('hex')}`;
 }
 
-export type CashAddressNetworkPrefix = 'bchtest' | 'bitcoincash' | 'bchreg';
+/**
+ * Validate a BCH WIF string.
+ */
+export function isValidBchWif(wif: string): boolean {
+  const trimmed = wif.trim();
+  if (!trimmed) return false;
+  const decoded = decodePrivateKeyWif(trimmed);
+  if (typeof decoded === 'string') return false;
+  const pubKey = secp256k1.derivePublicKeyCompressed(decoded.privateKey);
+  return typeof pubKey !== 'string';
+}
+
+/**
+ * Validate an EVM private key hex string.
+ */
+export function isValidEvmPrivateKey(key: string): boolean {
+  const trimmed = key.trim();
+  if (!trimmed) return false;
+  const formatted = (
+    trimmed.startsWith('0x') ? trimmed : `0x${trimmed}`
+  ) as `0x${string}`;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(formatted)) return false;
+  try {
+    privateKeyToAccount(formatted);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Derive BCH CashAddresses (plain P2PKH and token-aware P2PKH) from a public key hash.
@@ -43,12 +73,12 @@ export type CashAddressNetworkPrefix = 'bchtest' | 'bitcoincash' | 'bchreg';
  */
 export function deriveBchAddressesFromPkh(
   pkh: Uint8Array,
-  prefix: CashAddressNetworkPrefix = 'bchtest'
+  prefix: CashAddressNetworkPrefix = 'bchtest',
 ): BchAddressInfo {
   const plainRes = encodeCashAddress({
     prefix,
     type: CashAddressType.p2pkh,
-    payload: pkh
+    payload: pkh,
   });
   if (typeof plainRes === 'string') {
     throw new Error(`Failed to encode plain CashAddress: ${plainRes}`);
@@ -57,7 +87,7 @@ export function deriveBchAddressesFromPkh(
   const tokenRes = encodeCashAddress({
     prefix,
     type: CashAddressType.p2pkhWithTokens,
-    payload: pkh
+    payload: pkh,
   });
   if (typeof tokenRes === 'string') {
     throw new Error(`Failed to encode token-aware CashAddress: ${tokenRes}`);
@@ -65,7 +95,7 @@ export function deriveBchAddressesFromPkh(
 
   return {
     plain: plainRes.address,
-    tokenAware: tokenRes.address
+    tokenAware: tokenRes.address,
   };
 }
 
@@ -74,7 +104,7 @@ export function deriveBchAddressesFromPkh(
  */
 export function deriveBchAddressesFromPubKey(
   pubKey: Uint8Array,
-  prefix: CashAddressNetworkPrefix = 'bchtest'
+  prefix: CashAddressNetworkPrefix = 'bchtest',
 ): BchAddressInfo {
   const pkh = ripemd160.hash(sha256.hash(pubKey));
   return deriveBchAddressesFromPkh(pkh, prefix);
@@ -85,7 +115,7 @@ export function deriveBchAddressesFromPubKey(
  */
 export function deriveBchAddressesFromWif(
   wif: string,
-  prefix: CashAddressNetworkPrefix = 'bchtest'
+  prefix: CashAddressNetworkPrefix = 'bchtest',
 ): BchAddressInfo {
   const trimmed = wif.trim();
   const decoded = decodePrivateKeyWif(trimmed);

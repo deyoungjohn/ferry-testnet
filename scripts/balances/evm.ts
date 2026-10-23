@@ -1,4 +1,10 @@
-import { createPublicClient, http, erc20Abi, formatEther, formatUnits } from 'viem';
+import {
+  createPublicClient,
+  http,
+  erc20Abi,
+  formatEther,
+  formatUnits,
+} from 'viem';
 import { baseSepolia } from 'viem/chains';
 
 export const BASE_SEPOLIA_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
@@ -15,10 +21,13 @@ export class EvmClient {
   private client;
   private usdcAddress: `0x${string}`;
 
-  constructor(rpcUrl: string = 'https://sepolia.base.org', usdcAddress: `0x${string}` = BASE_SEPOLIA_USDC) {
+  constructor(
+    rpcUrl: string = 'https://sepolia.base.org',
+    usdcAddress: `0x${string}` = BASE_SEPOLIA_USDC,
+  ) {
     this.client = createPublicClient({
       chain: baseSepolia,
-      transport: http(rpcUrl)
+      transport: http(rpcUrl),
     });
     this.usdcAddress = usdcAddress;
   }
@@ -30,8 +39,8 @@ export class EvmClient {
         address: this.usdcAddress,
         abi: erc20Abi,
         functionName: 'balanceOf',
-        args: [address]
-      })
+        args: [address],
+      }),
     ]);
 
     return {
@@ -39,7 +48,7 @@ export class EvmClient {
       ethWei,
       ethFormatted: formatEther(ethWei),
       usdcRaw,
-      usdcFormatted: formatUnits(usdcRaw, 6)
+      usdcFormatted: formatUnits(usdcRaw, 6),
     };
   }
 }

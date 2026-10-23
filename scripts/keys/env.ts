@@ -4,16 +4,16 @@ import { execSync } from 'node:child_process';
 import {
   BCH_KEY_ROLES,
   EVM_KEY_ROLES,
-  type BchKeyRole,
-  type EvmKeyRole,
   type KeyRole,
-  type RoleAddresses
+  type RoleAddresses,
 } from './types.js';
 import {
   generateBchTestnetWif,
   generateEvmPrivateKey,
   deriveBchAddressesFromWif,
-  deriveEvmAddress
+  deriveEvmAddress,
+  isValidBchWif,
+  isValidEvmPrivateKey,
 } from './derive.js';
 
 /**
@@ -24,7 +24,7 @@ export function getDefaultEnvPath(): string {
   try {
     const gitCommonDir = execSync('git rev-parse --git-common-dir', {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
     return path.resolve(process.cwd(), gitCommonDir, '..', '.env.local');
   } catch {
@@ -65,88 +65,132 @@ export interface GenerateKeysResult {
   envPath: string;
   generatedKeys: KeyRole[];
   skippedKeys: KeyRole[];
+  invalidKeys: KeyRole[];
   addresses: RoleAddresses;
+  hasInvalidKeys: boolean;
 }
 
 /**
- * Generate any missing keys and append them to .env.local.
- * Never overwrites existing keys.
+ * Generate any missing keys and append them to .env.local, or fill in-place
+ * if a key exists with an empty value.
+ * Never overwrites non-empty existing keys.
  * Ensures file mode is 0o600.
  */
-export function generateMissingKeys(envPath: string = getDefaultEnvPath()): GenerateKeysResult {
-  const existingEnv = parseEnvFile(envPath);
+export function generateMissingKeys(
+  envPath: string = getDefaultEnvPath(),
+): GenerateKeysResult {
+  const fileExists = fs.existsSync(envPath);
+  let fileContent = fileExists ? fs.readFileSync(envPath, 'utf8') : '';
+
+  const parsedEnv = parseEnvFile(envPath);
   const generatedKeys: KeyRole[] = [];
   const skippedKeys: KeyRole[] = [];
-  const newEntries: { key: string; value: string; comment?: string }[] = [];
+  const invalidKeys: KeyRole[] = [];
 
   const addresses: RoleAddresses = {
     bch: {
       SOLVER_BCH_WIF: null,
       USER_BCH_WIF: null,
-      USER2_BCH_WIF: null
+      USER2_BCH_WIF: null,
     },
     evm: {
       DEPLOYER_EVM_PRIVATE_KEY: null,
       SOLVER_EVM_PRIVATE_KEY: null,
       USER_EVM_PRIVATE_KEY: null,
-      USER2_EVM_PRIVATE_KEY: null
-    }
+      USER2_EVM_PRIVATE_KEY: null,
+    },
   };
 
-  // BCH Keys
+  const keysToFillInPlace = new Map<string, string>();
+  const keysToAppend: { key: string; value: string }[] = [];
+
+  // 1. Process BCH roles
   for (const role of BCH_KEY_ROLES) {
-    if (existingEnv[role]) {
+    const rawVal = parsedEnv[role];
+    if (rawVal !== undefined && rawVal !== '') {
+      // Key is present with a non-empty value
       skippedKeys.push(role);
-      try {
-        addresses.bch[role] = deriveBchAddressesFromWif(existingEnv[role]);
-      } catch (err: any) {
-        addresses.bch[role] = null;
+      if (isValidBchWif(rawVal)) {
+        addresses.bch[role] = deriveBchAddressesFromWif(rawVal);
+      } else {
+        addresses.bch[role] = 'INVALID';
+        invalidKeys.push(role);
       }
     } else {
-      const wif = generateBchTestnetWif();
+      // Key is missing entirely OR present with empty value
+      const newWif = generateBchTestnetWif();
       generatedKeys.push(role);
-      existingEnv[role] = wif;
-      newEntries.push({ key: role, value: wif });
-      addresses.bch[role] = deriveBchAddressesFromWif(wif);
+      addresses.bch[role] = deriveBchAddressesFromWif(newWif);
+      if (rawVal === '') {
+        keysToFillInPlace.set(role, newWif);
+      } else {
+        keysToAppend.push({ key: role, value: newWif });
+      }
     }
   }
 
-  // EVM Keys
+  // 2. Process EVM roles
   for (const role of EVM_KEY_ROLES) {
-    if (existingEnv[role]) {
+    const rawVal = parsedEnv[role];
+    if (rawVal !== undefined && rawVal !== '') {
+      // Key is present with a non-empty value
       skippedKeys.push(role);
-      try {
-        addresses.evm[role] = deriveEvmAddress(existingEnv[role]);
-      } catch {
-        addresses.evm[role] = null;
+      if (isValidEvmPrivateKey(rawVal)) {
+        addresses.evm[role] = deriveEvmAddress(rawVal);
+      } else {
+        addresses.evm[role] = 'INVALID';
+        invalidKeys.push(role);
       }
     } else {
-      const privKey = generateEvmPrivateKey();
+      // Key is missing entirely OR present with empty value
+      const newPrivKey = generateEvmPrivateKey();
       generatedKeys.push(role);
-      existingEnv[role] = privKey;
-      newEntries.push({ key: role, value: privKey });
-      addresses.evm[role] = deriveEvmAddress(privKey);
+      addresses.evm[role] = deriveEvmAddress(newPrivKey);
+      if (rawVal === '') {
+        keysToFillInPlace.set(role, newPrivKey);
+      } else {
+        keysToAppend.push({ key: role, value: newPrivKey });
+      }
     }
   }
 
-  if (newEntries.length > 0) {
-    const fileExists = fs.existsSync(envPath);
-    let appendText = '';
+  // If we need to write changes
+  if (keysToFillInPlace.size > 0 || keysToAppend.length > 0) {
     if (!fileExists) {
-      appendText += '# Ferry Lab — local secrets (never commit)\n';
-      appendText += '# Mode 0600. Single source of testnet keys.\n\n';
-    } else {
-      const currentContent = fs.readFileSync(envPath, 'utf8');
-      if (currentContent.length > 0 && !currentContent.endsWith('\n')) {
-        appendText += '\n';
+      fileContent =
+        '# Ferry Lab — local secrets (never commit)\n# Mode 0600. Single source of testnet keys.\n\n';
+    }
+
+    // Replace empty values in place
+    if (keysToFillInPlace.size > 0) {
+      const lines = fileContent.split('\n');
+      const updatedLines = lines.map((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return line;
+        const eqIdx = line.indexOf('=');
+        if (eqIdx !== -1) {
+          const key = line.slice(0, eqIdx).trim();
+          if (keysToFillInPlace.has(key)) {
+            const val = keysToFillInPlace.get(key)!;
+            return `${key}=${val}`;
+          }
+        }
+        return line;
+      });
+      fileContent = updatedLines.join('\n');
+    }
+
+    // Append new keys that were completely missing
+    if (keysToAppend.length > 0) {
+      if (fileContent.length > 0 && !fileContent.endsWith('\n')) {
+        fileContent += '\n';
+      }
+      for (const entry of keysToAppend) {
+        fileContent += `${entry.key}=${entry.value}\n`;
       }
     }
 
-    for (const entry of newEntries) {
-      appendText += `${entry.key}=${entry.value}\n`;
-    }
-
-    fs.appendFileSync(envPath, appendText, { mode: 0o600 });
+    fs.writeFileSync(envPath, fileContent, { mode: 0o600 });
   }
 
   // Ensure mode 600
@@ -158,50 +202,70 @@ export function generateMissingKeys(envPath: string = getDefaultEnvPath()): Gene
     envPath,
     generatedKeys,
     skippedKeys,
-    addresses
+    invalidKeys,
+    addresses,
+    hasInvalidKeys: invalidKeys.length > 0,
   };
+}
+
+export interface GetAddressesResult {
+  addresses: RoleAddresses;
+  hasInvalidKeys: boolean;
+  invalidKeys: KeyRole[];
 }
 
 /**
  * Re-derive and return all role addresses from the given env file.
  */
-export function getAddressesFromEnv(envPath: string = getDefaultEnvPath()): RoleAddresses {
+export function getAddressesFromEnv(
+  envPath: string = getDefaultEnvPath(),
+): GetAddressesResult {
   const env = parseEnvFile(envPath);
+  const invalidKeys: KeyRole[] = [];
+
   const addresses: RoleAddresses = {
     bch: {
       SOLVER_BCH_WIF: null,
       USER_BCH_WIF: null,
-      USER2_BCH_WIF: null
+      USER2_BCH_WIF: null,
     },
     evm: {
       DEPLOYER_EVM_PRIVATE_KEY: null,
       SOLVER_EVM_PRIVATE_KEY: null,
       USER_EVM_PRIVATE_KEY: null,
-      USER2_EVM_PRIVATE_KEY: null
-    }
+      USER2_EVM_PRIVATE_KEY: null,
+    },
   };
 
   for (const role of BCH_KEY_ROLES) {
-    if (env[role]) {
-      try {
-        addresses.bch[role] = deriveBchAddressesFromWif(env[role]);
-      } catch {
-        addresses.bch[role] = null;
+    const val = env[role];
+    if (val !== undefined && val !== '') {
+      if (isValidBchWif(val)) {
+        addresses.bch[role] = deriveBchAddressesFromWif(val);
+      } else {
+        addresses.bch[role] = 'INVALID';
+        invalidKeys.push(role);
       }
     }
   }
 
   for (const role of EVM_KEY_ROLES) {
-    if (env[role]) {
-      try {
-        addresses.evm[role] = deriveEvmAddress(env[role]);
-      } catch {
-        addresses.evm[role] = null;
+    const val = env[role];
+    if (val !== undefined && val !== '') {
+      if (isValidEvmPrivateKey(val)) {
+        addresses.evm[role] = deriveEvmAddress(val);
+      } else {
+        addresses.evm[role] = 'INVALID';
+        invalidKeys.push(role);
       }
     }
   }
 
-  return addresses;
+  return {
+    addresses,
+    hasInvalidKeys: invalidKeys.length > 0,
+    invalidKeys,
+  };
 }
 
 /**
@@ -214,11 +278,14 @@ export function formatAddressesOutput(addresses: RoleAddresses): string {
   for (const role of BCH_KEY_ROLES) {
     const info = addresses.bch[role];
     lines.push(`  ${role}:`);
-    if (info) {
+    if (info === 'INVALID') {
+      lines.push('    P2PKH (plain):       INVALID');
+      lines.push('    P2PKH (token-aware): INVALID');
+    } else if (info) {
       lines.push(`    P2PKH (plain):       ${info.plain}`);
       lines.push(`    P2PKH (token-aware): ${info.tokenAware}`);
     } else {
-      lines.push(`    [Not configured in .env.local]`);
+      lines.push('    [Not configured in .env.local]');
     }
   }
 
@@ -226,10 +293,12 @@ export function formatAddressesOutput(addresses: RoleAddresses): string {
   for (const role of EVM_KEY_ROLES) {
     const addr = addresses.evm[role];
     lines.push(`  ${role}:`);
-    if (addr) {
+    if (addr === 'INVALID') {
+      lines.push('    Address:             INVALID');
+    } else if (addr) {
       lines.push(`    Address:             ${addr}`);
     } else {
-      lines.push(`    [Not configured in .env.local]`);
+      lines.push('    [Not configured in .env.local]');
     }
   }
 

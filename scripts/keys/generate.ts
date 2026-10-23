@@ -1,10 +1,14 @@
-import { getDefaultEnvPath, generateMissingKeys, formatAddressesOutput } from './env.js';
+import {
+  getDefaultEnvPath,
+  generateMissingKeys,
+  formatAddressesOutput,
+} from './env.js';
 
 function getEnvFileArg(): string {
   const args = process.argv.slice(2);
   const idx = args.indexOf('--env-file');
   if (idx !== -1 && idx + 1 < args.length) {
-    return args[idx + 1];
+    return args[idx + 1]!;
   }
   return getDefaultEnvPath();
 }
@@ -28,11 +32,22 @@ function main() {
       console.log(`  - ${key} (created and saved with mode 600)`);
     }
   } else {
-    console.log('No new keys generated; all required keys are already present.');
+    console.log(
+      'No new keys generated; all required keys are already present.',
+    );
   }
 
-  console.log('\nDerived public addresses (addresses only, secrets never displayed):');
+  console.log(
+    '\nDerived public addresses (addresses only, secrets never displayed):',
+  );
   console.log(formatAddressesOutput(result.addresses));
+
+  if (result.hasInvalidKeys) {
+    console.error(
+      `\nError: Found invalid key(s) in env file: ${result.invalidKeys.join(', ')}`,
+    );
+    process.exit(1);
+  }
 }
 
 main();
