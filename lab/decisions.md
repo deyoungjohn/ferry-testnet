@@ -159,3 +159,14 @@ Lightweight decision records (template below). Spike answers (S-01…S-14, Q-A�
 - **Evidence:** D-A3-002: XO engine cannot execute claim/refund (tracks only its own outputs; HD-key signing pipeline); S-02 passes byte-for-byte.
 - **Consequence for rebuild:** CashScript artifact is the executor. XO is used for the `lock` invitation if the hybrid check ( Part B) passes, and the XO template is kept as a verified-equivalent artifact. Treat the Build with XO bounty claim as weak until the human has asked General Protocols the Q-C questions (31 Oct workshop).
 - **Revisit if:** General Protocols confirm a supported way to spend externally created covenant outputs.
+### D-A2-005 · BCH Electrum client architecture: Custom Dual-Fulcrum Wrapper vs @electrum-cash/network
+- **Decision:** Implement a lightweight, direct dual-Fulcrum client wrapper (`BchQuorumClient`) rather than importing `@electrum-cash/network@4.4.8`.
+- **Evidence:** Evaluating `@electrum-cash/network@4.4.8` against the minimal client in `@ferry/htlc-bch` revealed that the library introduces heavy dependencies and cluster abstractions that obscure connection state. The custom wrapper directly manages connections to two independent Chipnet Fulcrum endpoints (`wss://chipnet.imaginary.cash:50004` and `wss://blackie.c3-soft.com:50004`), enforces a tip quorum (`|tip1 - tip2| <= 1`), executes seamless failover, and performs history reconciliation via `blockchain.scripthash.get_history` upon reconnect (handling CH-02 and CH-04) with strict TypeScript types and minimal surface area.
+- **Consequence for rebuild:** Maintain `BchQuorumClient` in `packages/solver/src/bch/quorum-client.ts`. Add additional public Fulcrum nodes or self-hosted nodes via the comma-separated `BCH_ELECTRUM_URLS` configuration.
+- **Revisit if:** Fulcrum protocol breaks backwards compatibility or a unified cross-chain client library is required.
+
+### D-A2-006 · Measured Solver Reaction Latency Bound
+- **Decision:** Establish an empirical upper bound of 5 seconds for solver detect-to-broadcast reaction latency (`SOLVER_REACTION`).
+- **Evidence:** During forward swap execution on Anvil + Chipnet contracts (E2E-01), the solver engine measured detect-to-broadcast reaction latencies of 77 ms for BCH lock publication following EVM finality, and 163 ms for EVM claim execution following BCH claim detection. The 5-second operational bound provides a 30x safety margin over measured execution while strictly verifying the conservative 60-second reaction time assumed in L1 timing models (D-A2-004).
+- **Consequence for rebuild:** Keep timing invariant F and R calculations configured with `solverReactionSeconds = 60` as a conservative safety threshold, while operating with sub-second expected reaction times in production.
+- **Revisit if:** High network congestion or RPC rate limiting introduces transaction submission latency exceeding 5 seconds.

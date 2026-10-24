@@ -107,3 +107,8 @@ Versions, addresses, chain IDs, decimals, endpoints. Never guess: every row need
 | FACT-A3-023 · @electrum-cash/servers version | 4.2.0 | npm view @electrum-cash/servers version | 2026-10-24 | 3 | Pinned in packages/htlc-bch/package.json for Chipnet & Mainnet server presets |
 | FACT-A3-024 · S-05 Chipnet probe block height | 329336 (hex: 000000201164c86c...) | blockchain.headers.subscribe on wss://chipnet.imaginary.cash:50004 | 2026-10-24 | 3 | Recorded during S-05 latency probe run |
 | FACT-A3-025 · S-05 Mainnet probe block height | 974345 (hex: 00c01d22f1594b...) | blockchain.headers.subscribe on wss://bch.imaginary.cash:50004 (READ-ONLY) | 2026-10-24 | 3 | Recorded during S-05 server feature check |
+| FACT-A2-035 · better-sqlite3 | 13.0.3 | npm view better-sqlite3 version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json for SQLite persistence in WAL mode |
+| FACT-A2-036 · @types/better-sqlite3 | 9.6.0 | npm view @types/better-sqlite3 version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json for TypeScript SQLite typings |
+| FACT-A2-037 · fastify | 5.12.7 | npm view fastify version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json for HTTP quote and order API server |
+| FACT-A2-038 · @fastify/cors | 11.3.1 | npm view @fastify/cors version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json for CORS header support |
+| FACT-A2-039 · pino | 10.4.0 | npm view pino version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json with secret redaction logging |
