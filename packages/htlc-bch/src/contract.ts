@@ -17,6 +17,7 @@ import type {
   HtlcInputTerms,
   CashAddressNetwork,
   HtlcAddressDerivationResult,
+  OrderTerms,
 } from './types.js';
 import { displayToInternalCategory } from './byte-order.js';
 
@@ -56,9 +57,38 @@ function resolveLockingBytecode(
 
 /**
  * Normalise input parameters into canonical BchHtlcParameters.
+ * Accepts either full @ferry/core OrderTerms or individual HtlcInputTerms.
  * Converts display-order category to internal byte order unless specified otherwise.
  */
-export function encodeHtlcParameters(terms: HtlcInputTerms): BchHtlcParameters {
+export function encodeHtlcParameters(
+  terms: OrderTerms | HtlcInputTerms,
+): BchHtlcParameters {
+  if ('direction' in terms && 'bchTokenCategory' in terms) {
+    const isForward = terms.direction === 'COUNTER_TO_BCH';
+    const recipientLockingBytecode = resolveLockingBytecode(
+      isForward ? terms.userBchLockingBytecode : terms.solverBchLockingBytecode,
+    );
+    const refundLockingBytecode = resolveLockingBytecode(
+      isForward ? terms.solverBchLockingBytecode : terms.userBchLockingBytecode,
+    );
+    const hashLockBytes = hexToBin(
+      terms.hashLock.startsWith('0x')
+        ? terms.hashLock.slice(2)
+        : terms.hashLock,
+    );
+    const tokenCategory = displayToInternalCategory(terms.bchTokenCategory);
+
+    return {
+      hashLock: hashLockBytes,
+      recipientLockingBytecode,
+      refundLockingBytecode,
+      tokenCategory,
+      tokenAmount: terms.bchTokenAmount,
+      refundHeight: terms.bchRefundHeight,
+      maxFee: terms.bchMaxFee,
+    };
+  }
+
   let hashLockBytes: Uint8Array;
   if (terms.hashLock) {
     hashLockBytes =

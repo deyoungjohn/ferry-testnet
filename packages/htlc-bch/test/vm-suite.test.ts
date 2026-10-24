@@ -11,6 +11,7 @@ import {
   internalHexToDisplayHex,
   displayToInternalCategory,
   internalToDisplayCategory,
+  type OrderTerms,
 } from '../src/index.js';
 
 interface TransactionBuilderWithLibauth {
@@ -615,6 +616,54 @@ describe('BCH HTLC Libauth VM Test Suite (BCH-U-01...13)', () => {
       expect(addressesMainnet.tokenAddress.startsWith('bitcoincash:r')).toBe(
         true,
       );
+    });
+
+    it('encodes parameters from @ferry/core OrderTerms (forward & reverse)', () => {
+      const mockTermsForward: OrderTerms = {
+        version: 1,
+        direction: 'COUNTER_TO_BCH',
+        bchToken: 'PUSD',
+        bchTokenCategory: `0x${displayCatHex}`,
+        bchTokenAmount: 1000n,
+        counterAmount: 10000000n,
+        counterChain: 'base',
+        counterNetworkId: 8453,
+        counterAsset: {
+          symbol: 'USDC',
+          decimals: 6,
+          address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        },
+        counterHtlc: '0x5A0C062f4B7b8fF2263530e12bc15De9C836a641',
+        userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+        solverCounterAddress: '0xC9ec91859Bdb598dC2eeE715934D8231478f7A70',
+        userBchLockingBytecode: `0x${libauth.binToHex(recipientBytecode)}`,
+        solverBchLockingBytecode: `0x${libauth.binToHex(refundBytecode)}`,
+        hashLock: `0x${libauth.binToHex(hashLock)}`,
+        counterDeadline: 1730000000,
+        bchRefundHeight: 350000,
+        bchCarrySats: 3000n,
+        bchMaxFee: 1500n,
+        quoteId: 'test-quote-1',
+        quoteExpiry: 1729999000,
+      };
+
+      const paramsFwd = encodeHtlcParameters(mockTermsForward);
+      expect(paramsFwd.hashLock).toEqual(hashLock);
+      expect(paramsFwd.recipientLockingBytecode).toEqual(recipientBytecode);
+      expect(paramsFwd.refundLockingBytecode).toEqual(refundBytecode);
+      expect(paramsFwd.tokenCategory).toEqual(defaultParams.tokenCategory);
+      expect(paramsFwd.tokenAmount).toBe(1000n);
+      expect(paramsFwd.refundHeight).toBe(350000);
+      expect(paramsFwd.maxFee).toBe(1500n);
+
+      const mockTermsReverse: OrderTerms = {
+        ...mockTermsForward,
+        direction: 'BCH_TO_COUNTER',
+      };
+      const paramsRev = encodeHtlcParameters(mockTermsReverse);
+      // In reverse, solver is recipient on BCH, user is refund
+      expect(paramsRev.recipientLockingBytecode).toEqual(refundBytecode);
+      expect(paramsRev.refundLockingBytecode).toEqual(recipientBytecode);
     });
   });
 });

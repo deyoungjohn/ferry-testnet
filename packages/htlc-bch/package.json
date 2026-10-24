@@ -18,6 +18,11 @@
   },
   "dependencies": {
     "@bitauth/libauth": "3.0.0",
+    "@electrum-cash/servers": "4.2.0",
+    "@ferry/core": "workspace:*",
+    "@xo-cash/engine": "0.1.0-next.17437760444",
+    "@xo-cash/templates": "0.0.11",
+    "@xo-cash/utils": "0.0.10",
     "cashc": "0.14.0",
     "cashscript": "0.14.0",
     "ws": "8.22.0"
@@ -25,6 +30,7 @@
   "devDependencies": {
     "@types/node": "22.20.5",
     "@types/ws": "8.18.2",
+    "@xo-cash/types": "0.0.8",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "vitest": "5.0.5"

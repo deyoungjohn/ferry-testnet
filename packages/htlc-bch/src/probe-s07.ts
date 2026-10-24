@@ -243,13 +243,14 @@ export async function runProbeS07(
   await new Promise((r) => setTimeout(r, 2000));
 
   console.log(
-    '[S-07] Attempting claim on Instance A (expecting node rejection)...',
+    '[S-07] Attempting claim on Instance A with real output category (expecting script OP_EQUALVERIFY failure)...',
   );
   const claimSpendA = buildClaimTransaction({
     params: displayParams,
     utxo: fundA,
     secret: secret1,
     feeSats: 500n,
+    overrideDisplayCategory: tPusdCategory,
   });
 
   let displayClaimError: string;
