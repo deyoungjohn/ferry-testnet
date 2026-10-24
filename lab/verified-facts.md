@@ -112,3 +112,8 @@ Versions, addresses, chain IDs, decimals, endpoints. Never guess: every row need
 | FACT-A1-018 · wagmi | 3.7.9 | npm view wagmi version; pnpm install | 2026-10-24 | 1 | Exact dependency pin; Base Sepolia |
 | FACT-A1-019 · WizardConnect packages | react 0.2.3; dapp 0.2.2; core 0.2.5 | npm view @wizardconnect/react version; @wizardconnect/dapp version; @wizardconnect/core version | 2026-10-24 | 1 | Exact pins; matches blueprint F007 |
 | FACT-A1-020 · fake-indexeddb | 6.2.6 | npm view fake-indexeddb version; pnpm install | 2026-10-24 | 1 | Dev-only vault tests; no production bundle |
+
+| FACT-A1-021 · esbuild | 0.28.2 | npm view esbuild version; pnpm install | 2026-10-25 | 1 | Exact dev pin for the standalone recovery bundle |
+| FACT-A1-022 · recover.html artifact | 1.5 MB; SHA-256 63abbf9a7b61e94fd14d3d8b07e6da4fa48d605b9b7ce5af1487b9251eaa86c6 | pnpm --filter @ferry/web build:recover; sha256sum; second run identical | 2026-10-25 | 1 | Committed generated artifact; reproducible from source with esbuild 0.28.2 |
+| FACT-A1-023 · anvil E2E chain | 84532; account 5 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc | anvil --chain-id 84532; local Playwright E2E-07 | 2026-10-25 | 1 | Test-only key is anvil's public default; no funded key used |
+| FACT-A1-024 · ws and @types/ws | ws 8.22.0; @types/ws 8.18.2 | npm view ws version; npm view @types/ws version; pnpm install | 2026-10-25 | 1 | Exact dev pins for the mocked Electrum WebSocket in E2E-07 |
