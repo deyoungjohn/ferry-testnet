@@ -24,7 +24,7 @@ import {
   MOCK_BCH_SOLVER_ADDRESS,
   PUSD_CATEGORY,
   QUOTE_TTL_S,
-  SOLVER_SIGNING_ADDRESS,
+  MOCK_SOLVER_SIGNING_ADDRESS,
   SPREAD_BPS,
   USDC_ADDRESS,
   USDC_DECIMALS,
@@ -44,7 +44,8 @@ const solverAccount = privateKeyToAccount(
 );
 
 if (
-  solverAccount.address.toLowerCase() !== SOLVER_SIGNING_ADDRESS.toLowerCase()
+  solverAccount.address.toLowerCase() !==
+  MOCK_SOLVER_SIGNING_ADDRESS.toLowerCase()
 ) {
   throw new Error('Mock solver signing address does not match config');
 }

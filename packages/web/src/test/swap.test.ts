@@ -1,19 +1,39 @@
 import type { Address } from 'viem';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseBchAddress } from '../lib/bch/address';
 import { buildClaimTransaction } from '@ferry/htlc-bch';
 import { bchParametersFromTerms } from '../lib/recovery';
 import { BCH_NETWORK } from '../lib/config';
-import { MOCK_BCH_USER_ADDRESS, SOLVER_SIGNING_ADDRESS } from '../lib/config';
+import {
+  BCH_CARRY_SATS,
+  BCH_MAX_FEE_SATS,
+  FIXED_FEE_USD_MICROS,
+  FWD_BCH_REFUND_BLOCKS,
+  FWD_EVM_DEADLINE_S,
+  MOCK_BCH_USER_ADDRESS,
+  MOCK_SOLVER_SIGNING_ADDRESS,
+  PUSD_CATEGORY,
+  QUOTE_TTL_S,
+  SOLVER_COUNTER_ADDRESS,
+  SPREAD_BPS,
+  USDC_ADDRESS,
+  USDC_DECIMALS,
+  FERRY_HTLC_ADDRESS,
+} from '../lib/config';
 import { buildRecoveryFile, parseRecoveryFileJson } from '../lib/recovery';
 import { createMockSolverClient } from '../lib/solver/mock';
-import { verifySignedQuote } from '../lib/solver/verify';
+import {
+  assertTermsMatchRequest,
+  verifySignedQuote,
+  type TermsCheckConfig,
+} from '../lib/solver/verify';
 import { buildOrderViewModel } from '../lib/solver/view';
 import {
   generateSecret,
   hashLockForSecret,
   parseUsdcAmount,
   quoteRate,
+  buildPermitTypedData,
 } from '../lib/swap';
 import { serializeApiJson } from '@ferry/core';
 
@@ -75,7 +95,7 @@ describe('signed quote verification', () => {
     const quote = await solver.quote(request());
 
     expect(
-      await verifySignedQuote(quote, SOLVER_SIGNING_ADDRESS as Address),
+      await verifySignedQuote(quote, MOCK_SOLVER_SIGNING_ADDRESS as Address),
     ).toBe(true);
 
     const tampered = {
@@ -86,7 +106,7 @@ describe('signed quote verification', () => {
       },
     };
     expect(
-      await verifySignedQuote(tampered, SOLVER_SIGNING_ADDRESS as Address),
+      await verifySignedQuote(tampered, MOCK_SOLVER_SIGNING_ADDRESS as Address),
     ).toBe(false);
 
     expect(
@@ -95,6 +115,213 @@ describe('signed quote verification', () => {
         '0x0000000000000000000000000000000000000001',
       ),
     ).toBe(false);
+  });
+});
+
+function termsConfig(
+  quote: Awaited<
+    ReturnType<ReturnType<typeof createMockSolverClient>['quote']>
+  >,
+): TermsCheckConfig {
+  return {
+    counterChain: 'base',
+    counterNetworkId: 84_532,
+    counterSymbol: 'USDC',
+    counterAssetAddress: USDC_ADDRESS,
+    counterAssetDecimals: USDC_DECIMALS,
+    counterHtlc: FERRY_HTLC_ADDRESS,
+    bchToken: 'PUSD',
+    bchTokenCategory: PUSD_CATEGORY,
+    solverCounterAddress: SOLVER_COUNTER_ADDRESS,
+    bchTipHeight: quote.bchTipHeight,
+    bchCarrySats: BCH_CARRY_SATS,
+    bchMaxFee: BCH_MAX_FEE_SATS,
+    pricingPolicy: {
+      spreadBps: SPREAD_BPS,
+      fixedFeeUsdMicros: FIXED_FEE_USD_MICROS,
+    },
+    nowSeconds: Math.floor(Date.now() / 1000),
+    maxQuoteFutureSeconds: QUOTE_TTL_S * 2,
+    maxCounterDeadlineSeconds: FWD_EVM_DEADLINE_S + 300,
+    minBchRefundBlocks: FWD_BCH_REFUND_BLOCKS,
+    maxBchRefundBlocks: FWD_BCH_REFUND_BLOCKS + 6,
+  };
+}
+
+describe('T9 terms binding', () => {
+  it('accepts the mock quote and rejects every tampered field with a specific reason', async () => {
+    const solver = createMockSolverClient();
+    const quoteRequest = request();
+    const quote = await solver.quote(quoteRequest);
+    const config = termsConfig(quote);
+
+    expect(() =>
+      assertTermsMatchRequest(quote.terms, quoteRequest, config),
+    ).not.toThrow();
+
+    const cases: readonly {
+      readonly name: string;
+      readonly patch: Record<string, unknown>;
+      readonly message: string;
+    }[] = [
+      {
+        name: 'direction',
+        patch: { direction: 'BCH_TO_COUNTER' },
+        message: 'direction does not match',
+      },
+      {
+        name: 'counter chain',
+        patch: { counterChain: 'ethereum' },
+        message: 'counter chain does not match',
+      },
+      {
+        name: 'counter network',
+        patch: { counterNetworkId: 1 },
+        message: 'counter network does not match',
+      },
+      {
+        name: 'counter asset',
+        patch: {
+          counterAsset: {
+            ...quote.terms.counterAsset,
+            address: '0x0000000000000000000000000000000000000001',
+          },
+        },
+        message: 'counter asset address does not match',
+      },
+      {
+        name: 'counter decimals',
+        patch: {
+          counterAsset: { ...quote.terms.counterAsset, decimals: 18 },
+        },
+        message: 'counter asset decimals does not match',
+      },
+      {
+        name: 'counter HTLC',
+        patch: {
+          counterHtlc: '0x0000000000000000000000000000000000000002',
+        },
+        message: 'counter HTLC does not match',
+      },
+      {
+        name: 'user counter address',
+        patch: {
+          userCounterAddress: '0x0000000000000000000000000000000000000003',
+        },
+        message: 'user counter address does not match',
+      },
+      {
+        name: 'user BCH bytecode',
+        patch: {
+          userBchLockingBytecode: '0x76a914' + '00'.repeat(20) + '88ac',
+        },
+        message: 'user BCH locking bytecode does not match',
+      },
+      {
+        name: 'hash lock',
+        patch: { hashLock: `0x${'11'.repeat(32)}` },
+        message: 'hash lock does not match',
+      },
+      {
+        name: 'counter amount',
+        patch: { counterAmount: quote.terms.counterAmount + 1n },
+        message: 'counter amount does not match',
+      },
+      {
+        name: 'BCH token',
+        patch: { bchToken: 'MUSD' },
+        message: 'BCH token does not match',
+      },
+      {
+        name: 'BCH category',
+        patch: { bchTokenCategory: `0x${'22'.repeat(32)}` },
+        message: 'BCH token category does not match',
+      },
+      {
+        name: 'solver counter address',
+        patch: {
+          solverCounterAddress: '0x0000000000000000000000000000000000000004',
+        },
+        message: 'solver counter address does not match',
+      },
+      {
+        name: 'worse payout',
+        patch: { bchTokenAmount: quote.terms.bchTokenAmount - 1n },
+        message: 'payout is worse',
+      },
+      {
+        name: 'carry',
+        patch: { bchCarrySats: BCH_CARRY_SATS + 1n },
+        message: 'BCH carry does not match',
+      },
+      {
+        name: 'max fee',
+        patch: { bchMaxFee: BCH_MAX_FEE_SATS + 1n },
+        message: 'BCH max fee exceeds',
+      },
+      {
+        name: 'expired quote',
+        patch: { quoteExpiry: 1 },
+        message: 'already expired',
+      },
+      {
+        name: 'quote too long',
+        patch: { quoteExpiry: quote.terms.quoteExpiry + 3_600 },
+        message: 'expiry is too far',
+      },
+      {
+        name: 'counter deadline expired',
+        patch: { counterDeadline: 1 },
+        message: 'counter deadline is already expired',
+      },
+      {
+        name: 'counter deadline too long',
+        patch: { counterDeadline: quote.terms.counterDeadline + 3_600 },
+        message: 'counter deadline is too far',
+      },
+      {
+        name: 'refund too soon',
+        patch: {
+          bchRefundHeight: quote.bchTipHeight + FWD_BCH_REFUND_BLOCKS - 1,
+        },
+        message: 'refund height is too soon',
+      },
+      {
+        name: 'refund too far',
+        patch: {
+          bchRefundHeight: quote.bchTipHeight + FWD_BCH_REFUND_BLOCKS + 7,
+        },
+        message: 'refund height is too far',
+      },
+    ];
+
+    for (const item of cases) {
+      expect(
+        () =>
+          assertTermsMatchRequest(
+            { ...quote.terms, ...item.patch },
+            quoteRequest,
+            config,
+          ),
+        item.name,
+      ).toThrow(item.message);
+    }
+  });
+});
+
+describe('permit and intent deadlines', () => {
+  it('uses the short quote expiry for both permit and intent deadlines', async () => {
+    const solver = createMockSolverClient();
+    const quote = await solver.quote(request());
+    const permit = buildPermitTypedData(
+      quote.terms,
+      '0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc',
+      0n,
+    );
+    expect(permit.message.deadline).toBe(BigInt(quote.terms.quoteExpiry));
+    expect(permit.message.deadline).not.toBe(
+      BigInt(quote.terms.counterDeadline),
+    );
   });
 });
 
@@ -146,7 +373,7 @@ describe('order timeline', () => {
       userEvmAddress: quote.terms.userCounterAddress as Address,
       permitSignature: `0x${'11'.repeat(65)}`,
       intentSignature: `0x${'22'.repeat(65)}`,
-      permitDeadline: quote.terms.counterDeadline,
+      permitDeadline: quote.terms.quoteExpiry,
     });
 
     let order = await solver.getOrder(quote.orderId);
@@ -171,7 +398,7 @@ describe('order timeline', () => {
       userEvmAddress: quote.terms.userCounterAddress as Address,
       permitSignature: `0x${'11'.repeat(65)}`,
       intentSignature: `0x${'22'.repeat(65)}`,
-      permitDeadline: quote.terms.counterDeadline,
+      permitDeadline: quote.terms.quoteExpiry,
     });
     let order = await solver.getOrder(quote.orderId);
     for (let index = 0; index < 8; index += 1) {
@@ -195,5 +422,35 @@ describe('order timeline', () => {
     expect(order.status).toBe('REJECTED');
     expect(view.refundAvailable).toBe(true);
     expect(view.claimAvailable).toBe(false);
+  });
+});
+
+describe('solver signer configuration', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('refuses a live solver URL without a pinned signer', async () => {
+    vi.stubEnv('VITE_SOLVER_URL', 'http://solver.test');
+    vi.stubEnv('VITE_SOLVER_SIGNING_ADDRESS', '');
+    vi.resetModules();
+    const config = await import('../lib/config');
+    expect(() => config.requireSolverSigner()).toThrow(
+      /VITE_SOLVER_SIGNING_ADDRESS/,
+    );
+  });
+
+  it('returns the configured signer for a live solver', async () => {
+    vi.stubEnv('VITE_SOLVER_URL', 'http://solver.test');
+    vi.stubEnv(
+      'VITE_SOLVER_SIGNING_ADDRESS',
+      '0x00000000000000000000000000000000000000aa',
+    );
+    vi.resetModules();
+    const config = await import('../lib/config');
+    expect(config.requireSolverSigner()).toBe(
+      '0x00000000000000000000000000000000000000aa',
+    );
   });
 });

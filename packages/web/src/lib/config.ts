@@ -40,8 +40,25 @@ export const FWD_EVM_DEADLINE_S = 86_400;
 export const BCH_BLOCK_SECONDS = 600;
 export const FAST_LANE_MAX_USD_MICROS = 25_000_000n;
 
-export const SOLVER_SIGNING_ADDRESS =
+export const MOCK_SOLVER_SIGNING_ADDRESS =
   '0x1Ec1DB9462247d5A2F48C224472591e222A20aF2' as const;
+export const SOLVER_SIGNING_ADDRESS = (
+  import.meta.env.VITE_SOLVER_SIGNING_ADDRESS ?? ''
+).trim();
+export const SOLVER_COUNTER_ADDRESS = (SOLVER_SIGNING_ADDRESS ||
+  MOCK_SOLVER_SIGNING_ADDRESS) as `0x${string}`;
+
+export function requireSolverSigner(): `0x${string}` {
+  if (import.meta.env.VITE_SOLVER_URL && !SOLVER_SIGNING_ADDRESS) {
+    throw new Error(
+      'Set VITE_SOLVER_SIGNING_ADDRESS to the solver signer address when using VITE_SOLVER_URL',
+    );
+  }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(SOLVER_COUNTER_ADDRESS)) {
+    throw new Error('VITE_SOLVER_SIGNING_ADDRESS is not a valid EVM address');
+  }
+  return SOLVER_COUNTER_ADDRESS;
+}
 
 export const MOCK_BCH_USER_ADDRESS =
   'bchtest:zznldca5825k6le8hpnwxhzugn82j2gm8uzgy6y6j8' as const;

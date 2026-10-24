@@ -1,5 +1,10 @@
-import type { SignedQuote } from '../lib/solver/types';
-import { isQuoteExpired, verifySignedQuote } from '../lib/solver/verify';
+import type { QuoteRequest, SignedQuote } from '../lib/solver/types';
+import {
+  assertTermsMatchRequest,
+  isQuoteExpired,
+  verifySignedQuote,
+  type TermsCheckConfig,
+} from '../lib/solver/verify';
 import { formatDuration } from '../lib/solver/view';
 import type { RecoveryFile } from '../lib/recovery';
 import { buildRecoveryFile, downloadRecoveryFile } from '../lib/recovery';
@@ -19,13 +24,23 @@ import { useSolver } from '../lib/solver/context';
 import { useWallets } from '../lib/wallet/context';
 import { parseBchAddress } from '../lib/bch/address';
 import {
+  BASE_SEPOLIA_CHAIN_ID,
   BCH_CARRY_SATS,
+  BCH_MAX_FEE_SATS,
+  FERRY_HTLC_ADDRESS,
+  FIXED_FEE_USD_MICROS,
   FWD_BCH_REFUND_BLOCKS,
-  SOLVER_SIGNING_ADDRESS,
+  FWD_EVM_DEADLINE_S,
+  PUSD_CATEGORY,
+  QUOTE_TTL_S,
+  requireSolverSigner,
+  SOLVER_COUNTER_ADDRESS,
+  SPREAD_BPS,
+  USDC_ADDRESS,
+  USDC_DECIMALS,
 } from '../lib/config';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
-import type { Address } from 'viem';
 import { ArrowUpDownIcon, CheckIcon, ShieldIcon } from './icons';
 import { TokenPill } from './TokenPill';
 import { Well } from './Well';
@@ -104,7 +119,7 @@ export function SwapCard() {
       const amountIn = parseUsdcAmount(amount);
       const secret = generateSecret();
       const hashLock = hashLockForSecret(secret);
-      const next = await solver.quote({
+      const nextRequest: QuoteRequest = {
         direction: 'COUNTER_TO_BCH',
         bchToken: 'PUSD',
         counterChain: 'base',
@@ -115,14 +130,40 @@ export function SwapCard() {
         hashLock,
         lane,
         ...(lane === 'fast' ? { fastOptIn: true } : {}),
-      });
-      const valid = await verifySignedQuote(
-        next,
-        SOLVER_SIGNING_ADDRESS as Address,
-      );
+      };
+      const next = await solver.quote(nextRequest);
+      const signer = requireSolverSigner();
+      const valid = await verifySignedQuote(next, signer);
       if (!valid) {
         throw new Error('The solver signature does not match the signed terms');
       }
+      if (next.lane !== nextRequest.lane) {
+        throw new Error('Quote lane does not match the request');
+      }
+      const checkConfig: TermsCheckConfig = {
+        counterChain: 'base',
+        counterNetworkId: BASE_SEPOLIA_CHAIN_ID,
+        counterSymbol: nextRequest.counterSymbol,
+        counterAssetAddress: USDC_ADDRESS,
+        counterAssetDecimals: USDC_DECIMALS,
+        counterHtlc: FERRY_HTLC_ADDRESS,
+        bchToken: nextRequest.bchToken,
+        bchTokenCategory: PUSD_CATEGORY,
+        solverCounterAddress: SOLVER_COUNTER_ADDRESS,
+        bchTipHeight: next.bchTipHeight,
+        bchCarrySats: BCH_CARRY_SATS,
+        bchMaxFee: BCH_MAX_FEE_SATS,
+        pricingPolicy: {
+          spreadBps: SPREAD_BPS,
+          fixedFeeUsdMicros: FIXED_FEE_USD_MICROS,
+        },
+        nowSeconds: Math.floor(Date.now() / 1000),
+        maxQuoteFutureSeconds: QUOTE_TTL_S * 2,
+        maxCounterDeadlineSeconds: FWD_EVM_DEADLINE_S + 300,
+        minBchRefundBlocks: FWD_BCH_REFUND_BLOCKS,
+        maxBchRefundBlocks: FWD_BCH_REFUND_BLOCKS + 6,
+      };
+      assertTermsMatchRequest(next.terms, nextRequest, checkConfig);
       const file = buildRecoveryFile(next.orderId, next.terms, secret);
       await saveSecret(next.orderId, secret);
       setQuote(next);
@@ -175,7 +216,7 @@ export function SwapCard() {
         userEvmAddress: evm.address,
         permitSignature,
         intentSignature,
-        permitDeadline: quote.terms.counterDeadline,
+        permitDeadline: quote.terms.quoteExpiry,
       });
       navigate(`/swap/${quote.orderId}`);
     } catch (cause) {

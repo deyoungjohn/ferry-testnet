@@ -14,6 +14,7 @@ import {
 import {
   BASE_SEPOLIA_CHAIN_ID,
   FERRY_HTLC_ADDRESS,
+  SOLVER_COUNTER_ADDRESS,
   MAX_SWAP_USD_MICROS,
   MIN_SWAP_USD_MICROS,
   USDC_ADDRESS,
@@ -90,7 +91,7 @@ export function buildPermitTypedData(
       spender: FERRY_HTLC_ADDRESS,
       value: terms.counterAmount,
       nonce,
-      deadline: BigInt(terms.counterDeadline),
+      deadline: BigInt(terms.quoteExpiry),
     },
   } as const;
 }
@@ -103,7 +104,7 @@ export function buildIntentTypedData(terms: OrderTerms) {
     },
     {
       token: USDC_ADDRESS,
-      recipient: terms.solverCounterAddress,
+      recipient: SOLVER_COUNTER_ADDRESS,
       amount: terms.counterAmount,
       hashLock: terms.hashLock,
       deadline: BigInt(terms.counterDeadline),
