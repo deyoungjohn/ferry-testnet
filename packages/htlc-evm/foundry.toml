@@ -3,6 +3,7 @@ src = "src"
 test = "test"
 script = "script"
 out = "out"
+broadcast = "cache/broadcast"
 libs = ["lib", "node_modules"]
 solc_version = "0.8.28"
 evm_version = "cancun"
