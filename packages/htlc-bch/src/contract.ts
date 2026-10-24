@@ -33,7 +33,7 @@ export type HtlcContract = Contract & {
 /**
  * Normalise locking bytecode input from either CashAddress or raw hex/Uint8Array.
  */
-function resolveLockingBytecode(
+export function resolveLockingBytecode(
   addressOrBytecode: string | Uint8Array,
 ): Uint8Array {
   if (typeof addressOrBytecode === 'string') {
