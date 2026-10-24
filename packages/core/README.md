@@ -39,6 +39,7 @@ The root ferry/no-secret-logging rule rejects secret/preimage identifiers in con
 ## API schemas and wire helpers
 
 `@ferry/core/api` (and re-exported from `@ferry/core`) defines the shared Zod schemas and inferred TypeScript types for solver endpoints (§5.3) and pay links (§23.5):
+
 - Errors: `ApiErrorCodeSchema`, `API_ERROR_CODES`, `API_ERROR_HTTP_STATUS`, `apiErrorStatus()`, `ApiErrorResponseSchema`.
 - Order lifecycle: `OrderStatusSchema` (mirroring the §5.3 state machine across both directions), `isTerminalOrderStatus()`.
 - Quotes: `QuoteRequestSchema`, `QuoteResponseSchema` (binds `orderId`, `terms`, `lane`, `signature`, `signerAddress`).
@@ -47,4 +48,3 @@ The root ferry/no-secret-logging rule rejects secret/preimage identifiers in con
 - Node & service health: `HealthResponseSchema` (BCH quorum tips, counter tips, multi-asset inventory balances, quoting flags).
 - Pay links: `PayLinkSchema`, `CreatePayLinkRequestSchema`, `GetPayLinkResponseSchema`, `PayLinkQuoteRequestSchema`, `ListPayLinksQuerySchema`, `CancelPayLinkRequestSchema`.
 - Wire helpers: `serializeApiJson(value)` converts in-memory models (including `bigint`s) to JSON text; `parseApiJson(schema, json)` validates JSON text and reconstructs typed `bigint`s.
-
