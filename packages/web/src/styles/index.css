@@ -1,0 +1,115 @@
+@import 'tailwindcss';
+@import './tokens.css';
+@import './theme.css';
+@import './glass.css';
+
+@layer base {
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    min-height: 100dvh;
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--lime);
+    color: var(--lime-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--lime);
+    outline-offset: 3px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .ferry-page {
+    position: relative;
+    isolation: isolate;
+    overflow-x: clip;
+  }
+
+  .ferry-page::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    top: -14rem;
+    left: 38%;
+    width: min(68rem, 120vw);
+    height: 54rem;
+    transform: translateX(-20%);
+    background: radial-gradient(
+      ellipse at center,
+      color-mix(in srgb, var(--lime) 14%, transparent) 0%,
+      color-mix(in srgb, var(--lime) 4%, transparent) 38%,
+      transparent 68%
+    );
+    pointer-events: none;
+  }
+
+  .swap-stage {
+    position: relative;
+  }
+
+  .swap-stage::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset: 8% 4% -12% -4%;
+    background: radial-gradient(
+      ellipse at 60% 55%,
+      color-mix(in srgb, var(--lime) 10%, transparent) 0%,
+      transparent 62%
+    );
+    filter: blur(28px);
+    pointer-events: none;
+  }
+
+  .horizon-arc {
+    position: absolute;
+    z-index: -1;
+    right: 2%;
+    bottom: -4.5rem;
+    left: 2%;
+    height: 11rem;
+    border-top: 1px solid color-mix(in srgb, var(--lime) 34%, transparent);
+    border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+    background: radial-gradient(
+      ellipse at 50% 0%,
+      color-mix(in srgb, var(--lime) 10%, transparent) 0%,
+      transparent 64%
+    );
+    pointer-events: none;
+  }
+
+  .text-glow {
+    text-shadow: 0 0 42px color-mix(in srgb, var(--lime) 22%, transparent);
+  }
+
+  .card-ring {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      var(--shadow-card);
+  }
+}

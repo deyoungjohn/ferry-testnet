@@ -31,3 +31,31 @@ Versions, addresses, chain IDs, decimals, endpoints. Never guess: every row need
 | FACT-A2-025 · core scaffold version | 0.0.0 | packages/core/package.json; packages/core/test/index.test.ts | 2026-10-22 | 2 | Local private package; smoke test checks VERSION export |
 | FACT-A2-026 · Project-selected SBF tools | platform-tools v1.57; rustc 1.95.0-dev (ae660768a 2026-08-17) | avm platform-tools resolve --anchor-version 1.2.1; ~/.cache/solana/v1.57/platform-tools/rust/bin/rustc --version | 2026-10-22 | 2 | Resolves via Solana 4.1.2; already present at first task probe; differs from latest-release reminder |
 | FACT-A2-027 · Requested latest SBF cache | platform-tools v1.58; rustc 1.95.0-dev (1e20dd0d5 2026-10-05) | https://api.github.com/repos/anza-xyz/platform-tools/releases/tags/v1.58 ; ~/.cache/solana/v1.58/platform-tools/rust/bin/rustc --version | 2026-10-22 | 2 | Official archive 531406444 bytes; SHA-256 7b82eb420b5aebd1e5590db0ae25c523eca06724d4238ae02139690535636c37 verified before extraction; install-only then succeeds with an actual Rust executable present |
+| Node.js (runtime) | 22.23.1 | `node -v` | 2026-10-22 | A1 | Matches root `engines` (`>=22 <23`) |
+| pnpm | 12.8.1 | `pnpm -v` | 2026-10-22 | A1 | Workspace toolchain is owned by A2; this is what the L0 web install used |
+| react | 19.3.1 | `npm view react version` | 2026-10-22 | A1 | Blueprint §6 asks React 19; major unchanged |
+| react-dom | 19.3.1 | `npm view react-dom version` | 2026-10-22 | A1 | |
+| react-router | 8.5.0 | `npm view react-router version` | 2026-10-22 | A1 | `react-router-dom` still exists at 7.18.4; v8 keeps the DOM APIs in `react-router` |
+| vite | 8.3.5 | `npm view vite version` | 2026-10-22 | A1 | Blueprint says Vite 6; current stable major chosen (D-A1-001) |
+| @vitejs/plugin-react | 6.1.2 | `npm view @vitejs/plugin-react version` | 2026-10-22 | A1 | Peer requires Vite 8 |
+| tailwindcss | 4.3.3 | `npm view tailwindcss version` | 2026-10-22 | A1 | Blueprint §6 asks Tailwind 4 |
+| @tailwindcss/vite | 4.3.3 | `npm view @tailwindcss/vite version` | 2026-10-22 | A1 | |
+| typescript | 5.9.3 | `npm view typescript@5 version` | 2026-10-22 | A1 | Latest is 7.0.2, but typescript-eslint 8.72.0 peers `>=4.8.4 <6.1.0` (D-A1-001) |
+| vitest | 5.0.5 | `npm view vitest version` | 2026-10-22 | A1 | Peer supports Vite 8; Node >=22.12 |
+| jsdom | 30.1.3 | `npm view jsdom version` | 2026-10-22 | A1 | |
+| @testing-library/react | 16.3.3 | `npm view @testing-library/react version` | 2026-10-22 | A1 | |
+| @testing-library/dom | 10.4.2 | `npm view @testing-library/dom version` | 2026-10-22 | A1 | Explicit peer of Testing Library React 16 |
+| @testing-library/jest-dom | 7.0.1 | `npm view @testing-library/jest-dom version` | 2026-10-22 | A1 | |
+| @playwright/test | 1.64.1 | `npm view @playwright/test version` | 2026-10-22 | A1 | Expects Chromium revision 1248 |
+| Playwright Chromium | 1248 | Playwright launch error + `~/.cache/ms-playwright/chromium-1248` | 2026-10-22 | A1 | Pre-existing cache had 1247 from another install |
+| eslint | 10.13.0 | `npm view eslint version` | 2026-10-22 | A1 | |
+| @eslint/js | 10.0.1 | `npm view @eslint/js version` | 2026-10-22 | A1 | |
+| typescript-eslint | 8.72.0 | `npm view typescript-eslint version` | 2026-10-22 | A1 | Peer TypeScript `<6.1.0` |
+| eslint-plugin-react-hooks | 7.1.1 | `npm view eslint-plugin-react-hooks version` | 2026-10-22 | A1 | |
+| eslint-plugin-react-refresh | 0.5.7 | `npm view eslint-plugin-react-refresh version` | 2026-10-22 | A1 | |
+| globals | 17.13.0 | `npm view globals version` | 2026-10-22 | A1 | |
+| @types/react | 19.3.0 | `npm view @types/react version` | 2026-10-22 | A1 | |
+| @types/react-dom | 19.3.0 | `npm view @types/react-dom version` | 2026-10-22 | A1 | |
+| @types/node | 22.20.5 | `npm view @types/node@22 version` | 2026-10-22 | A1 | Matches Node 22 runtime |
+| @fontsource-variable/inter | 5.3.0 | `npm view @fontsource-variable/inter version` | 2026-10-22 | A1 | Self-hosted; Fontsource has no Inter Display package |
+| @fontsource/instrument-serif | 5.3.0 | `npm view @fontsource/instrument-serif version` | 2026-10-22 | A1 | Latin 400 italic subset imported |
