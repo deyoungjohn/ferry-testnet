@@ -41,15 +41,13 @@ export function NavBar() {
             />
             {NETWORK_LABEL}
           </span>
-          <button
-            type="button"
-            aria-disabled="true"
-            title="Wallet connect lands in L5"
+          <a
+            href="/#wallet-panel"
             className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-text px-3.5 text-xs font-semibold text-bg transition-colors hover:bg-lime hover:text-lime-ink sm:px-4"
           >
             <WalletIcon className="size-3.5" />
             Connect
-          </button>
+          </a>
         </div>
       </nav>
     </header>

@@ -1,4 +1,4 @@
-import { MOCK_BANNER } from '../lib/mock/swap';
+import { BANNER } from '../lib/config';
 
 export function BannerBar() {
   return (
@@ -10,7 +10,7 @@ export function BannerBar() {
         <p className="truncate">
           Built on prior work
           <span className="hidden sm:inline">
-            : <span className="text-text">{MOCK_BANNER.priorWork}</span>
+            : <span className="text-text">{BANNER.priorWork}</span>
           </span>
         </p>
         <div className="flex shrink-0 items-center gap-3">
@@ -22,7 +22,7 @@ export function BannerBar() {
           />
           <span className="inline-flex items-center gap-1.5">
             <span className="font-medium text-text-muted">EMBER2026</span>
-            <span className="font-mono">{MOCK_BANNER.emberAddress}</span>
+            <span className="font-mono">{BANNER.emberAddress}</span>
           </span>
         </div>
       </div>

@@ -1,13 +1,13 @@
-import type { MockToken } from '../lib/mock/swap';
+import type { TokenMeta } from '../lib/tokens';
 import { ChevronDownIcon, LockIcon } from './icons';
 
 export interface TokenPillProps {
-  readonly token: MockToken;
+  readonly token: TokenMeta;
   readonly pinned?: boolean;
 }
 
 export function TokenPill({ token, pinned = false }: TokenPillProps) {
-  const glyph = token.symbol === 'PUSD' ? '₿' : '$';
+  const glyph = token.glyph;
 
   const inner = (
     <>
