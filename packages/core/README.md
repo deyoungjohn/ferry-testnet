@@ -35,3 +35,16 @@ LOCK_INTENT_TYPES and LOCK_INTENT_TYPEHASH define the shared EIP-712 LockIntent.
 ## Secret logging guard
 
 The root ferry/no-secret-logging rule rejects secret/preimage identifiers in console or logger arguments, including nested payloads and optional logger calls. It is a name-based guard, not alias/data-flow analysis. Keep secrets out of logs, URLs, snapshots and analytics regardless of variable name. Fixtures test both violations and allowed public-field logging.
+
+## API schemas and wire helpers
+
+`@ferry/core/api` (and re-exported from `@ferry/core`) defines the shared Zod schemas and inferred TypeScript types for solver endpoints (§5.3) and pay links (§23.5):
+- Errors: `ApiErrorCodeSchema`, `API_ERROR_CODES`, `API_ERROR_HTTP_STATUS`, `apiErrorStatus()`, `ApiErrorResponseSchema`.
+- Order lifecycle: `OrderStatusSchema` (mirroring the §5.3 state machine across both directions), `isTerminalOrderStatus()`.
+- Quotes: `QuoteRequestSchema`, `QuoteResponseSchema` (binds `orderId`, `terms`, `lane`, `signature`, `signerAddress`).
+- Order inspection & actions: `OrderParamsSchema`, `OrderStatusResponseSchema`, `RevealSecretRequestSchema`, `RevealSecretResponseSchema`.
+- Relays: `RelayLockRequestSchema` (implements the exact 12-argument `lockWithIntent` ABI interface: `owner`, `token`, `recipient`, `amount`, `hashLock`, `deadline`, `intentDeadline`, `intentSig`, `permitDeadline`, `v`, `r`, `s`), `RelayLockResponseSchema`, `RelayClaimRequestSchema`, `RelayClaimResponseSchema`.
+- Node & service health: `HealthResponseSchema` (BCH quorum tips, counter tips, multi-asset inventory balances, quoting flags).
+- Pay links: `PayLinkSchema`, `CreatePayLinkRequestSchema`, `GetPayLinkResponseSchema`, `PayLinkQuoteRequestSchema`, `ListPayLinksQuerySchema`, `CancelPayLinkRequestSchema`.
+- Wire helpers: `serializeApiJson(value)` converts in-memory models (including `bigint`s) to JSON text; `parseApiJson(schema, json)` validates JSON text and reconstructs typed `bigint`s.
+
