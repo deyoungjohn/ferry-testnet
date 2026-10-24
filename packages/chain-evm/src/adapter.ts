@@ -230,7 +230,13 @@ export class EvmChainAdapter implements ChainAdapter {
   }
 
   async lock(terms: OrderTerms): Promise<TxRef> {
-    const owner = getAddress(terms.solverCounterAddress);
+    const isForward = terms.direction === 'COUNTER_TO_BCH';
+    const owner = getAddress(
+      isForward ? terms.userCounterAddress : terms.solverCounterAddress,
+    );
+    const recipient = getAddress(
+      isForward ? terms.solverCounterAddress : terms.userCounterAddress,
+    );
     const hashLock = terms.hashLock;
     const lockId = this.lockId(owner, hashLock);
 
@@ -255,7 +261,7 @@ export class EvmChainAdapter implements ChainAdapter {
       functionName: 'lock',
       args: [
         getAddress(terms.counterAsset.address),
-        getAddress(terms.userCounterAddress),
+        recipient,
         terms.counterAmount,
         terms.hashLock,
         BigInt(terms.counterDeadline),
@@ -580,7 +586,11 @@ export class EvmChainAdapter implements ChainAdapter {
       if (!receipt || receipt.status !== 'success') return false;
 
       const currentBlock = await this.client.getBlockNumber();
-      const confirmations = Number(currentBlock - receipt.blockNumber + 1n);
+      const confirmations = Number(
+        currentBlock >= receipt.blockNumber
+          ? currentBlock - receipt.blockNumber + 1n
+          : 1n,
+      );
       if (lane === 'fast') {
         return confirmations >= 1;
       }
