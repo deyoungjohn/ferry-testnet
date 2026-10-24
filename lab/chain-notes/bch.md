@@ -39,4 +39,4 @@ Per-chain quirks: RPC behaviour, confirmation times, fees, faucets, explorers, m
 
 ### Fulcrum CashTokens Quirk
 - Fulcrum RPC `blockchain.scripthash.listunspent` defaults to `"exclude_tokens"`.
-- Must supply `"include_tokens"` as second parameter: `client.request("blockchain.scripthash.listunspent", [scripthash, "include_tokens"])` to return CashTokens UTXOs with `token_data`.
+- Must pass the string include_tokens as the second parameter of the listunspent call to get CashTokens UTXOs back with their token_data field.
