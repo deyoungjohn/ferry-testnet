@@ -8,16 +8,12 @@ import {
   createWalletClient,
   http,
   parseAbi,
-  parseEther,
   sha256,
   stringToHex,
 } from 'viem';
+import { foundry } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
-import {
-  evmLockId,
-  lockIntentTypedData,
-  parseOrderTerms,
-} from '@ferry/core';
+import { evmLockId, lockIntentTypedData, parseOrderTerms } from '@ferry/core';
 import type { OrderTerms } from '@ferry/core';
 import { EvmChainAdapter } from '../src/index.js';
 
@@ -42,21 +38,25 @@ describe('EvmChainAdapter on local anvil', () => {
   let adapter: EvmChainAdapter;
 
   const publicClient = createPublicClient({
+    chain: foundry,
     transport: http(RPC_URL),
   });
 
   const deployerClient = createWalletClient({
     account: deployerAccount,
+    chain: foundry,
     transport: http(RPC_URL),
   });
 
   const solverClient = createWalletClient({
     account: solverAccount,
+    chain: foundry,
     transport: http(RPC_URL),
   });
 
   const userClient = createWalletClient({
     account: userAccount,
+    chain: foundry,
     transport: http(RPC_URL),
   });
 
@@ -72,8 +72,9 @@ describe('EvmChainAdapter on local anvil', () => {
         try {
           await publicClient.getBlockNumber();
           resolve();
-        } catch (e) {
-          if (Date.now() - start > 10000) reject(new Error('Anvil startup timed out'));
+        } catch {
+          if (Date.now() - start > 10000)
+            reject(new Error('Anvil startup timed out'));
           else setTimeout(check, 100);
         }
       };
@@ -287,7 +288,9 @@ describe('EvmChainAdapter on local anvil', () => {
     if (state1.status === 'locked') {
       expect(state1.amount).toBe(10000000n);
       expect(state1.hashLock).toBe(hashLock);
-      expect(state1.recipient.toLowerCase()).toBe(userAccount.address.toLowerCase());
+      expect(state1.recipient.toLowerCase()).toBe(
+        userAccount.address.toLowerCase(),
+      );
     }
 
     // 2. Check isFinal
@@ -365,5 +368,89 @@ describe('EvmChainAdapter on local anvil', () => {
     // Idempotent retry returns same tx
     const retryTx = await adapter.relayLock(signedLock);
     expect(retryTx.txId).toBe(relayTx.txId);
+  });
+
+  it('handles refund after deadline and rejects premature refund', async () => {
+    const secret = `0x${'77'.repeat(32)}` as const;
+    const hashLock = sha256(secret);
+
+    // Get current anvil time
+    const block = await publicClient.getBlock();
+    const deadline = Number(block.timestamp) + 10;
+    const lockId = adapter.lockId(solverAccount.address, hashLock);
+
+    const terms: OrderTerms = parseOrderTerms({
+      version: 1,
+      direction: 'BCH_TO_COUNTER',
+      bchToken: 'PUSD',
+      bchTokenCategory: `0x${'ab'.repeat(32)}`,
+      bchTokenAmount: 2485n,
+      counterAmount: 5000000n,
+      counterChain: 'base',
+      counterNetworkId: 31337,
+      counterAsset: {
+        symbol: 'USDC',
+        decimals: 6,
+        address: usdcAddress,
+      },
+      counterHtlc: htlcAddress,
+      userCounterAddress: userAccount.address,
+      userBchLockingBytecode: `0x76a914${'44'.repeat(20)}88ac`,
+      solverCounterAddress: solverAccount.address,
+      solverBchLockingBytecode: `0x76a914${'66'.repeat(20)}88ac`,
+      hashLock,
+      counterDeadline: deadline,
+      bchRefundHeight: 1000036,
+      bchCarrySats: 3000n,
+      bchMaxFee: 1500n,
+      quoteId: 'quote-test-refund',
+      quoteExpiry: Math.floor(Date.now() / 1000) + 60,
+    });
+
+    await adapter.lock(terms);
+
+    // Premature refund should revert
+    await expect(adapter.refund(lockId)).rejects.toThrow();
+
+    // Fast-forward anvil time past deadline
+    await (
+      publicClient.request as (args: {
+        method: string;
+        params?: unknown[];
+      }) => Promise<unknown>
+    )({
+      method: 'evm_increaseTime',
+      params: [20],
+    });
+    await (
+      publicClient.request as (args: {
+        method: string;
+        params?: unknown[];
+      }) => Promise<unknown>
+    )({
+      method: 'evm_mine',
+      params: [],
+    });
+
+    const refundTx = await adapter.refund(lockId);
+    expect(refundTx.txId).toMatch(/^0x[0-9a-fA-F]{64}$/);
+
+    const state = await adapter.getLock(lockId);
+    expect(state.status).toBe('refunded');
+
+    // Idempotent retry returns existing refund tx
+    const retryRefund = await adapter.refund(lockId);
+    expect(retryRefund.txId).toBe(refundTx.txId);
+  });
+
+  it('estimates relay costs and handles invalid isFinal checks', async () => {
+    const cost = await adapter.estimateRelayCostUsd();
+    expect(cost).toBeGreaterThan(0);
+
+    const nonExistent = await adapter.isFinal(
+      { chain: 'base', txId: `0x${'00'.repeat(32)}` },
+      'safe',
+    );
+    expect(nonExistent).toBe(false);
   });
 });
