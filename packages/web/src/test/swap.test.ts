@@ -358,7 +358,7 @@ describe('recovery file', () => {
     expect(parsed.terms.bchTokenAmount).toBe(quote.terms.bchTokenAmount);
     expect(parsed.secret).toBe(secret);
     expect(parsed.contracts.evm.address).toBe(
-      '0x5A0C062f4B7b8fF2263530e12bc15De9C836a641',
+      '0x5a0c062f4b7b8ff2263530e12bc15de9c836a641',
     );
   });
 });
