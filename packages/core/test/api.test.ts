@@ -379,8 +379,7 @@ describe('API schemas and wire helpers', () => {
 
     const createInvoiceReq = {
       kind: 'invoice' as const,
-      recipientCashaddr:
-        'bchtest:zpy458ba74797c7974890567890123456789012345',
+      recipientCashaddr: 'bchtest:zpy458ba74797c7974890567890123456789012345',
       recipientLockingBytecode: `0x76a914${'44'.repeat(20)}88ac` as const,
       token: 'PUSD' as const,
       amountOut: 4000n,
