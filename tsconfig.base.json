@@ -6,6 +6,7 @@
     // Bundler suits Vite. Node services/libraries override both module and
     // moduleResolution to NodeNext, using .js specifiers for emitted ESM.
     "moduleResolution": "Bundler",
+    "customConditions": ["ferry-source"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,

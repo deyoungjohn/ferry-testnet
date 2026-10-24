@@ -75,3 +75,10 @@ Versions, addresses, chain IDs, decimals, endpoints. Never guess: every row need
 | FACT-A3-014 · Base Sepolia USDC Faucet | https://faucet.circle.com/ | Circle Developer Portal | 2026-10-22 | 3 | Dispenses 10 USDC on Base Sepolia, 2h cooldown |
 | FACT-A3-015 · typescript workspace alignment | 5.9.3 | npm view typescript@5.9.3 version; package.json | 2026-10-23 | 3 | Supersedes FACT-A3-003; aligns with root workspace and typescript-eslint (D-A1-001) |
 | FACT-A3-016 · @types/node runtime alignment | 22.20.5 | npm view @types/node@22.20.5 version; package.json | 2026-10-23 | 3 | Supersedes FACT-A3-004; matches Node 22 LTS runtime |
+| FACT-A2-028 · viem | 2.57.10 | npm view viem version; pnpm install | 2026-10-22 | A2 | Exact dependency pin; coverage provider matches Vitest |
+| FACT-A2-029 · zod | 4.6.7 | npm view zod version; pnpm install | 2026-10-22 | A2 | Exact dependency pin; coverage provider matches Vitest |
+| FACT-A2-030 · fast-check | 4.10.2 | npm view fast-check version; pnpm install | 2026-10-22 | A2 | Exact dependency pin; coverage provider matches Vitest |
+| FACT-A2-031 · cborg | 6.1.4 | npm view cborg version; pnpm install | 2026-10-22 | A2 | Exact dependency pin; coverage provider matches Vitest |
+| FACT-A2-032 · @vitest/coverage-v8 | 5.0.5 | npm view @vitest/coverage-v8@5.0.5 version; pnpm install | 2026-10-22 | A2 | Exact dependency pin; coverage provider matches Vitest |
+| FACT-A2-033 · BSC fixture network ID | 97 (BSC testnet) | https://docs.bnbchain.org/bnb-smart-chain/developers/wallet-configuration/ | 2026-10-22 | A2 | Synthetic HTLC/token/user addresses in the golden fixture are test data, not deployments |
+| FACT-A2-034 · Personal-sign representation | viem raw attribute signs data bytes; string input signs UTF-8 | https://viem.sh/docs/accounts/local/signMessage | 2026-10-22 | A2 | Raw order-id signature passes; text signature rejected by the same verifier |
