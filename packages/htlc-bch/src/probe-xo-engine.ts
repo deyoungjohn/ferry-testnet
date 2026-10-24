@@ -1,4 +1,4 @@
-import { Engine } from '@xo-cash/engine';
+import { Engine, DEFAULT_STORAGE_TYPE } from '@xo-cash/engine';
 import { chipnetServersWithBlockchain } from '@electrum-cash/servers';
 import { hexToBin } from '@bitauth/libauth';
 import { ferryHtlcTemplate } from '../xo/index.js';
@@ -21,12 +21,8 @@ export async function testXoEngine() {
       throw new Error('No chipnet server found');
     }
     const engine = await Engine.create(mnemonic, {
-      network: 'chipnet' as unknown as Parameters<
-        typeof Engine.create
-      >[1]['network'],
-      storageType: 'indexeddb' as unknown as Parameters<
-        typeof Engine.create
-      >[1]['storageType'],
+      network: 'chipnet',
+      storageType: DEFAULT_STORAGE_TYPE,
       databasePath: dbDir,
       electrumServers: [server],
     });
