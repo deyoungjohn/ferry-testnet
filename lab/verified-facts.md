@@ -107,3 +107,8 @@ Versions, addresses, chain IDs, decimals, endpoints. Never guess: every row need
 | FACT-A3-023 · @electrum-cash/servers version | 4.2.0 | npm view @electrum-cash/servers version | 2026-10-24 | 3 | Pinned in packages/htlc-bch/package.json for Chipnet & Mainnet server presets |
 | FACT-A3-024 · S-05 Chipnet probe block height | 329336 (hex: 000000201164c86c...) | blockchain.headers.subscribe on wss://chipnet.imaginary.cash:50004 | 2026-10-24 | 3 | Recorded during S-05 latency probe run |
 | FACT-A3-025 · S-05 Mainnet probe block height | 974345 (hex: 00c01d22f1594b...) | blockchain.headers.subscribe on wss://bch.imaginary.cash:50004 (READ-ONLY) | 2026-10-24 | 3 | Recorded during S-05 server feature check |
+| FACT-A1-016 · Reown AppKit | 1.8.24 | npm view @reown/appkit version; pnpm install | 2026-10-24 | 1 | Exact dependency pin; EVM wallet modal |
+| FACT-A1-017 · Reown AppKit wagmi adapter | 1.8.24 | npm view @reown/appkit-adapter-wagmi version; pnpm install | 2026-10-24 | 1 | Exact dependency pin; paired with AppKit 1.8.24 |
+| FACT-A1-018 · wagmi | 3.7.9 | npm view wagmi version; pnpm install | 2026-10-24 | 1 | Exact dependency pin; Base Sepolia |
+| FACT-A1-019 · WizardConnect packages | react 0.2.3; dapp 0.2.2; core 0.2.5 | npm view @wizardconnect/react version; @wizardconnect/dapp version; @wizardconnect/core version | 2026-10-24 | 1 | Exact pins; matches blueprint F007 |
+| FACT-A1-020 · fake-indexeddb | 6.2.6 | npm view fake-indexeddb version; pnpm install | 2026-10-24 | 1 | Dev-only vault tests; no production bundle |
