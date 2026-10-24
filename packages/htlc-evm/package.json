@@ -1,0 +1,23 @@
+{
+  "name": "@ferry/htlc-evm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ferry EVM HTLC contract, ABI and deterministic deploy script",
+  "exports": {
+    "./abi": "./abi.ts"
+  },
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test && node scripts/check-abi.mjs",
+    "snapshot": "forge snapshot",
+    "abi": "node scripts/export-abi.mjs",
+    "typecheck": "node --check scripts/export-abi.mjs && node --check scripts/check-abi.mjs",
+    "lint": "forge fmt --check"
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "5.6.1",
+    "forge-std": "github:foundry-rs/forge-std#v1.9.7",
+    "prettier": "3.9.10"
+  }
+}
