@@ -154,3 +154,8 @@ Lightweight decision records (template below). Spike answers (S-01â€¦S-14, Q-Aâ€
 - **Q-C03 (Native SQLite Storage in Node.js):** In `@xo-cash/state@0.0.5`, `SQLiteStorage` is noted as `/* (Not implemented yet) */` and `listScriptHashes` is not implemented on the SQLite adapter, forcing Node.js consumers to use `storageType: 'indexeddb'` backed by `indexeddbshim`. What is the timeline for the native `better-sqlite3` storage adapter?
 - **Q-C04 (P2SH32 Unlocking Script Bytecode Composition):** In Libauth compiler configuration for P2SH32 (`lockingScriptTypes[lockingScriptId] = 'p2sh32'`), Libauth automatically appends the serialized redeem script bytecode to the unlocking script. In XO template schemas, should covenant unlocking scripts specify `<redeemBytecode>` explicitly at the tail, or rely on Libauth's compiler to append it?
 
+
+### XO strategy after S-01 = NO (accepting D-A3-002)
+- **Evidence:** D-A3-002: XO engine cannot execute claim/refund (tracks only its own outputs; HD-key signing pipeline); S-02 passes byte-for-byte.
+- **Consequence for rebuild:** CashScript artifact is the executor. XO is used for the `lock` invitation if the hybrid check ( Part B) passes, and the XO template is kept as a verified-equivalent artifact. Treat the Build with XO bounty claim as weak until the human has asked General Protocols the Q-C questions (31 Oct workshop).
+- **Revisit if:** General Protocols confirm a supported way to spend externally created covenant outputs.
