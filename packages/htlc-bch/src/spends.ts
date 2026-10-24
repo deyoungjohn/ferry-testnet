@@ -37,6 +37,7 @@ export interface BuildClaimTxOptions {
   feeSats?: bigint | number; // Default 500n
   network?: CashAddressNetwork;
   provider?: NetworkProvider;
+  overrideDisplayCategory?: string;
 }
 
 export interface BuildRefundTxOptions {
@@ -45,6 +46,7 @@ export interface BuildRefundTxOptions {
   feeSats?: bigint | number; // Default 500n
   network?: CashAddressNetwork;
   provider?: NetworkProvider;
+  overrideDisplayCategory?: string;
 }
 
 export interface BuiltTransaction {
@@ -103,9 +105,9 @@ export function buildClaimTransaction(
         )
       : options.secret;
 
-  const displayCategory = internalToDisplayCategory(
-    options.params.tokenCategory,
-  );
+  const displayCategory =
+    options.overrideDisplayCategory ??
+    internalToDisplayCategory(options.params.tokenCategory);
 
   const utxo = {
     txid: options.utxo.txid,
@@ -184,9 +186,9 @@ export function buildRefundTransaction(
 
   const outputAmount = utxoSatoshis - fee;
 
-  const displayCategory = internalToDisplayCategory(
-    options.params.tokenCategory,
-  );
+  const displayCategory =
+    options.overrideDisplayCategory ??
+    internalToDisplayCategory(options.params.tokenCategory);
 
   const utxo = {
     txid: options.utxo.txid,

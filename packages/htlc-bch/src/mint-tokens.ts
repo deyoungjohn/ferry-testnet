@@ -23,14 +23,49 @@ function getEnvPath(): string {
   return envPath;
 }
 
-export async function mintTokens(): Promise<{
+export interface MintTokensOptions {
+  force?: boolean;
+  envContent?: string;
+  fulcrumClient?: {
+    connect(): Promise<void>;
+    listUnspent(
+      scripthash: string,
+      filter?: string,
+    ): Promise<
+      Array<{
+        height: number;
+        tx_hash: string;
+        tx_pos: number;
+        value: number;
+        token_data?: { category: string; amount: string };
+      }>
+    >;
+    broadcast(rawHex: string): Promise<string>;
+    close(): void;
+  };
+}
+
+export async function mintTokens(options?: MintTokensOptions): Promise<{
   tPusdCategory: string;
   tPusdTxid: string;
   tMusdCategory: string;
   tMusdTxid: string;
 }> {
-  const envPath = getEnvPath();
-  const envContent = fs.readFileSync(envPath, 'utf8');
+  const isForce = options?.force ?? process.argv.includes('--force');
+
+  const envContent =
+    options?.envContent ?? fs.readFileSync(getEnvPath(), 'utf8');
+
+  // Safety check 1: check environment if categories are already configured
+  const envHasTokens =
+    /TPUSD_CATEGORY=[a-f0-9]{64}/i.test(envContent) ||
+    /TMUSD_CATEGORY=[a-f0-9]{64}/i.test(envContent);
+  if (envHasTokens && !isForce) {
+    throw new Error(
+      'Refusing to mint tokens: TPUSD_CATEGORY or TMUSD_CATEGORY is already defined in environment. Pass --force to override.',
+    );
+  }
+
   const match = envContent.match(/SOLVER_BCH_WIF=([^\r\n]+)/);
   if (!match || !match[1]) {
     throw new Error('SOLVER_BCH_WIF not found in .env.local');
@@ -72,14 +107,23 @@ export async function mintTokens(): Promise<{
   console.log(`[Mint] Solver Standard Address: ${stdAddress}`);
   console.log(`[Mint] Solver Token Address: ${tokAddress}`);
 
-  const fulcrum = new FulcrumClient();
+  const fulcrum = options?.fulcrumClient ?? new FulcrumClient();
   await fulcrum.connect();
 
   const scriptHash = libauth.binToHex(
     libauth.sha256.hash(p2pkhBytecode).reverse(),
   );
-  const utxos = await fulcrum.listUnspent(scriptHash);
+  const utxos = await fulcrum.listUnspent(scriptHash, 'include_tokens');
   console.log(`[Mint] Found ${utxos.length} UTXOs for solver on Chipnet`);
+
+  // Safety check 2: check if solver wallet already has token UTXOs
+  const tokenUtxos = utxos.filter((u) => u.token_data);
+  if (tokenUtxos.length > 0 && !isForce) {
+    fulcrum.close();
+    throw new Error(
+      `Refusing to mint tokens: solver wallet already holds ${tokenUtxos.length} token UTXO(s). Pass --force to override.`,
+    );
+  }
 
   const genesisUtxo = utxos.find((u) => u.tx_pos === 0);
   if (!genesisUtxo) {

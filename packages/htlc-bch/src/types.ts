@@ -1,3 +1,7 @@
+import type { OrderTerms } from '@ferry/core';
+
+export type { OrderTerms };
+
 export type CashAddressNetwork = 'chipnet' | 'mainnet';
 
 export interface BchHtlcParameters {
