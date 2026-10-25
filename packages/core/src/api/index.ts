@@ -272,6 +272,13 @@ export const OrderDeadlinesSchema = z.strictObject({
 });
 export type OrderDeadlines = z.infer<typeof OrderDeadlinesSchema>;
 
+export const BchLockUtxoSchema = z.strictObject({
+  txid: text,
+  vout: uint,
+  satoshis: positiveUint64,
+});
+export type BchLockUtxo = z.infer<typeof BchLockUtxoSchema>;
+
 export const OrderStatusResponseSchema = z
   .strictObject({
     orderId: hex32,
@@ -281,6 +288,7 @@ export const OrderStatusResponseSchema = z
     signature: hex,
     signerAddress: evmAddress,
     txIds: OrderTxIdsSchema,
+    bchLock: BchLockUtxoSchema.optional(),
     secret: hex32.optional(),
     deadlines: OrderDeadlinesSchema,
     rejectionReason: text.optional(),

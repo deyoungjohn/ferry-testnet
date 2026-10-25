@@ -111,3 +111,10 @@ Versions, addresses, chain IDs, decimals, endpoints. Never guess: every row need
 | FACT-A3-027 · Chipnet lock builder real run txids | Lock: f52d67c794048bb56b24bf18d695683bea7916fc326f83714a67479057e81e73; Claim: fae826f20ef3717f7bcdb504beb1f5ddd9bed2537b9017f73189c5a8924bcd29 | live Chipnet run via packages/htlc-bch/src/run-chipnet-lock.ts on wss://chipnet.imaginary.cash:50004 | 2026-10-25 | 3 | Real Chipnet user-lock and solver-claim round-trip with 100 tPUSD |
 | FACT-A3-028 · Chipnet XO hybrid lock txid | f1d537078e1ebd0d218190a5b854c32c14114faa9b7518293c5d8bcde867afaf | Live broadcast via Fulcrum to Chipnet | 2026-10-25 | 3 | Funds 100 tPUSD into XO-resolved locking bytecode (aa207253bf163d4bae2fff62603ec1f90c824cff68e6b4d37ca36ca8539eae858dfa87) |
 | FACT-A3-029 · Chipnet XO hybrid claim txid | 0a4e6ddbf0371e0dd8396d7c1cf49bd3a8c69e22b5711a763e74811e5482d2a3 | Live broadcast via Fulcrum to Chipnet | 2026-10-25 | 3 | Spends XO-derived HTLC UTXO via CashScript claim builder with secret preimage, confirmed on Chipnet |
+| FACT-A2-035 · better-sqlite3 | 13.0.3 | npm view better-sqlite3 version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json for SQLite persistence in WAL mode |
+| FACT-A2-036 · @types/better-sqlite3 | 9.6.0 | npm view @types/better-sqlite3 version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json for TypeScript SQLite typings |
+| FACT-A2-037 · fastify | 5.12.7 | npm view fastify version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json for HTTP quote and order API server |
+| FACT-A2-038 · @fastify/cors | 11.3.1 | npm view @fastify/cors version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json for CORS header support |
+| FACT-A2-039 · pino | 10.4.0 | npm view pino version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json with secret redaction logging |
+| FACT-A2-040 · cashscript | 0.14.0 | npm view cashscript@0.14.0 version; pnpm install | 2026-10-25 | A2 | Pinned in packages/solver/package.json for real BCH lock assembly with CashTokens |
+

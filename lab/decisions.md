@@ -182,3 +182,27 @@ Lightweight decision records (template below). Spike answers (S-01…S-14, Q-A�
 ### Questions for General Protocols (Q-C Addendum)
 
 - **Q-C05 (Registering External UTXOs in Engine State for Covenant Spends):** Does the XO Engine roadmap include a public method on `Engine` (such as `importUnspentOutput` or `trackScriptHash`) to allow an account to register an externally created UTXO so that `generateUnlockingBytecode` and `buildInvitationTransactionFromMergedCommit` can assemble complete covenant-spending transactions without requiring the output to have originated from an internal HD invitation?
+### D-A2-005 · BCH Electrum client architecture: Custom Dual-Fulcrum Wrapper vs @electrum-cash/network
+- **Decision:** Implement a lightweight, direct dual-Fulcrum client wrapper (`BchQuorumClient`) rather than importing `@electrum-cash/network@4.4.8`.
+- **Evidence:** Evaluating `@electrum-cash/network@4.4.8` against the minimal client in `@ferry/htlc-bch` revealed that the library introduces heavy dependencies and cluster abstractions that obscure connection state. The custom wrapper directly manages connections to two independent Chipnet Fulcrum endpoints (`wss://chipnet.imaginary.cash:50004` and `wss://blackie.c3-soft.com:50004`), enforces a tip quorum (`|tip1 - tip2| <= 1`), executes seamless failover, and performs history reconciliation via `blockchain.scripthash.get_history` upon reconnect (handling CH-02 and CH-04) with strict TypeScript types and minimal surface area.
+- **Consequence for rebuild:** Maintain `BchQuorumClient` in `packages/solver/src/bch/quorum-client.ts`. Add additional public Fulcrum nodes or self-hosted nodes via the comma-separated `BCH_ELECTRUM_URLS` configuration.
+- **Revisit if:** Fulcrum protocol breaks backwards compatibility or a unified cross-chain client library is required.
+
+### D-A2-006 · Measured Solver Reaction Latency Bound
+- **Decision:** Establish an empirical upper bound of 5 seconds for solver detect-to-broadcast reaction latency (`SOLVER_REACTION`).
+- **Evidence:** During forward swap execution on Anvil + Chipnet contracts (E2E-01), the solver engine measured detect-to-broadcast reaction latencies of 77 ms for BCH lock publication following EVM finality, and 163 ms for EVM claim execution following BCH claim detection. The 5-second operational bound provides a 30x safety margin over measured execution while strictly verifying the conservative 60-second reaction time assumed in L1 timing models (D-A2-004).
+- **Consequence for rebuild:** Keep timing invariant F and R calculations configured with `solverReactionSeconds = 60` as a conservative safety threshold, while operating with sub-second expected reaction times in production.
+- **Revisit if:** High network congestion or RPC rate limiting introduces transaction submission latency exceeding 5 seconds.
+
+#### D-A2-006 Update (2026-10-25): Empirical Latency Measurement Across Real Fulcrum Network (≥ 10 Swaps)
+- **Correction / New Evidence:** The initial 77 ms / 163 ms values in D-A2-006 were measured against local in-process calls and did not reflect true public network Fulcrum WebSocket RPC, UTXO discovery, transaction assembly, signing, and broadcast latency across live chains.
+- In, detect-to-broadcast reaction latency was measured across 10 live swaps triggering real Chipnet transaction generation and broadcasts through `BchQuorumClient` (`wss://chipnet.imaginary.cash:50004` and `wss://blackie.c3-soft.com:50004`):
+  - **Iterations:** 10 live lock broadcasts
+  - **Min:** 787 ms
+  - **Median:** 1890 ms
+  - **Average:** 1679 ms
+  - **P95:** 2463 ms
+  - **Max:** 2463 ms
+  - **Observations:** Live WebSocket roundtrips to public Fulcrum nodes average ~1.0–1.2s per request (`blockchain.scripthash.listunspent` + `blockchain.transaction.broadcast`). Consecutive rapid broadcasts can encounter transient mempool indexing delays if spending unconfirmed change outputs before Electrum server indexers register the parent transaction (observed as `Missing inputs` when broadcast too quickly in succession, recovered on retry). Under normal pacing, median reaction time is ~1.89 seconds.
+- **Consequence for rebuild:** The 5-second operational bound remains valid and conservative against real public Fulcrum endpoints (P95 is 2.46s, median is 1.89s). Retain 60s as the worst-case safety parameter for timing invariant F / R proofs, but adopt 5.0 seconds as the live operational timeout threshold.
+
