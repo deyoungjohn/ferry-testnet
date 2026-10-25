@@ -21,6 +21,7 @@ export interface SolverOrderRecord {
   id: string; // sha256 orderId
   direction: 'BCH_TO_COUNTER' | 'COUNTER_TO_BCH';
   status: ForwardOrderStatus;
+  lane?: 'safe' | 'fast' | undefined;
   terms: OrderTerms;
   hashLock: `0x${string}`;
   secret?: `0x${string}` | undefined;
@@ -48,7 +49,8 @@ export type SolverEvent =
   | { type: 'SWAP_COMPLETE' }
   | { type: 'QUOTE_EXPIRED' }
   | { type: 'INVALID_TERMS'; reason: string }
-  | { type: 'BCH_DEADLINE_PASSED'; refundTxId: string };
+  | { type: 'BCH_DEADLINE_PASSED'; refundTxId: string }
+  | { type: 'COUNTER_DEADLINE_PASSED'; refundTxId: string };
 
 export interface TransitionResult {
   nextStatus: ForwardOrderStatus;

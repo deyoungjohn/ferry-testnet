@@ -356,3 +356,20 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 
 ### Correction to D-A1-016 · endpoint identity
 - “Distinct” now means different normalized hostnames, not merely different URL strings. Case, trailing slashes, schemes or ports on the same host cannot satisfy the two-endpoint mainnet rule. This still cannot prove different operators; deployment review must choose independently run servers.
+---
+
+### D-A2-008 · Reverse swap architecture: EVM check-then-act vs shared BCH write-ahead and relay-claim mechanics
+- **Decision:** In reverse swaps (`BCH_TO_COUNTER`), the roles of BCH and EVM chains are inverted while preserving the identical `ORDER_STATUSES` state machine.
+  1. *User BCH lock discovery:* The engine monitors the P2SH32 covenant address matching the order terms (works for both wallet-signed and manual QR funding), verifying the token category, amount, and satoshi carry before advancing to `USER_LOCK_SEEN` and evaluating the reveal policy (`USER_LOCK_FINAL`).
+  2. *Counter-lock gate:* At counter-lock time `t0`, the engine verifies `quoteExpiry` and evaluates `invariantR({ counterDeadline, bchRefundHeight }, { unixSeconds: now, bchTipHeight })`. If either fails, the order transitions to `REJECTED` without counter-locking.
+  3. *On-chain action execution models (EVM check-then-act vs BCH write-ahead):*
+     - For BCH on-chain transactions (solver lock, refund, and claim), raw transactions are assembled and signed locally. If interrupted by SIGKILL, multiple spends or duplicate UTXO creations could occur. Therefore, BCH operations use a strict write-ahead routine (`executeOrAdoptBchTx`) that persists `{ txid, txHex }` intent in SQLite prior to broadcast, adopting or rebroadcasting the cached bytes on restart.
+     - For EVM on-chain actions (`evmAdapter.lock`, `evmAdapter.claim`, `evmAdapter.refund`), the EVM contract storage (`getLock`) is authoritative and atomic on-chain state. Checking `getLock(lockId)` before acting, relying on Viem's internal transaction management, and verifying on-chain state afterwards provides idempotency and crash-safety without duplicating raw EVM transaction bytes in SQLite. the build notes should distinguish this check-then-act pattern from the raw BCH write-ahead requirement.
+  4. *Relay-claim:* In reverse swaps, the user claims USDC on EVM. To preserve a frictionless gasless UX, `POST /v1/orders/:id/relay-claim` allows the user to submit their secret preimage; the solver validates `sha256(secret) === order.hashLock`, submits `evmAdapter.claim(lockId, secret)` paying EVM gas (factored into the swap spread), moves the order to `USER_CLAIM_SEEN`, and triggers `processSolverBchClaim` to claim the user's BCH tokens.
+- **Evidence:** Tested with unit and integration suites:
+  - `state-machine.test.ts`: 12 reverse state transitions and abort paths.
+  - `api.test.ts`: `BCH_TO_COUNTER` quote generation with Invariant R and derived solver WIF key; `POST /v1/orders/:id/relay-claim` gasless EVM claim.
+  - `reverse.test.ts`: E2E reverse flow, quote expiry rejection, Invariant R failure rejection, deadline EVM refund, and SIGKILL crash resilience during solver BCH claim.
+- **Consequence for rebuild:** Differentiate UTXO-based chain raw-transaction write-ahead from account-based EVM contract check-then-act. Support gasless reverse claims via solver relay.
+- **Revisit if:** EVM gas spike exceeds spread buffer or fee abstraction ERC-4337 is integrated.
+

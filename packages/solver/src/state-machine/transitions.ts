@@ -169,7 +169,8 @@ export function transition(
       return { nextStatus: current };
     }
 
-    case 'BCH_DEADLINE_PASSED': {
+    case 'BCH_DEADLINE_PASSED':
+    case 'COUNTER_DEADLINE_PASSED': {
       if (
         current === 'SOLVER_LOCK_SEEN' ||
         current === 'SECRET_KNOWN' ||

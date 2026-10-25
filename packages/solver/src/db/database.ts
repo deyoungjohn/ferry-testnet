@@ -72,10 +72,11 @@ export class SolverDatabase {
   }
 
   saveOrder(order: SolverOrderRecord): void {
-    const lockId = evmLockId(
-      order.terms.userCounterAddress,
-      order.hashLock,
-    ).toLowerCase();
+    const lockerAddress =
+      order.direction === 'BCH_TO_COUNTER'
+        ? order.terms.solverCounterAddress
+        : order.terms.userCounterAddress;
+    const lockId = evmLockId(lockerAddress, order.hashLock).toLowerCase();
 
     const stmt = this.db.prepare(`
       INSERT INTO orders (
