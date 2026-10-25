@@ -159,3 +159,26 @@ Lightweight decision records (template below). Spike answers (S-01â€¦S-14, Q-Aâ€
 - **Evidence:** D-A3-002: XO engine cannot execute claim/refund (tracks only its own outputs; HD-key signing pipeline); S-02 passes byte-for-byte.
 - **Consequence for rebuild:** CashScript artifact is the executor. XO is used for the `lock` invitation if the hybrid check ( Part B) passes, and the XO template is kept as a verified-equivalent artifact. Treat the Build with XO bounty claim as weak until the human has asked General Protocols the Q-C questions (31 Oct workshop).
 - **Revisit if:** General Protocols confirm a supported way to spend externally created covenant outputs.
+
+#### D-A3-002 hybrid lock check and workaround addendum
+- **Lock Path Verdict:** PARTIAL.
+- **Evidence:**
+  - Evaluated in `packages/htlc-bch/src/probe-xo-hybrid.ts` on Chipnet.
+  - XO Engine successfully imported `ferryHtlcTemplate` and created a lock invitation (`6172320baf1453e4951a2aa5b4dafa37`).
+  - Calling `engine.resolveInvitationOutputLockingBytecode` derived the covenant P2SH32 locking bytecode (`aa207253bf163d4bae2fff62603ec1f90c824cff68e6b4d37ca36ca8539eae858dfa87`), which matches the CashScript contract locking bytecode byte-for-byte (S-02 Parity PASS).
+  - However, driving the transaction signing through XO Engine failed: calling `signInvitation(invitationId, 0)` failed with `Commit not found for merged input 0...` because the template lock transaction defines no inputs. When inputs were explicitly attached to the invitation, signing failed with `InputUnspentOutputUnavailableError` because XO Engine requires spent inputs to be pre-tracked in the local account store (`#accountContext.state`).
+  - In the hybrid model, the solver uses the XO-resolved locking bytecode to fund the covenant on Chipnet with 100 tPUSD and 2000 carry satoshis in transaction `f1d537078e1ebd0d218190a5b854c32c14114faa9b7518293c5d8bcde867afaf` (confirmed on-chain).
+  - The XO-derived HTLC UTXO was subsequently claimed on Chipnet using the CashScript claim builder with the secret preimage in transaction `0a4e6ddbf0371e0dd8396d7c1cf49bd3a8c69e22b5711a763e74811e5482d2a3` (confirmed on-chain).
+  - **Workaround Assessment (45-minute timebox):**
+    - `buildInvitationTransactionFromMergedCommit` successfully constructs the unsigned wire transaction skeleton for the claim action (120 bytes, transaction hash `126922521cfe2e869137963d7efa2b0d3c4c635756dafebd603581b2fb5f8f41`).
+    - However, `generateUnlockingBytecode` fails with `InputUnspentOutputUnavailableError` because the public `Engine` class exposes no `importUtxo` or `trackScriptHash` API to inject external covenant outputs into its internal private store (`#accountContext.state`).
+    - Furthermore, `compileInputUnlockingScript` requires HD derivation key references for all inputs, making pure non-HD covenant unlocking infeasible inside the current engine version.
+- **Consequence for rebuild:**
+  - Build with XO claim remains PARTIAL: XO templates can be used to generate validated swap invitations and deterministic covenant locking scripts across parties, but transaction funding and covenant spend execution (claim/refund) must be driven by CashScript or custom transaction builders.
+  - Append Q-C05 to the questions for General Protocols.
+
+---
+
+### Questions for General Protocols (Q-C Addendum)
+
+- **Q-C05 (Registering External UTXOs in Engine State for Covenant Spends):** Does the XO Engine roadmap include a public method on `Engine` (such as `importUnspentOutput` or `trackScriptHash`) to allow an account to register an externally created UTXO so that `generateUnlockingBytecode` and `buildInvitationTransactionFromMergedCommit` can assemble complete covenant-spending transactions without requiring the output to have originated from an internal HD invitation?
