@@ -233,7 +233,7 @@ Lightweight decision records (template below). Spike answers (S-01…S-14, Q-A�
 - **Consequence for rebuild:** Never trust the file's address or chain id alone. The portable fields are only an envelope; the bytecode hash, live code, BCH re-derivation and order id are the binding checks.
 - **Revisit if:** Recovery files need to carry a signed deployment attestation or support multiple EVM contracts per order.
 
-### D-A3-003 · S-09 Solana HTLC Architecture & Relayer Fee Invariant
+### D-A3-004 · S-09 Solana HTLC Architecture & Relayer Fee Invariant
 - **Decision:** Deploy `ferry_htlc` on Solana as an immutable Anchor program (`DbFyFKCGHZ7Pb3rUsbGtNhYcrvmbGm3qx4mnF4fYnyqN`, upgrade authority set to `none`), using an escrow PDA keyed by `[b"lock", owner, hash_lock]` and a vault PDA token account `[b"vault", lock_pda]`. Support relayer-as-fee-payer with automatic idempotent recipient ATA creation inside the `claim` instruction funded by the relayer, strictly maintaining the recipient's SOL balance delta at zero.
 - **Evidence:** Spike S-09 evaluated on Solana Devnet:
   - Deployed immutable program `DbFyFKCGHZ7Pb3rUsbGtNhYcrvmbGm3qx4mnF4fYnyqN` (slot 514794976), verified `Authority: none`.
@@ -242,3 +242,5 @@ Lightweight decision records (template below). Spike answers (S-01…S-14, Q-A�
   - All 10 local Anchor unit/integration tests passed on `solana-test-validator 4.1.2`, including double claim/refund rejection and fresh ATA creation.
 - **Consequence for rebuild:** Solana integration in `@ferry/chain-solana` should use `packages/htlc-solana`'s exported instruction builders (`buildLockInstruction`, `buildClaimInstruction`, `buildRefundInstruction`). The relayer acts as fee payer on `claim` transactions.
 - **Revisit if:** Token-2022 confidential transfers or custom transfer hooks are required in future phases.
+
+> Note (2026-10-27): the S-09 Solana decision was submitted as D-A3-003, a duplicate of the Fulcrum latency decision; renumbered D-A3-004. References to "D-A3-003" in the Solana PR text mean D-A3-004.
