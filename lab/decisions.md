@@ -383,3 +383,6 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** Web unit tests 90/90, default UI Playwright 22/22 and standalone recovery Playwright 4/4. Entry JS is 306.45 kB raw, still below 400 kB.
 - **Consequence for rebuild:** Run semantic automation on all judge paths, but retain the keyboard and responsive flows because axe alone cannot validate interaction order, media preferences or layout.
 - **Revisit if:** New routes, wallet surfaces or supported browsers require additional axe states or non-Chromium media-emulation coverage.
+
+### Correction to D-A1-018 · post-rebase test count
+- After rebasing onto the merged Solana/Tron work, the final web unit count is 93/93 rather than 90/90. Browser and recovery counts remain 22/22 and 4/4. FACT-A1-042 records the final clean-clone gates.
