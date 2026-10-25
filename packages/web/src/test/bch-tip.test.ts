@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   ElectrumBchTipReader,
+  bchQuoteConfigError,
   fetchBchTip,
   type ElectrumTipFactory,
 } from '../lib/bch/tip';
@@ -45,5 +46,35 @@ describe('independent BCH tip', () => {
     now += 30_001;
     await expect(reader.read()).resolves.toBe(100);
     expect(read).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('BCH quote network validation', () => {
+  it('refuses mainnet quoting with a single Electrum endpoint', () => {
+    expect(bchQuoteConfigError('mainnet', [])).toMatch(
+      /two independent BCH Electrum endpoints/i,
+    );
+    expect(bchQuoteConfigError('mainnet', ['wss://one'])).toMatch(
+      /two independent BCH Electrum endpoints/i,
+    );
+    expect(bchQuoteConfigError('mainnet', ['wss://one', 'wss://one'])).toMatch(
+      /two independent BCH Electrum endpoints/i,
+    );
+    expect(
+      bchQuoteConfigError('mainnet', [
+        'wss://ONE.example:50004',
+        'wss://one.example:50005/',
+      ]),
+    ).toMatch(/two independent BCH Electrum endpoints/i);
+  });
+
+  it('allows mainnet quoting with two independent endpoints', () => {
+    expect(
+      bchQuoteConfigError('mainnet', ['wss://one', 'wss://two']),
+    ).toBeNull();
+  });
+
+  it('leaves chipnet quoting unchanged', () => {
+    expect(bchQuoteConfigError('chipnet', ['wss://one'])).toBeNull();
   });
 });

@@ -5,6 +5,8 @@
  * decision separate from the browser globals.
  */
 
+import { useEffect, useState } from 'react';
+
 export interface LensEnvironment {
   supports: (property: string, value: string) => boolean;
   userAgent: string;
@@ -45,4 +47,14 @@ export function detectLensSupport(): boolean {
     userAgent: nav.userAgent,
     ...(brands ? { brands } : {}),
   });
+}
+
+export function useGlassLens(): boolean {
+  const [supported, setSupported] = useState(false);
+
+  useEffect(() => {
+    setSupported(detectLensSupport());
+  }, []);
+
+  return supported;
 }

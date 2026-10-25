@@ -4,7 +4,7 @@ import {
   buildRefundTransaction,
   deriveHtlcAddresses,
 } from '@ferry/htlc-bch';
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import {
   BASE_EXPLORER_URL,
@@ -26,6 +26,11 @@ import { formatPusd, formatUsdc, truncateAddress } from '../lib/swap';
 import { useWallets } from '../lib/wallet/context';
 import { CheckIcon, ShieldIcon } from '../components/icons';
 
+const StatusDrawer = lazy(async () => {
+  const module = await import('../components/StatusDrawer');
+  return { default: module.StatusDrawer };
+});
+
 const ORDER_ID_PATTERN = /^0x[0-9a-fA-F]{64}$/;
 
 export function SwapStatusPage() {
@@ -38,6 +43,7 @@ export function SwapStatusPage() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const id =
     orderId && ORDER_ID_PATTERN.test(orderId) ? (orderId as Hex32) : null;
@@ -418,9 +424,19 @@ export function SwapStatusPage() {
           <section className="mt-5 rounded-card border border-hairline bg-surface-1 p-5 sm:p-6">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-sm font-semibold text-text">Timeline</h2>
-              <span className="text-[10px] text-text-muted">
-                {usingMocks ? 'Mock solver' : 'Live solver'} · updates every 2s
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] text-text-muted">
+                  {usingMocks ? 'Mock solver' : 'Live solver'} · updates every
+                  2s
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setDrawerOpen(true)}
+                  className="rounded-pill border border-hairline bg-surface-2 px-2.5 py-1 text-[10px] font-medium text-text-muted transition-colors hover:border-lime/30 hover:text-lime"
+                >
+                  Open live drawer
+                </button>
+              </div>
             </div>
             <ol className="mt-4 space-y-0">
               {view.steps.map((step, index) => (
@@ -695,6 +711,17 @@ export function SwapStatusPage() {
             The secret is only revealed by the BCH claim; the status endpoint
             cannot supply it.
           </p>
+
+          {drawerOpen ? (
+            <Suspense fallback={null}>
+              <StatusDrawer
+                open
+                onOpenChange={setDrawerOpen}
+                view={view}
+                orderId={id}
+              />
+            </Suspense>
+          ) : null}
         </>
       ) : null}
     </main>

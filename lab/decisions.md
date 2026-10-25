@@ -331,3 +331,28 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 
 5. **Arbitrum Sepolia & BSC Testnet Funding Checklist:**
    - Both networks require faucet funding for Deployer and Solver wallets before on-chain deployment can execute.
+### D-A1-015 · glass surfaces share one layer budget and lazy overlay chunk
+- **Decision:** `GlassModal` uses Radix Dialog on desktop and swaps to the vaul `GlassSheet` below 768 px; `GlassPopover` uses Radix Popover; `GlassNav` only gains the glass surface after 24 px of scroll; `StatusDrawer` is a sheet; `GlassToast` is a CSS entry animation. The token picker, NavBar wallet sheet and review-and-confirm dialog use `GlassModal`. The direct “Ferry it” path remains the primary action; the review dialog is an optional second confirmation so the existing quote/lock flow and E2E timing do not regress.
+- **Layer budget:** `GlassLayerBudget` allows at most two visible glass panels. `useGlassLayer` registers modal/sheet/toast surfaces; unit tests assert the third acquisition throws and the DEV provider warns instead of crashing the UI. The E2E wallet test counts `[data-glass-panel]` nodes while the sheet is open.
+- **Lens and motion:** `useGlassLens` enables `.glass--lensed` only when Chromium supports `backdrop-filter: url(#ferry-lens)`; the filter lives in `index.html` and the 256×256 displacement map is `/glass/rim-displacement.png`. Safari and reduced-transparency modes fall back to a plain blur/surface. Modal and sheet springs use stiffness 420/damping 34; blur radius is never animated, and `will-change` is present only under `.glass-motion[data-animating='true']`.
+- **Contrast:** The base glass tint is `rgba(8, 8, 10, 0.60)` over the lime glow. The Playwright contrast test hides panel content and pseudo-elements, screenshots the brightest central region, and checks both `--text` and `--text-muted` against 4.5:1. The tint was raised until that test passed; text tokens were not changed.
+- **Loading:** Overlays are dynamic imports. `GlassSheet`/framer-motion is a 168.87 kB lazy chunk and is no longer preloaded by the initial route; `GlassToast` no longer pulls framer-motion into the entry. Entry JS is 287.18 kB (91.02 kB gzip), under the 400 kB target. The trade-off is that a first open of a sheet waits for a small chunk; closing unmounts the overlay instead of preserving an exit animation.
+- **Evidence:** Web unit 86/86, full UI E2E 13/13, recover E2E 4/4, root 298 passed and 2 skipped outside `htlc-solana`, root build/typecheck/lint/format green. `recover.html` remains 1,493,381 bytes with SHA-256 `6b749cb260f851bc0cacf90f4faefeee8b3d78df60431ab610ed74f8f056bd89`.
+- **Consequence for rebuild:** Keep one overlay implementation and one layer budget. Do not add a second modal library or animate blur. Load heavy overlay dependencies only when a surface opens, and keep the primary CTA usable without opening the optional review dialog.
+- **Revisit if:** vaul/Radix/framer-motion cost becomes a mobile performance problem, or the product decides the review dialog must be mandatory.
+
+### D-A1-016 · mainnet quoting requires two independent Electrum endpoints
+- **Decision:** `bchQuoteConfigError(network, urls)` returns an error only when `network === 'mainnet'` and fewer than two distinct, non-empty Electrum URLs are configured. The exact message is `Mainnet quoting requires two independent BCH Electrum endpoints. Set VITE_BCH_ELECTRUM_URL_2.` The helper deduplicates trimmed URLs. `SwapCard` and `PayLinkPage` block quote submission, and `HttpSolverClient.#assertQuoteConfig()` enforces the same rule inside `quote` and `quotePayLink`.
+- **Current scope:** `BCH_NETWORK` is still the literal `chipnet` for this lab, so the rule is inert at runtime today. It is deliberately a pure config guard with unit coverage so enabling mainnet later cannot silently rely on one colluding server. `.env.example` already contains `VITE_BCH_ELECTRUM_URL_2`; this branch does not edit it.
+- **Evidence:** `bch-tip.test.ts` covers one mainnet URL, duplicate mainnet URLs, two distinct mainnet URLs, and chipnet with one URL. Root checks and the full UI/recover E2E suites are green.
+- **Consequence for rebuild:** Keep the rule in the shared BCH config layer, not only in the form. Any future mainnet mode must require two independently operated endpoints before quoting; a single endpoint can still be used for read-only tip display but not for a quote-enabling path.
+- **Revisit if:** `BCH_NETWORK` becomes a runtime environment setting, or the solver gains its own independent tip quorum.
+
+### Correction to D-A1-015 · final reduced-motion build
+- The final reduced-motion overrides increased CSS to 43.65 kB (8.99 kB gzip) and changed entry gzip size to 91.03 kB; entry JS remains 287.18 kB and the lazy GlassSheet chunk remains 168.87 kB (54.44 kB gzip). FACT-A1-035 records the final values.
+
+### Correction to D-A1-015 · lazy status drawer and sticky nav
+- The final pass keeps `.glass-nav` explicitly `position: sticky` because `.glass` sets `position: relative`, and lazy-loads `StatusDrawer` so the 168.87 kB GlassSheet chunk is fetched only when the drawer opens. Final entry JS is 287.19 kB (91.02 kB gzip), CSS is 43.64 kB (8.99 kB gzip), `SwapStatusPage` is 16.90 kB and `StatusDrawer` is 2.44 kB. FACT-A1-036 supersedes the prior bundle corrections.
+
+### Correction to D-A1-016 · endpoint identity
+- “Distinct” now means different normalized hostnames, not merely different URL strings. Case, trailing slashes, schemes or ports on the same host cannot satisfy the two-endpoint mainnet rule. This still cannot prove different operators; deployment review must choose independently run servers.

@@ -8,7 +8,7 @@
       rgba(255, 255, 255, 0.03) 40%,
       rgba(255, 255, 255, 0.02) 100%
     ),
-    rgba(12, 12, 14, 0.28);
+    rgba(8, 8, 10, 0.6);
   -webkit-backdrop-filter: blur(22px) saturate(185%) brightness(1.05);
   backdrop-filter: blur(22px) saturate(185%) brightness(1.05);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -34,7 +34,7 @@
 }
 
 .glass--lensed {
-  -webkit-backdrop-filter: none;
+  -webkit-backdrop-filter: blur(22px) saturate(185%) brightness(1.05);
   backdrop-filter: url(#ferry-lens) blur(18px) saturate(185%);
 }
 
@@ -43,6 +43,118 @@
   .glass--lensed {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
+    background: var(--surface-3);
+  }
+}
+
+.glass-scrim {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.glass-nav {
+  position: sticky;
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+  box-shadow:
+    inset 0 -1px 0 rgba(255, 255, 255, 0.04),
+    0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+.glass-modal {
+  border-radius: var(--r-card);
+}
+
+.glass-sheet {
+  border-radius: var(--r-card) var(--r-card) 0 0;
+}
+
+.glass-popover {
+  border-radius: var(--r-well);
+}
+
+.glass-toast {
+  border-radius: var(--r-well);
+}
+
+.glass-toast-in {
+  animation: glass-toast-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes glass-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes glass-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes glass-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass-toast-in {
+    animation: none;
+  }
+
+  [data-vaul-drawer] {
+    animation-duration: 120ms !important;
+    transition-duration: 1ms !important;
+  }
+
+  [data-vaul-drawer][data-state='open'] {
+    animation-name: glass-fade-in !important;
+  }
+
+  [data-vaul-drawer][data-state='closed'] {
+    animation-name: glass-fade-out !important;
+  }
+
+  [data-vaul-overlay] {
+    animation-duration: 120ms !important;
+  }
+}
+
+.glass-motion[data-animating='true'] {
+  will-change: transform;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass-popover,
+  .glass-toast,
+  .glass-sheet,
+  .glass-modal,
+  .glass-nav {
+    background: var(--surface-3);
+  }
+}
+
+@supports not (
+  (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))
+) {
+  .glass {
     background: var(--surface-3);
   }
 }

@@ -1,35 +1,12 @@
 import type { Direction } from '@ferry/core';
-import type { QuoteRequest, SignedQuote } from '../lib/solver/types';
-import {
-  assertTermsMatchRequest,
-  assertTimingInvariant,
-  isQuoteExpired,
-  verifySignedQuote,
-  type TermsCheckConfig,
-} from '../lib/solver/verify';
-import { formatDuration } from '../lib/solver/view';
-import type { RecoveryFile } from '../lib/recovery';
-import { buildRecoveryFile, downloadRecoveryFile } from '../lib/recovery';
-import { saveSecret } from '../lib/vault';
-import {
-  buildIntentTypedData,
-  buildPermitTypedData,
-  formatPusd,
-  formatUsdc,
-  generateSecret,
-  hashLockForSecret,
-  parsePusdAmount,
-  parseUsdcAmount,
-  quoteRate,
-  truncateAddress,
-} from '../lib/swap';
-import { PUSD_BCH, USDC_BASE } from '../lib/tokens';
-import { useSolver } from '../lib/solver/context';
-import { useWallets } from '../lib/wallet/context';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router';
+import { bchElectrumUrls, bchQuoteConfigError } from '../lib/bch/tip';
 import {
   BASE_SEPOLIA_CHAIN_ID,
   BCH_CARRY_SATS,
   BCH_MAX_FEE_SATS,
+  BCH_NETWORK,
   FERRY_HTLC_ADDRESS,
   FIXED_FEE_USD_MICROS,
   FWD_BCH_REFUND_BLOCKS,
@@ -47,21 +24,49 @@ import {
   USDC_DECIMALS,
 } from '../lib/config';
 import {
-  lazy,
-  Suspense,
-  useEffect,
-  useMemo,
-  useState,
-  type FormEvent,
-} from 'react';
-import { useNavigate } from 'react-router';
+  buildRecoveryFile,
+  downloadRecoveryFile,
+  type RecoveryFile,
+} from '../lib/recovery';
+import { useSolver } from '../lib/solver/context';
+import type { QuoteRequest, SignedQuote } from '../lib/solver/types';
+import {
+  assertTermsMatchRequest,
+  assertTimingInvariant,
+  isQuoteExpired,
+  verifySignedQuote,
+  type TermsCheckConfig,
+} from '../lib/solver/verify';
+import { formatDuration } from '../lib/solver/view';
+import {
+  buildIntentTypedData,
+  buildPermitTypedData,
+  formatPusd,
+  formatUsdc,
+  generateSecret,
+  hashLockForSecret,
+  parsePusdAmount,
+  parseUsdcAmount,
+  quoteRate,
+} from '../lib/swap';
+import { useToast } from '../lib/toast';
+import { PUSD_BCH, USDC_BASE } from '../lib/tokens';
+import { saveSecret } from '../lib/vault';
+import { useWallets } from '../lib/wallet/context';
 import { ArrowUpDownIcon, CheckIcon, ShieldIcon } from './icons';
+import { TokenPill } from './TokenPill';
+import { WalletPanel } from './WalletPanel';
+import { Well } from './Well';
+
 const ReverseFundingPanel = lazy(async () => {
   const module = await import('./ReverseFundingPanel');
   return { default: module.ReverseFundingPanel };
 });
-import { TokenPill } from './TokenPill';
-import { Well } from './Well';
+
+const ReviewDialog = lazy(async () => {
+  const module = await import('./ReviewDialog');
+  return { default: module.ReviewDialog };
+});
 
 type Phase = 'idle' | 'quoting' | 'quoted' | 'locking';
 
@@ -87,8 +92,8 @@ export function SwapCard() {
   const [signatureValid, setSignatureValid] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
-  const [paste, setPaste] = useState('');
-  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const toast = useToast();
 
   useEffect(() => {
     const timer = window.setInterval(
@@ -106,7 +111,8 @@ export function SwapCard() {
     : 'Mock solver';
   const busy = phase === 'quoting' || phase === 'locking';
   const walletsReady = Boolean(evm.address && bch.address);
-  const canQuote = walletsReady && !busy;
+  const quoteConfigError = bchQuoteConfigError(BCH_NETWORK, bchElectrumUrls());
+  const canQuote = walletsReady && !busy && !quoteConfigError;
 
   const receiveAmount = quote
     ? reverse
@@ -142,6 +148,10 @@ export function SwapCard() {
   }
 
   async function handleQuote(): Promise<void> {
+    if (quoteConfigError) {
+      setError(quoteConfigError);
+      return;
+    }
     if (!evm.address || !bch.address) {
       setError('Connect the BCH wallet first, then the Base wallet.');
       return;
@@ -243,6 +253,12 @@ export function SwapCard() {
     if (!recovery) return;
     downloadRecoveryFile(recovery);
     setRecoveryDownloaded(true);
+    toast.push('Recovery file downloaded. Keep it somewhere safe.', 'success');
+  }
+
+  function handleTokenSelect(next: { readonly symbol: string }): void {
+    const nextIsPusd = next.symbol === PUSD_SYMBOL;
+    if (nextIsPusd !== reverse) handleDirection();
   }
 
   async function handleFerry(): Promise<void> {
@@ -287,19 +303,6 @@ export function SwapCard() {
       setPhase('quoted');
       setError(cause instanceof Error ? cause.message : 'Locking failed');
     }
-  }
-
-  async function handlePaste(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const { parseBchAddress } = await import('../lib/bch/address');
-    const parsed = parseBchAddress(paste);
-    if (!parsed.ok) {
-      setPasteError(parsed.error);
-      return;
-    }
-    bch.setAddress(parsed.value);
-    setPaste('');
-    setPasteError(null);
   }
 
   return (
@@ -353,93 +356,8 @@ export function SwapCard() {
         </div>
       </div>
 
-      <div
-        id="wallet-panel"
-        className="mt-4 rounded-well border border-hairline bg-surface-2/60 p-3"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-[10px] font-medium tracking-[0.14em] text-text-muted uppercase">
-              BCH wallet first
-            </p>
-            <p className="mt-0.5 truncate text-xs text-text">
-              {bch.address
-                ? `${bch.walletName ?? 'BCH wallet'} · ${truncateAddress(bch.address.address, 12, 6)}`
-                : 'Connect Selene, Paytaca or paste an address'}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              if (bch.status === 'connected') {
-                void bch.disconnect();
-              } else {
-                bch.connect();
-              }
-            }}
-            className="rounded-pill border border-hairline bg-surface-3 px-3 py-1.5 text-xs font-medium text-text transition-colors hover:border-lime/30 hover:text-lime"
-          >
-            {bch.status === 'connected' ? 'Disconnect BCH' : 'Connect BCH'}
-          </button>
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-hairline pt-3">
-          <div className="min-w-0">
-            <p className="text-[10px] font-medium tracking-[0.14em] text-text-muted uppercase">
-              Base wallet
-            </p>
-            <p className="mt-0.5 truncate text-xs text-text">
-              {evm.status === 'unavailable'
-                ? 'Wallet connect needs a Reown project ID'
-                : evm.address
-                  ? `Base Sepolia · ${truncateAddress(evm.address)}`
-                  : 'Connect a Base Sepolia wallet'}
-            </p>
-          </div>
-          <button
-            type="button"
-            disabled={evm.status === 'unavailable'}
-            onClick={() => {
-              if (evm.status === 'connected') {
-                void evm.disconnect();
-              } else {
-                evm.connect();
-              }
-            }}
-            className="rounded-pill border border-hairline bg-surface-3 px-3 py-1.5 text-xs font-medium text-text transition-colors hover:border-lime/30 hover:text-lime disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {evm.status === 'connected' ? 'Disconnect Base' : 'Connect Base'}
-          </button>
-        </div>
-
-        <details className="mt-2 text-[11px] text-text-muted">
-          <summary className="cursor-pointer select-none hover:text-text">
-            Paste a token-aware BCH address instead
-          </summary>
-          <form
-            onSubmit={(event) => void handlePaste(event)}
-            className="mt-2 flex gap-2"
-          >
-            <input
-              value={paste}
-              onChange={(event) => setPaste(event.target.value)}
-              placeholder="bchtest:z…"
-              aria-label="BCH token-aware address"
-              className="min-w-0 flex-1 rounded-pill border border-hairline bg-surface-1 px-3 py-1.5 font-mono text-[11px] text-text outline-none focus:border-lime/50"
-            />
-            <button
-              type="submit"
-              className="rounded-pill bg-surface-3 px-3 py-1.5 text-[11px] font-medium text-text"
-            >
-              Use
-            </button>
-          </form>
-          {pasteError ? (
-            <p role="alert" className="mt-1 text-danger">
-              {pasteError}
-            </p>
-          ) : null}
-        </details>
+      <div className="mt-4">
+        <WalletPanel />
       </div>
 
       <div className="mt-5">
@@ -454,6 +372,7 @@ export function SwapCard() {
             <TokenPill
               token={reverse ? PUSD_BCH : USDC_BASE}
               pinned={reverse}
+              onSelect={handleTokenSelect}
             />
           }
           editable
@@ -538,6 +457,15 @@ export function SwapCard() {
         </p>
       ) : null}
 
+      {quoteConfigError ? (
+        <p
+          role="alert"
+          className="mt-3 rounded-well border border-warn/25 bg-warn/5 px-3 py-2 text-[11px] leading-5 text-warn"
+        >
+          {quoteConfigError}
+        </p>
+      ) : null}
+
       <div className="mt-4 space-y-2">
         {quote ? (
           <button
@@ -553,6 +481,16 @@ export function SwapCard() {
             ) : (
               'Download recovery file'
             )}
+          </button>
+        ) : null}
+
+        {quote && !reverse ? (
+          <button
+            type="button"
+            onClick={() => setReviewOpen(true)}
+            className="flex h-11 w-full items-center justify-center rounded-pill border border-hairline bg-surface-2 text-sm font-medium text-text transition-colors hover:border-lime/30 hover:text-lime"
+          >
+            Review and confirm
           </button>
         ) : null}
 
@@ -640,6 +578,24 @@ export function SwapCard() {
         Refunds are automatic if the swap stalls. BCH carry{' '}
         {BCH_CARRY_SATS.toString()} sats.
       </p>
+
+      {quote && !reverse && reviewOpen ? (
+        <Suspense fallback={null}>
+          <ReviewDialog
+            open
+            onOpenChange={setReviewOpen}
+            quote={quote}
+            recovery={recovery}
+            recoveryDownloaded={recoveryDownloaded}
+            expired={expired}
+            busy={busy}
+            reverse={reverse}
+            now={now}
+            onDownload={handleDownload}
+            onConfirm={() => void handleFerry()}
+          />
+        </Suspense>
+      ) : null}
     </section>
   );
 }
