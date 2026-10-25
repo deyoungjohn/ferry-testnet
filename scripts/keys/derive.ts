@@ -9,6 +9,8 @@ import {
   ripemd160,
 } from '@bitauth/libauth';
 import { privateKeyToAccount } from 'viem/accounts';
+import { Keypair } from '@solana/web3.js';
+import bs58 from 'bs58';
 import type { BchAddressInfo } from './types.js';
 
 export type CashAddressNetworkPrefix = 'bchtest' | 'bitcoincash' | 'bchreg';
@@ -139,4 +141,50 @@ export function deriveEvmAddress(privateKey: string): `0x${string}` {
   ) as `0x${string}`;
   const account = privateKeyToAccount(formattedKey);
   return account.address;
+}
+
+/**
+ * Generate a new Solana Keypair formatted as a base58 secretKey string.
+ */
+export function generateSolanaKeypair(): string {
+  const kp = Keypair.generate();
+  return bs58.encode(kp.secretKey);
+}
+
+/**
+ * Validate a Solana keypair string (either base58-encoded 64 bytes or JSON array).
+ */
+export function isValidSolanaKeypair(key: string): boolean {
+  const trimmed = key.trim();
+  if (!trimmed) return false;
+  try {
+    if (trimmed.startsWith('[')) {
+      const bytes = JSON.parse(trimmed);
+      if (!Array.isArray(bytes) || bytes.length !== 64) return false;
+      Keypair.fromSecretKey(Uint8Array.from(bytes));
+      return true;
+    }
+    const decoded = bs58.decode(trimmed);
+    if (decoded.length !== 64) return false;
+    Keypair.fromSecretKey(decoded);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Derive Solana base58 public address from a keypair string (base58 or JSON array).
+ */
+export function deriveSolanaAddress(key: string): string {
+  const trimmed = key.trim();
+  let kp: Keypair;
+  if (trimmed.startsWith('[')) {
+    const bytes = JSON.parse(trimmed);
+    kp = Keypair.fromSecretKey(Uint8Array.from(bytes));
+  } else {
+    const decoded = bs58.decode(trimmed);
+    kp = Keypair.fromSecretKey(decoded);
+  }
+  return kp.publicKey.toBase58();
 }

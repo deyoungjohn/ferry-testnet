@@ -15,7 +15,15 @@ export const EVM_KEY_ROLES = [
 
 export type EvmKeyRole = (typeof EVM_KEY_ROLES)[number];
 
-export type KeyRole = BchKeyRole | EvmKeyRole;
+export const SOL_KEY_ROLES = [
+  'DEPLOYER_SOL_KEYPAIR',
+  'SOLVER_SOL_KEYPAIR',
+  'USER_SOL_KEYPAIR',
+] as const;
+
+export type SolKeyRole = (typeof SOL_KEY_ROLES)[number];
+
+export type KeyRole = BchKeyRole | EvmKeyRole | SolKeyRole;
 
 export interface BchAddressInfo {
   plain: string;
@@ -27,4 +35,5 @@ export type AddressOrStatus<T> = T | 'INVALID' | null;
 export interface RoleAddresses {
   bch: Record<BchKeyRole, AddressOrStatus<BchAddressInfo>>;
   evm: Record<EvmKeyRole, AddressOrStatus<string>>;
+  sol: Record<SolKeyRole, AddressOrStatus<string>>;
 }

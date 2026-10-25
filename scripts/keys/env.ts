@@ -4,17 +4,22 @@ import { execSync } from 'node:child_process';
 import {
   BCH_KEY_ROLES,
   EVM_KEY_ROLES,
+  SOL_KEY_ROLES,
   type KeyRole,
   type RoleAddresses,
 } from './types.js';
 import {
   generateBchTestnetWif,
   generateEvmPrivateKey,
+  generateSolanaKeypair,
   deriveBchAddressesFromWif,
   deriveEvmAddress,
+  deriveSolanaAddress,
   isValidBchWif,
   isValidEvmPrivateKey,
+  isValidSolanaKeypair,
 } from './derive.js';
+import bs58 from 'bs58';
 
 /**
  * Resolve the path to .env.local in the main repository checkout.
@@ -99,6 +104,11 @@ export function generateMissingKeys(
       USER_EVM_PRIVATE_KEY: null,
       USER2_EVM_PRIVATE_KEY: null,
     },
+    sol: {
+      DEPLOYER_SOL_KEYPAIR: null,
+      SOLVER_SOL_KEYPAIR: null,
+      USER_SOL_KEYPAIR: null,
+    },
   };
 
   const keysToFillInPlace = new Map<string, string>();
@@ -150,6 +160,40 @@ export function generateMissingKeys(
         keysToFillInPlace.set(role, newPrivKey);
       } else {
         keysToAppend.push({ key: role, value: newPrivKey });
+      }
+    }
+  }
+
+  // 3. Process Solana roles
+  for (const role of SOL_KEY_ROLES) {
+    const rawVal = parsedEnv[role];
+    if (rawVal !== undefined && rawVal !== '') {
+      skippedKeys.push(role);
+      if (isValidSolanaKeypair(rawVal)) {
+        addresses.sol[role] = deriveSolanaAddress(rawVal);
+      } else {
+        addresses.sol[role] = 'INVALID';
+        invalidKeys.push(role);
+      }
+    } else {
+      let newKey: string;
+      const deployerFile = '/home/user/.config/solana/devnet-deployer.json';
+      if (role === 'DEPLOYER_SOL_KEYPAIR' && fs.existsSync(deployerFile)) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(deployerFile, 'utf8'));
+          newKey = bs58.encode(Uint8Array.from(raw));
+        } catch {
+          newKey = generateSolanaKeypair();
+        }
+      } else {
+        newKey = generateSolanaKeypair();
+      }
+      generatedKeys.push(role);
+      addresses.sol[role] = deriveSolanaAddress(newKey);
+      if (rawVal === '') {
+        keysToFillInPlace.set(role, newKey);
+      } else {
+        keysToAppend.push({ key: role, value: newKey });
       }
     }
   }
@@ -235,6 +279,11 @@ export function getAddressesFromEnv(
       USER_EVM_PRIVATE_KEY: null,
       USER2_EVM_PRIVATE_KEY: null,
     },
+    sol: {
+      DEPLOYER_SOL_KEYPAIR: null,
+      SOLVER_SOL_KEYPAIR: null,
+      USER_SOL_KEYPAIR: null,
+    },
   };
 
   for (const role of BCH_KEY_ROLES) {
@@ -256,6 +305,18 @@ export function getAddressesFromEnv(
         addresses.evm[role] = deriveEvmAddress(val);
       } else {
         addresses.evm[role] = 'INVALID';
+        invalidKeys.push(role);
+      }
+    }
+  }
+
+  for (const role of SOL_KEY_ROLES) {
+    const val = env[role];
+    if (val !== undefined && val !== '') {
+      if (isValidSolanaKeypair(val)) {
+        addresses.sol[role] = deriveSolanaAddress(val);
+      } else {
+        addresses.sol[role] = 'INVALID';
         invalidKeys.push(role);
       }
     }
@@ -292,6 +353,19 @@ export function formatAddressesOutput(addresses: RoleAddresses): string {
   lines.push('\n=== EVM Testnet Roles (Base Sepolia) ===');
   for (const role of EVM_KEY_ROLES) {
     const addr = addresses.evm[role];
+    lines.push(`  ${role}:`);
+    if (addr === 'INVALID') {
+      lines.push('    Address:             INVALID');
+    } else if (addr) {
+      lines.push(`    Address:             ${addr}`);
+    } else {
+      lines.push('    [Not configured in .env.local]');
+    }
+  }
+
+  lines.push('\n=== Solana Devnet Roles ===');
+  for (const role of SOL_KEY_ROLES) {
+    const addr = addresses.sol[role];
     lines.push(`  ${role}:`);
     if (addr === 'INVALID') {
       lines.push('    Address:             INVALID');

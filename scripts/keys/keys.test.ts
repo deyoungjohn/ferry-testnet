@@ -7,8 +7,10 @@ import {
   deriveBchAddressesFromPkh,
   deriveBchAddressesFromWif,
   deriveEvmAddress,
+  deriveSolanaAddress,
   isValidBchWif,
   isValidEvmPrivateKey,
+  isValidSolanaKeypair,
 } from './derive.js';
 import {
   generateMissingKeys,
@@ -16,7 +18,7 @@ import {
   parseEnvFile,
   formatAddressesOutput,
 } from './env.js';
-import { BCH_KEY_ROLES, EVM_KEY_ROLES } from './types.js';
+import { BCH_KEY_ROLES, EVM_KEY_ROLES, SOL_KEY_ROLES } from './types.js';
 
 describe('Key Derivation Vectors & Provenance', () => {
   it('correctly derives BCH plain and token-aware addresses from known Libauth test vector', () => {
@@ -76,6 +78,18 @@ describe('Key Derivation Vectors & Provenance', () => {
     const address = deriveEvmAddress(privKey);
     expect(address).toBe('0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf');
   });
+
+  it('correctly derives Solana address from known keypair vector', async () => {
+    // Generate valid Keypair from known 32-byte seed
+    const { Keypair } = await import('@solana/web3.js');
+    const seed = new Uint8Array(32).fill(1);
+    const kp = Keypair.fromSeed(seed);
+    const address = deriveSolanaAddress(JSON.stringify(Array.from(kp.secretKey)));
+    expect(address).toBe(kp.publicKey.toBase58());
+    expect(isValidSolanaKeypair(JSON.stringify(Array.from(kp.secretKey)))).toBe(
+      true,
+    );
+  });
 });
 
 describe('Key Generation & Storage Safety', () => {
@@ -99,7 +113,7 @@ describe('Key Generation & Storage Safety', () => {
     const res = generateMissingKeys(tempEnvPath);
 
     expect(res.generatedKeys.length).toBe(
-      BCH_KEY_ROLES.length + EVM_KEY_ROLES.length,
+      BCH_KEY_ROLES.length + EVM_KEY_ROLES.length + SOL_KEY_ROLES.length,
     );
     expect(res.skippedKeys.length).toBe(0);
     expect(fs.existsSync(tempEnvPath)).toBe(true);
@@ -120,6 +134,11 @@ describe('Key Generation & Storage Safety', () => {
       expect(val?.startsWith('0x')).toBe(true);
       expect(val?.length).toBe(66);
     }
+    for (const role of SOL_KEY_ROLES) {
+      const val = parsed[role];
+      expect(val).toBeDefined();
+      expect(isValidSolanaKeypair(val!)).toBe(true);
+    }
   });
 
   it('never overwrites existing keys on subsequent runs', () => {
@@ -135,7 +154,7 @@ describe('Key Generation & Storage Safety', () => {
 
     expect(res2.generatedKeys.length).toBe(0);
     expect(res2.skippedKeys.length).toBe(
-      BCH_KEY_ROLES.length + EVM_KEY_ROLES.length,
+      BCH_KEY_ROLES.length + EVM_KEY_ROLES.length + SOL_KEY_ROLES.length,
     );
     expect(secondContent).toBe(initialContent);
 
