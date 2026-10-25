@@ -10,7 +10,10 @@ export function computeTxId(txHex: string): string {
   return libauth.binToHex(reversed);
 }
 
-export async function deriveBchKeyDetails(wif: string) {
+export async function deriveBchKeyDetails(
+  wif: string,
+  prefix: 'bchtest' | 'bitcoincash' = 'bchtest',
+) {
   const decoded = libauth.decodePrivateKeyWif(wif);
   if (typeof decoded === 'string') {
     throw new Error(`Failed to decode WIF: ${decoded}`);
@@ -27,12 +30,22 @@ export async function deriveBchKeyDetails(wif: string) {
     libauth.sha256.hash(p2pkhBytecode).reverse(),
   );
 
+  const cashAddressResult = libauth.lockingBytecodeToCashAddress({
+    bytecode: p2pkhBytecode,
+    prefix,
+  });
+  const address =
+    typeof cashAddressResult === 'string'
+      ? undefined
+      : cashAddressResult.address;
+
   return {
     privateKey: decoded.privateKey,
     p2pkhBytecode,
     p2pkhBytecodeHex,
     lockingBytecodeHex: p2pkhBytecodeHex,
     scriptHash,
+    address,
   };
 }
 

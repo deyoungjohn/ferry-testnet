@@ -20,6 +20,7 @@ if (!values.dbPath || !values.orderId) {
 }
 
 const db = new SolverDatabase(values.dbPath);
+const order = db.getOrder(values.orderId);
 
 const fakeEvm = {
   address: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
@@ -31,16 +32,20 @@ const fakeEvm = {
 } as unknown as EvmChainAdapter;
 
 const sampleWif = 'cPJEAQPn5NYgtNy9HXR1q2q6vw4EghTgjscBFFseT4UT9gbpoDY9';
+const tipHeight =
+  order?.status === 'USER_LOCK_FINAL'
+    ? (order?.terms?.bchRefundHeight ?? 330036) - 36
+    : (order?.terms?.bchRefundHeight ?? 330000);
 
 const fakeBch = {
   getQuorumStatus: () => ({
-    quorumTip: 330000,
+    quorumTip: tipHeight,
     tips: {},
     isQuorumHealthy: true,
     ageSeconds: 5,
   }),
   listUnspent: async () => {
-    return [
+    const utxos = [
       {
         tx_hash: '11'.repeat(32),
         tx_pos: 0,
@@ -56,6 +61,14 @@ const fakeBch = {
         value: 50000,
       },
     ];
+    if (order?.solverLockTxId) {
+      utxos.push({
+        tx_hash: order.solverLockTxId,
+        tx_pos: 0,
+        value: Number(order.terms?.bchCarrySats ?? 3000n),
+      });
+    }
+    return utxos;
   },
   getHistory: async () => [],
   broadcast: async (txHex: string) => {
@@ -74,6 +87,7 @@ const engine = new SolverEngine(
   fakeBch,
   '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
   sampleWif,
+  'testnet',
 );
 
 if (values.runStep) {

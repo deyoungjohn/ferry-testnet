@@ -28,6 +28,9 @@ export class SolverEngine {
     reactionTimesMs: [],
     lastReactionTimeMs: 0,
   };
+  public readonly network: 'testnet' | 'mainnet';
+  public readonly bchNetwork: 'chipnet' | 'mainnet';
+  public readonly bchAddressPrefix: 'bchtest' | 'bitcoincash';
   private running = false;
   private pollInterval: NodeJS.Timeout | null = null;
   private evmUnwatch: (() => void) | null = null;
@@ -40,10 +43,32 @@ export class SolverEngine {
     public readonly bchClient: BchQuorumClient,
     public readonly solverPrivateKey: `0x${string}`,
     public readonly solverBchWif: string,
+    networkOrLogger?: 'testnet' | 'mainnet' | pino.Logger,
     logger?: pino.Logger,
   ) {
+    let resolvedNetwork: 'testnet' | 'mainnet' = 'testnet';
+    let resolvedLogger: pino.Logger | undefined;
+
+    if (typeof networkOrLogger === 'string') {
+      resolvedNetwork = networkOrLogger;
+      resolvedLogger = logger;
+    } else if (networkOrLogger && typeof networkOrLogger === 'object') {
+      resolvedLogger = networkOrLogger;
+    }
+
+    if (resolvedNetwork === 'mainnet' && process.env.FAULT_CRASH_POINT) {
+      throw new Error(
+        'Refusing to start: FAULT_CRASH_POINT is not allowed when network is mainnet',
+      );
+    }
+
+    this.network = resolvedNetwork;
+    this.bchNetwork = resolvedNetwork === 'mainnet' ? 'mainnet' : 'chipnet';
+    this.bchAddressPrefix =
+      resolvedNetwork === 'mainnet' ? 'bitcoincash' : 'bchtest';
+
     this.logger =
-      logger ??
+      resolvedLogger ??
       pino({
         level: process.env.LOG_LEVEL || 'info',
         redact: {
@@ -116,7 +141,7 @@ export class SolverEngine {
       tokenAmount: terms.bchTokenAmount,
       maxFee: terms.bchMaxFee,
     });
-    const addresses = deriveHtlcAddresses(bchParams, 'chipnet');
+    const addresses = deriveHtlcAddresses(bchParams, this.bchNetwork);
 
     const { sha256: lSha256, binToHex } = await import('@bitauth/libauth');
     const shHex = binToHex(lSha256.hash(addresses.lockingBytecode).reverse());
@@ -212,42 +237,130 @@ export class SolverEngine {
       order.status === 'SOLVER_LOCK_BROADCAST' ||
       order.status === 'SECRET_KNOWN'
     ) {
-      const history = await this.bchClient.getHistory(scriptHash);
-      if (history.length >= 2) {
-        // Find spend transaction (different from solver lock)
-        const spendEntry = history.find(
-          (h) => h.tx_hash !== order.solverLockTxId,
-        );
-        if (spendEntry) {
-          const rawSpend = await this.bchClient.getTransaction(
-            spendEntry.tx_hash,
-          );
-          const rawHex =
-            typeof rawSpend === 'string'
-              ? rawSpend
-              : (rawSpend as { hex?: string })?.hex;
-          if (rawHex) {
-            const decoded = decodeTransaction(Buffer.from(rawHex, 'hex'));
-            if (typeof decoded !== 'string') {
-              for (const input of decoded.inputs) {
-                const secret = extractSecretFromClaimUnlock(
-                  input.unlockingBytecode,
-                  order.terms.hashLock,
-                );
-                if (secret) {
-                  this.applyEvent(order, {
-                    type: 'USER_CLAIM_SEEN',
-                    txId: spendEntry.tx_hash,
-                    secret,
-                  });
-                  break;
-                }
-              }
+      const claim = await this.findClaimInHistory(order, scriptHash);
+      if (claim) {
+        this.applyEvent(order, {
+          type: 'USER_CLAIM_SEEN',
+          txId: claim.txId,
+          secret: claim.secret,
+        });
+      }
+    }
+  }
+
+  private triggerFaultInjection(point: string): void {
+    if (
+      this.network !== 'mainnet' &&
+      process.env.FERRY_FAULT_INJECTION === '1' &&
+      process.env.FAULT_CRASH_POINT === point
+    ) {
+      this.logger.warn({ point }, 'Injected fault triggered');
+      process.kill(process.pid, 'SIGKILL');
+    }
+  }
+
+  public async findClaimInHistory(
+    order: SolverOrderRecord,
+    scriptHash: string,
+    history?: Array<{ tx_hash: string; height: number }>,
+  ): Promise<{ txId: string; secret: `0x${string}` } | null> {
+    const hist = history ?? (await this.bchClient.getHistory(scriptHash));
+    const spends = hist.filter((h) => h.tx_hash !== order.solverLockTxId);
+
+    for (const spend of spends) {
+      if (typeof this.bchClient.getTransaction !== 'function') continue;
+      const rawSpend = await this.bchClient.getTransaction(spend.tx_hash);
+      const rawHex =
+        typeof rawSpend === 'string'
+          ? rawSpend
+          : (rawSpend as { hex?: string })?.hex;
+      if (rawHex) {
+        const decoded = decodeTransaction(Buffer.from(rawHex, 'hex'));
+        if (typeof decoded !== 'string') {
+          for (const input of decoded.inputs) {
+            const secret = extractSecretFromClaimUnlock(
+              input.unlockingBytecode,
+              order.terms.hashLock,
+            );
+            if (secret) {
+              return { txId: spend.tx_hash, secret };
             }
           }
         }
       }
     }
+    return null;
+  }
+
+  public async executeOrAdoptBchTx(params: {
+    orderId: string;
+    actionType: 'SOLVER_LOCK' | 'SOLVER_REFUND';
+    buildTx: () => Promise<{ txid: string; txHex: string }>;
+    isOnChain: (txid: string) => Promise<boolean>;
+    faultBeforePoint?: string;
+    faultAfterPoint?: string;
+  }): Promise<{ txid: string; txHex: string; adopted: boolean }> {
+    const existingAction = this.db.getAction(params.orderId, params.actionType);
+    let txid = '';
+    let txHex = '';
+
+    if (existingAction) {
+      try {
+        const parsed = JSON.parse(existingAction.intentPayload);
+        txid = parsed.txid || existingAction.txId || '';
+        txHex = parsed.txHex || '';
+      } catch {
+        txid = existingAction.txId || '';
+      }
+    }
+
+    if (txid) {
+      // 1. Check if already on chain
+      const alreadyMined = await params.isOnChain(txid);
+      if (alreadyMined) {
+        this.db.recordActionBroadcast(params.orderId, params.actionType, txid);
+        return { txid, txHex, adopted: true };
+      }
+
+      // 2. Not on chain yet; rebroadcast the SAME signed bytes
+      if (txHex) {
+        try {
+          await this.bchClient.broadcast(txHex);
+        } catch (err: unknown) {
+          this.logger.debug(
+            { err, txid },
+            'Rebroadcast returned error (may already be in mempool or confirmed)',
+          );
+        }
+      }
+      this.db.recordActionBroadcast(params.orderId, params.actionType, txid);
+      return { txid, txHex, adopted: false };
+    }
+
+    // 3. First time execution: build tx first
+    const built = await params.buildTx();
+    txid = built.txid;
+    txHex = built.txHex;
+
+    // Persist intent with { txid, txHex } ahead of broadcast
+    this.db.recordActionIntent(params.orderId, params.actionType, {
+      txid,
+      txHex,
+    });
+
+    if (params.faultBeforePoint) {
+      this.triggerFaultInjection(params.faultBeforePoint);
+    }
+
+    // Broadcast
+    await this.bchClient.broadcast(txHex);
+
+    if (params.faultAfterPoint) {
+      this.triggerFaultInjection(params.faultAfterPoint);
+    }
+
+    this.db.recordActionBroadcast(params.orderId, params.actionType, txid);
+    return { txid, txHex, adopted: false };
   }
 
   async reconcileOrders(): Promise<void> {
@@ -406,79 +519,25 @@ export class SolverEngine {
       }
 
       // CRASH RECOVERY & PRE-BROADCAST WRITE-AHEAD:
-      // Build tx first, compute txid and txHex, persist with intent BEFORE broadcasting.
-      // On restart, check chain (transaction.get / HTLC UTXOs) and either adopt existing tx or rebroadcast the SAME hex.
-      const existingAction = this.db.getAction(order.id, 'SOLVER_LOCK');
-      if (existingAction) {
-        let intent: { txid: string; txHex: string };
-        try {
-          intent = JSON.parse(existingAction.intentPayload);
-        } catch {
-          intent = { txid: existingAction.txId || '', txHex: '' };
-        }
+      const shHex = await this.ensureBchSubscription(order);
+      const startDetect = Date.now();
 
-        if (intent.txid) {
-          // Check if already on chain or in mempool
-          const shHex = await this.ensureBchSubscription(order);
+      const result = await this.executeOrAdoptBchTx({
+        orderId: order.id,
+        actionType: 'SOLVER_LOCK',
+        buildTx: () => this.buildSolverBchLock(order),
+        isOnChain: async (txid) => {
           const utxos = await this.bchClient.listUnspent(
             shHex,
             'include_tokens',
           );
-          const isMinedOrSeen = utxos.some((u) => u.tx_hash === intent.txid);
-
-          if (!isMinedOrSeen && intent.txHex) {
-            try {
-              await this.bchClient.broadcast(intent.txHex);
-            } catch (err: unknown) {
-              this.logger.debug(
-                { err, txid: intent.txid },
-                'Rebroadcast returned error (may already be in mempool)',
-              );
-            }
-          }
-
-          this.db.recordActionBroadcast(order.id, 'SOLVER_LOCK', intent.txid);
-          this.applyEvent(order, {
-            type: 'SOLVER_LOCK_BROADCAST',
-            txId: intent.txid,
-          });
-          await this.ensureBchSubscription(order);
-          return;
-        }
-      }
-
-      // If no existing action, build the transaction first
-      const startDetect = Date.now();
-      const built = await this.buildSolverBchLock(order);
-
-      // Persist {txid, txHex} with intent BEFORE broadcasting
-      this.db.recordActionIntent(order.id, 'SOLVER_LOCK', {
-        txid: built.txid,
-        txHex: built.txHex,
+          if (utxos.some((u) => u.tx_hash === txid)) return true;
+          const history = await this.bchClient.getHistory(shHex);
+          return history.some((h) => h.tx_hash === txid);
+        },
+        faultBeforePoint: 'BEFORE_BCH_LOCK_BROADCAST',
+        faultAfterPoint: 'AFTER_BCH_LOCK_BROADCAST',
       });
-
-      // Named fault injection hook: crash before broadcast
-      if (process.env.FAULT_CRASH_POINT === 'BEFORE_BCH_LOCK_BROADCAST') {
-        this.logger.warn(
-          { orderId: order.id },
-          'Injected fault: BEFORE_BCH_LOCK_BROADCAST',
-        );
-        process.kill(process.pid, 'SIGKILL');
-      }
-
-      // Broadcast real solver BCH lock transaction
-      await this.bchClient.broadcast(built.txHex);
-
-      // Named fault injection hook: crash after broadcast
-      if (process.env.FAULT_CRASH_POINT === 'AFTER_BCH_LOCK_BROADCAST') {
-        this.logger.warn(
-          { orderId: order.id },
-          'Injected fault: AFTER_BCH_LOCK_BROADCAST',
-        );
-        process.kill(process.pid, 'SIGKILL');
-      }
-
-      this.db.recordActionBroadcast(order.id, 'SOLVER_LOCK', built.txid);
 
       const latency = Date.now() - startDetect;
       this.metrics.lastReactionTimeMs = latency;
@@ -486,7 +545,7 @@ export class SolverEngine {
 
       this.applyEvent(order, {
         type: 'SOLVER_LOCK_BROADCAST',
-        txId: built.txid,
+        txId: result.txid,
       });
 
       await this.ensureBchSubscription(order);
@@ -494,38 +553,7 @@ export class SolverEngine {
 
     // USER_CLAIM_SEEN -> SOLVER_CLAIM_BROADCAST
     if (order.status === 'USER_CLAIM_SEEN' && order.secret) {
-      const existingAction = this.db.getAction(order.id, 'SOLVER_CLAIM');
-      if (!existingAction || existingAction.status === 'PENDING') {
-        const startClaim = Date.now();
-        this.db.recordActionIntent(order.id, 'SOLVER_CLAIM', {
-          lockId,
-        });
-
-        // Pre-broadcast check on chain state
-        const currentLock = await this.evmAdapter.getLock(lockId);
-        if (currentLock.status === 'claimed') {
-          this.applyEvent(order, {
-            type: 'SOLVER_CLAIM_FINAL',
-            txId: currentLock.claimTx.txId,
-          });
-          this.applyEvent(order, { type: 'SWAP_COMPLETE' });
-          return;
-        }
-
-        if (currentLock.status === 'locked') {
-          const claimTx = await this.evmAdapter.claim(lockId, order.secret);
-          this.db.recordActionBroadcast(order.id, 'SOLVER_CLAIM', claimTx.txId);
-
-          const latency = Date.now() - startClaim;
-          this.metrics.lastReactionTimeMs = latency;
-          this.metrics.reactionTimesMs.push(latency);
-
-          this.applyEvent(order, {
-            type: 'SOLVER_CLAIM_BROADCAST',
-            txId: claimTx.txId,
-          });
-        }
-      }
+      await this.processSolverClaim(order, lockId);
     }
 
     // SOLVER_CLAIM_BROADCAST -> SOLVER_CLAIM_FINAL -> DONE
@@ -543,7 +571,7 @@ export class SolverEngine {
       }
     }
 
-    // SOLVER REFUND: §5.3 abort edge
+    // SOLVER REFUND: §5.3 abort edge & §4.2 refund vs claim race
     // SOLVER_LOCK_SEEN -> (height >= bchRefundHeight && no claim) -> SOLVER_REFUNDED
     if (
       (order.status === 'SOLVER_LOCK_SEEN' ||
@@ -557,62 +585,187 @@ export class SolverEngine {
         quorum.quorumTip &&
         quorum.quorumTip >= terms.bchRefundHeight
       ) {
-        const existingRefund = this.db.getAction(order.id, 'SOLVER_REFUND');
-        if (existingRefund) {
-          let intent: { txid: string; txHex: string };
-          try {
-            intent = JSON.parse(existingRefund.intentPayload);
-          } catch {
-            intent = { txid: existingRefund.txId || '', txHex: '' };
+        const shHex = await this.ensureBchSubscription(order);
+        const history = await this.bchClient.getHistory(shHex);
+        const utxos = await this.bchClient.listUnspent(shHex, 'include_tokens');
+
+        // 1. Re-check if spent by user claim (revealing secret)
+        const claimResult = await this.findClaimInHistory(
+          order,
+          shHex,
+          history,
+        );
+        if (claimResult) {
+          this.logger.info(
+            { orderId: order.id, txId: claimResult.txId },
+            'User claim found on BCH at refund check; proceeding to claim EVM funds',
+          );
+          this.applyEvent(order, {
+            type: 'USER_CLAIM_SEEN',
+            txId: claimResult.txId,
+            secret: claimResult.secret,
+          });
+          await this.processSolverClaim(order, lockId);
+        } else {
+          // 2. Check if our refund transaction was already broadcast / mined
+          const existingRefund = this.db.getAction(order.id, 'SOLVER_REFUND');
+          let existingRefundTxid = '';
+          if (existingRefund) {
+            try {
+              existingRefundTxid =
+                JSON.parse(existingRefund.intentPayload).txid ||
+                existingRefund.txId ||
+                '';
+            } catch {
+              existingRefundTxid = existingRefund.txId || '';
+            }
           }
-          if (intent.txid) {
+
+          const refundOnChain = existingRefundTxid
+            ? history.some((h) => h.tx_hash === existingRefundTxid) ||
+              utxos.some((u) => u.tx_hash === existingRefundTxid)
+            : false;
+
+          if (refundOnChain) {
+            this.logger.info(
+              { orderId: order.id, refundTxId: existingRefundTxid },
+              'Solver BCH refund is already on chain; adopting',
+            );
             this.db.recordActionBroadcast(
               order.id,
               'SOLVER_REFUND',
-              intent.txid,
+              existingRefundTxid,
             );
             this.applyEvent(order, {
               type: 'BCH_DEADLINE_PASSED',
-              refundTxId: intent.txid,
+              refundTxId: existingRefundTxid,
             });
             return;
           }
+
+          // 3. Confirm the HTLC output is unspent before building refund
+          const lockUtxo = utxos.find(
+            (u) => u.tx_hash === order.solverLockTxId,
+          );
+          if (!lockUtxo) {
+            this.logger.warn(
+              { orderId: order.id, solverLockTxId: order.solverLockTxId },
+              'HTLC output is not unspent in UTXO set; re-checking history for spend',
+            );
+            const freshHistory = await this.bchClient.getHistory(shHex);
+            const freshClaim = await this.findClaimInHistory(
+              order,
+              shHex,
+              freshHistory,
+            );
+            if (freshClaim) {
+              this.applyEvent(order, {
+                type: 'USER_CLAIM_SEEN',
+                txId: freshClaim.txId,
+                secret: freshClaim.secret,
+              });
+              await this.processSolverClaim(order, lockId);
+            }
+            return;
+          }
+
+          // 4. Output is unspent; execute refund with write-ahead and fault injection
+          this.logger.info(
+            {
+              orderId: order.id,
+              refundHeight: terms.bchRefundHeight,
+              tip: quorum.quorumTip,
+            },
+            'BCH refund height reached without user claim; broadcasting solver BCH refund',
+          );
+
+          try {
+            const result = await this.executeOrAdoptBchTx({
+              orderId: order.id,
+              actionType: 'SOLVER_REFUND',
+              buildTx: async () => {
+                const refundResult = buildRefundTransaction({
+                  params: encodeHtlcParameters(order.terms),
+                  utxo: {
+                    txid: order.solverLockTxId!,
+                    vout: 0,
+                    satoshis: order.terms.bchCarrySats,
+                  },
+                  network: this.bchNetwork,
+                });
+                return { txid: refundResult.txid, txHex: refundResult.txHex };
+              },
+              isOnChain: async (txid) => {
+                const currentHistory = await this.bchClient.getHistory(shHex);
+                return currentHistory.some((h) => h.tx_hash === txid);
+              },
+              faultBeforePoint: 'BEFORE_BCH_REFUND_BROADCAST',
+              faultAfterPoint: 'AFTER_BCH_REFUND_BROADCAST',
+            });
+
+            this.applyEvent(order, {
+              type: 'BCH_DEADLINE_PASSED',
+              refundTxId: result.txid,
+            });
+          } catch (err: unknown) {
+            this.logger.warn(
+              { err, orderId: order.id },
+              'Refund broadcast failed; re-checking if user claim occurred concurrently',
+            );
+            const raceHistory = await this.bchClient.getHistory(shHex);
+            const raceClaim = await this.findClaimInHistory(
+              order,
+              shHex,
+              raceHistory,
+            );
+            if (raceClaim) {
+              this.applyEvent(order, {
+                type: 'USER_CLAIM_SEEN',
+                txId: raceClaim.txId,
+                secret: raceClaim.secret,
+              });
+              await this.processSolverClaim(order, lockId);
+            }
+          }
         }
+      }
+    }
+  }
 
-        this.logger.info(
-          {
-            orderId: order.id,
-            refundHeight: terms.bchRefundHeight,
-            tip: quorum.quorumTip,
-          },
-          'BCH refund height reached without user claim; broadcasting solver BCH refund',
-        );
+  private async processSolverClaim(
+    order: SolverOrderRecord,
+    lockId: string,
+  ): Promise<void> {
+    if (!order.secret) return;
+    const existingAction = this.db.getAction(order.id, 'SOLVER_CLAIM');
+    if (!existingAction || existingAction.status === 'PENDING') {
+      const startClaim = Date.now();
+      this.db.recordActionIntent(order.id, 'SOLVER_CLAIM', {
+        lockId,
+      });
 
-        const refundResult = buildRefundTransaction({
-          params: encodeHtlcParameters(order.terms),
-          utxo: {
-            txid: order.solverLockTxId,
-            vout: 0,
-            satoshis: order.terms.bchCarrySats,
-          },
-          network: 'chipnet',
+      // Pre-broadcast check on chain state
+      const currentLock = await this.evmAdapter.getLock(lockId);
+      if (currentLock.status === 'claimed') {
+        this.applyEvent(order, {
+          type: 'SOLVER_CLAIM_FINAL',
+          txId: currentLock.claimTx.txId,
         });
+        this.applyEvent(order, { type: 'SWAP_COMPLETE' });
+        return;
+      }
 
-        this.db.recordActionIntent(order.id, 'SOLVER_REFUND', {
-          txid: refundResult.txid,
-          txHex: refundResult.txHex,
-        });
+      if (currentLock.status === 'locked') {
+        const claimTx = await this.evmAdapter.claim(lockId, order.secret);
+        this.db.recordActionBroadcast(order.id, 'SOLVER_CLAIM', claimTx.txId);
 
-        await this.bchClient.broadcast(refundResult.txHex);
-        this.db.recordActionBroadcast(
-          order.id,
-          'SOLVER_REFUND',
-          refundResult.txid,
-        );
+        const latency = Date.now() - startClaim;
+        this.metrics.lastReactionTimeMs = latency;
+        this.metrics.reactionTimesMs.push(latency);
 
         this.applyEvent(order, {
-          type: 'BCH_DEADLINE_PASSED',
-          refundTxId: refundResult.txid,
+          type: 'SOLVER_CLAIM_BROADCAST',
+          txId: claimTx.txId,
         });
       }
     }
@@ -650,7 +803,7 @@ export class SolverEngine {
       tokenChangeAddress: solverKeys.lockingBytecodeHex,
       bchCarrySats: order.terms.bchCarrySats,
       wif: this.solverBchWif,
-      network: 'chipnet',
+      network: this.bchNetwork,
     });
 
     if (!result.signed) {

@@ -95,4 +95,3 @@ pnpm --filter @ferry/solver build
 - **Order Lookup by Lock ID:** Orders are indexed and looked up by composite EVM lock id (`keccak256(owner, hashLock)`). An SQLite unique constraint on `(user_counter_address, hash_lock)` prevents duplicate orders or quote collision between users sharing a hashLock.
 - **Solver BCH Refund:** Implements the §5.3 abort edge: if a user locks on EVM and solver locks on BCH, but the user abandons without claiming by `bchRefundHeight`, the solver automatically builds and broadcasts a covenant refund transaction via `@ferry/htlc-bch` `buildRefundTransaction`.
 - **Healthy Quorum Tip Requirement:** The solver never uses hardcoded block heights. If the Fulcrum quorum is unhealthy or the tip is unknown, the engine refuses counter-locking (stays in `USER_LOCK_FINAL`) and API returns 503 on quote requests.
-

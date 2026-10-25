@@ -90,6 +90,7 @@ async function main(): Promise<void> {
     bchClient,
     config.solverEvmPrivateKey as `0x${string}`,
     config.solverBchWif,
+    config.network,
     logger,
   );
   await engine.start();
