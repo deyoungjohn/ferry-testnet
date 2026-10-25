@@ -51,6 +51,7 @@ export function StatsRow({
 
   return (
     <section
+      id="stats"
       aria-labelledby="stats-heading"
       className="mt-24 border-t border-hairline pt-12"
     >

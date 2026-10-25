@@ -52,6 +52,7 @@ export function RecentSwaps({
 
   return (
     <section
+      id="recent-swaps"
       aria-labelledby="recent-swaps-heading"
       className="mt-24 border-t border-hairline pt-12"
     >

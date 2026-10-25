@@ -163,6 +163,7 @@ export function PegCards({
 
   return (
     <section
+      id="pegs"
       aria-labelledby="pegs-heading"
       className="mt-24 border-t border-hairline pt-12"
     >

@@ -35,7 +35,7 @@ export function FeatureCards({
   ] as const;
 
   return (
-    <section aria-labelledby="features-heading" className="mt-20">
+    <section id="features" aria-labelledby="features-heading" className="mt-20">
       <div className="max-w-2xl">
         <p className="text-[10px] font-medium tracking-[0.18em] text-lime uppercase">
           Built differently
