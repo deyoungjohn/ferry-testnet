@@ -1,4 +1,5 @@
-import { PUSD_SYMBOL } from '../lib/config';
+import { FIXED_FEE_USD_MICROS, PUSD_SYMBOL, SPREAD_BPS } from '../lib/config';
+import { formatBasisPoints, formatUsdMicros } from '../lib/format';
 import type { RecoveryFile } from '../lib/recovery';
 import type { SignedQuote } from '../lib/solver/types';
 import { formatDuration } from '../lib/solver/view';
@@ -117,7 +118,8 @@ export function ReviewDialog({
           <div className="flex items-baseline justify-between gap-4 py-2.5">
             <dt className="text-text-muted">Spread / fixed fee</dt>
             <dd className="font-medium tabular-nums text-text">
-              0.40% / $0.05
+              {formatBasisPoints(SPREAD_BPS)} /{' '}
+              {formatUsdMicros(FIXED_FEE_USD_MICROS)}
             </dd>
           </div>
           <div className="flex items-baseline justify-between gap-4 py-2.5">

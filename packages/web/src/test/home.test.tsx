@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it } from 'vitest';
 import { App } from '../App';
 import { SolverProvider } from '../lib/solver/SolverProvider';
+import { StatsProvider } from '../lib/stats/StatsProvider';
 import { MockWalletProvider } from '../lib/wallet/mock';
 
 afterEach(cleanup);
@@ -14,7 +15,9 @@ function renderAt(path: string) {
     <MemoryRouter initialEntries={[path]}>
       <MockWalletProvider>
         <SolverProvider>
-          <App />
+          <StatsProvider>
+            <App />
+          </StatsProvider>
         </SolverProvider>
       </MockWalletProvider>
     </MemoryRouter>,

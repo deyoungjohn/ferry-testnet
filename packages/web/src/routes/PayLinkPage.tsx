@@ -29,6 +29,7 @@ import {
   truncateAddress,
 } from '../lib/swap';
 import { bchElectrumUrls, bchQuoteConfigError } from '../lib/bch/tip';
+import { formatUsdMicros } from '../lib/format';
 import { useSolver } from '../lib/solver/context';
 import { useWallets } from '../lib/wallet/context';
 import {
@@ -135,7 +136,7 @@ export function PayLinkPage() {
     if (!quote) return null;
     return {
       rate: `1 USDC = ${quoteRate(quote.terms)} ${PUSD_SYMBOL}`,
-      fee: '$0.05',
+      fee: formatUsdMicros(FIXED_FEE_USD_MICROS),
       arrival:
         quote.lane === 'fast'
           ? 'Fast lane · under a minute'

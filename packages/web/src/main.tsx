@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router';
 import { App } from './App';
 import { SolverProvider } from './lib/solver/SolverProvider';
+import { StatsProvider } from './lib/stats/StatsProvider';
 import { WalletProvider } from './lib/wallet/WalletProvider';
 import './styles/index.css';
 
@@ -19,7 +20,9 @@ createRoot(container).render(
     <BrowserRouter>
       <WalletProvider>
         <SolverProvider>
-          <App />
+          <StatsProvider>
+            <App />
+          </StatsProvider>
         </SolverProvider>
       </WalletProvider>
     </BrowserRouter>
