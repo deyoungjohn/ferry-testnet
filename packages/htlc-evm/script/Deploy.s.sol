@@ -30,9 +30,11 @@ contract Deploy is Script {
         }
 
         vm.broadcast(deployerKey);
-        (bool success, bytes memory result) = CREATE2_FACTORY.call(abi.encodePacked(SALT, initCode));
+        (bool success, bytes memory result) = CREATE2_FACTORY.call{ gas: 1_500_000 }(
+            abi.encodePacked(SALT, initCode)
+        );
         require(success, "CREATE2 deployment failed");
-        address deployed = abi.decode(result, (address));
+        address deployed = result.length == 20 ? address(uint160(bytes20(result))) : abi.decode(result, (address));
         require(deployed == predicted, "unexpected CREATE2 address");
 
         console2.log("FerryHTLC deployed:", deployed);
