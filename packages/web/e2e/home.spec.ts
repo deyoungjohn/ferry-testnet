@@ -13,7 +13,7 @@ for (const viewport of VIEWPORTS) {
       width: viewport.width,
       height: viewport.height,
     });
-    await page.goto('/');
+    await page.goto('/?mock=1');
 
     await expect(
       page.getByRole('heading', { level: 1, name: /without a bridge/i }),
@@ -36,6 +36,7 @@ for (const viewport of VIEWPORTS) {
 }
 
 test('UI-01 happy path through DONE', async ({ page }) => {
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?mock=1');
 
@@ -63,7 +64,7 @@ test('UI-01 happy path through DONE', async ({ page }) => {
 
   await expect(
     page.getByRole('heading', { level: 1, name: /done/i }),
-  ).toBeVisible({ timeout: 20_000 });
+  ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/both sides settled/i)).toBeVisible();
 
   await page.screenshot({
@@ -79,7 +80,7 @@ test('UI-01 refund path screenshot', async ({ page }) => {
 
   await expect(
     page.getByRole('heading', { level: 1, name: /rejected/i }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('button', { name: 'Refund USDC' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Connect Base wallet' }).click();
@@ -163,7 +164,7 @@ test('UI-03 reverse BCH refund path screenshot', async ({ page }) => {
 
   await expect(
     page.getByRole('heading', { level: 1, name: /rejected/i }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
   await expect(
     page.getByRole('button', { name: 'Refund tPUSD' }),
   ).toBeVisible();

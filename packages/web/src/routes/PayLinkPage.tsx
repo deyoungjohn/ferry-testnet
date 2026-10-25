@@ -28,11 +28,13 @@ import {
   quoteRate,
   truncateAddress,
 } from '../lib/swap';
+import { bchElectrumUrls, bchQuoteConfigError } from '../lib/bch/tip';
 import { useSolver } from '../lib/solver/context';
 import { useWallets } from '../lib/wallet/context';
 import {
   BASE_SEPOLIA_CHAIN_ID,
   BCH_CARRY_SATS,
+  BCH_NETWORK,
   BCH_MAX_FEE_SATS,
   FERRY_HTLC_ADDRESS,
   FIXED_FEE_USD_MICROS,
@@ -48,6 +50,7 @@ import {
   USDC_ADDRESS,
   USDC_DECIMALS,
 } from '../lib/config';
+import { useToast } from '../lib/toast';
 import { CheckIcon, ShieldIcon, WalletIcon } from '../components/icons';
 
 export function PayLinkPage() {
@@ -55,6 +58,7 @@ export function PayLinkPage() {
   const navigate = useNavigate();
   const { evm, usingMocks } = useWallets();
   const solver = useSolver();
+  const toast = useToast();
   const [link, setLink] = useState<PayLink | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -117,8 +121,14 @@ export function PayLinkPage() {
     linkExpired;
   const amountOut = link?.kind === 'invoice' ? (link.amountOut ?? 0n) : null;
   const quoteAmountOut = quote ? quote.terms.bchTokenAmount : amountOut;
+  const quoteConfigError = bchQuoteConfigError(BCH_NETWORK, bchElectrumUrls());
   const canQuote = Boolean(
-    link && link.status === 'open' && !linkExpired && evm.address && !busy,
+    link &&
+    link.status === 'open' &&
+    !linkExpired &&
+    evm.address &&
+    !busy &&
+    !quoteConfigError,
   );
 
   const quoteRows = useMemo(() => {
@@ -134,6 +144,10 @@ export function PayLinkPage() {
   }, [quote]);
 
   async function handleQuote(): Promise<void> {
+    if (quoteConfigError) {
+      setError(quoteConfigError);
+      return;
+    }
     if (!link || !evm.address) {
       setError('Connect a Base wallet first.');
       return;
@@ -213,6 +227,7 @@ export function PayLinkPage() {
     if (!recovery) return;
     downloadRecoveryFile(recovery);
     setRecoveryDownloaded(true);
+    toast.push('Recovery file downloaded. Keep it somewhere safe.', 'success');
   }
 
   async function handlePay(): Promise<void> {
@@ -482,6 +497,15 @@ export function PayLinkPage() {
               ? 'Recovery file downloaded'
               : 'Download recovery file first'}
           </button>
+        ) : null}
+
+        {quoteConfigError ? (
+          <p
+            className="mt-4 rounded-well border border-warn/25 bg-warn/5 px-3 py-2 text-[11px] leading-5 text-warn"
+            role="alert"
+          >
+            {quoteConfigError}
+          </p>
         ) : null}
 
         {error ? (

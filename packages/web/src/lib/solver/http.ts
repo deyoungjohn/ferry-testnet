@@ -26,7 +26,13 @@ import {
   type QuoteRequest,
 } from '@ferry/core';
 import type { z } from 'zod';
-import { ElectrumBchTipReader, type BchTipReader } from '../bch/tip';
+import {
+  ElectrumBchTipReader,
+  bchElectrumUrls,
+  bchQuoteConfigError,
+  type BchTipReader,
+} from '../bch/tip';
+import { BCH_NETWORK } from '../config';
 import type {
   OrderTransaction,
   OrderView,
@@ -131,6 +137,11 @@ export class HttpSolverClient implements SolverClient {
     return schema.parse(body);
   }
 
+  #assertQuoteConfig(): void {
+    const error = bchQuoteConfigError(BCH_NETWORK, bchElectrumUrls());
+    if (error) throw new Error(error);
+  }
+
   async #quoteTip(): Promise<number> {
     return this.#tipReader.read().catch((cause) => {
       throw new Error(
@@ -142,6 +153,7 @@ export class HttpSolverClient implements SolverClient {
   }
 
   async quote(request: QuoteRequest): Promise<SignedQuote> {
+    this.#assertQuoteConfig();
     const parsed = QuoteRequestSchema.parse(request);
     const response = await this.#json(QuoteResponseSchema, '/v1/quotes', {
       method: 'POST',
@@ -169,6 +181,7 @@ export class HttpSolverClient implements SolverClient {
     id: string,
     request: PayLinkQuoteRequest,
   ): Promise<SignedQuote> {
+    this.#assertQuoteConfig();
     const parsed = PayLinkQuoteRequestSchema.parse(request);
     const response = await this.#json(
       PayLinkQuoteResponseSchema,

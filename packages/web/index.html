@@ -10,6 +10,29 @@
     <title>Ferry — dollars on Bitcoin Cash</title>
   </head>
   <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <filter
+        id="ferry-lens"
+        x="0"
+        y="0"
+        width="100%"
+        height="100%"
+        color-interpolation-filters="sRGB"
+      >
+        <feImage
+          href="/glass/rim-displacement.png"
+          result="map"
+          preserveAspectRatio="none"
+        />
+        <feDisplacementMap
+          in="SourceGraphic"
+          in2="map"
+          scale="38"
+          xChannelSelector="R"
+          yChannelSelector="G"
+        />
+      </filter>
+    </svg>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

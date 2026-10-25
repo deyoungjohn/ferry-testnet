@@ -25,6 +25,29 @@ export function bchElectrumUrls(): readonly string[] {
   return [...new Set(configured.filter((url) => url.length > 0))];
 }
 
+export function bchQuoteConfigError(
+  network: string,
+  urls: readonly string[],
+): string | null {
+  if (network !== 'mainnet') return null;
+  const distinct = new Set(
+    urls
+      .map((url) => url.trim())
+      .filter(Boolean)
+      .map((url) => {
+        try {
+          return new URL(url).hostname.toLowerCase();
+        } catch {
+          return url.replace(/\/+$/, '').toLowerCase();
+        }
+      }),
+  );
+  if (distinct.size < 2) {
+    return 'Mainnet quoting requires two independent BCH Electrum endpoints. Set VITE_BCH_ELECTRUM_URL_2.';
+  }
+  return null;
+}
+
 const defaultFactory: ElectrumTipFactory = (url) => {
   let client: ElectrumTipClient | null = null;
   return {
