@@ -36,7 +36,7 @@ export function WalletPanel() {
         <button
           type="button"
           onClick={() => {
-            if (bch.status === 'connected') {
+            if (bch.status === 'connected' || bch.status === 'connecting') {
               void bch.disconnect();
             } else {
               bch.connect();
@@ -44,9 +44,18 @@ export function WalletPanel() {
           }}
           className="rounded-pill border border-hairline bg-surface-3 px-3 py-1.5 text-xs font-medium text-text transition-colors hover:border-lime/30 hover:text-lime"
         >
-          {bch.status === 'connected' ? 'Disconnect BCH' : 'Connect BCH'}
+          {bch.status === 'connected'
+            ? 'Disconnect BCH'
+            : bch.status === 'connecting'
+              ? 'Cancel BCH connect'
+              : 'Connect BCH'}
         </button>
       </div>
+      {bch.error ? (
+        <p role="alert" className="mt-1 text-[11px] text-danger">
+          {bch.error}
+        </p>
+      ) : null}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-hairline pt-3">
         <div className="min-w-0">

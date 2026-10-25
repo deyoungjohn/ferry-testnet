@@ -157,7 +157,14 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
     error: wizard.error,
     walletName: wizard.walletName,
     connect: () => {
-      wizard.connect();
+      // A pairing left in "connecting" or "reconnecting" ignores a second
+      // connect(); reset it first so the click always opens a fresh QR dialog.
+      void (async () => {
+        if (wizard.state === 'connecting' || wizard.state === 'reconnecting') {
+          await wizard.disconnect();
+        }
+        wizard.connect();
+      })();
     },
     disconnect: async () => {
       setManualAddress(null);
