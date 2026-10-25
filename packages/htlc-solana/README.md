@@ -44,14 +44,22 @@ To enable gas-free recipient swaps on Solana:
 - The relayer funds both the transaction fee and the recipient's ATA rent-exempt balance (if not already existing).
 - Invariant verified on Solana Devnet: The user's native SOL balance delta is exactly **0 lamports** across the swap.
 
-## Scripts
+## Testing & Scripts
+
+Testing is split into fast offline verification (default) and local validator integration:
+
+- `pnpm test`: Fast offline unit and artifact tests (<1s). Validates IDL consistency, Anchor program ID alignment (`Anchor.toml` and Rust `declare_id!`), PDA derivations, and instruction builder structures with zero network access and no local services.
+- `pnpm run test:validator`: Full on-chain integration suite backed by a local `solana-test-validator` instance (port 8899). Runs 10 comprehensive lifecycle tests (token lock, relayer claim, idempotent ATA creation, expired refund, double claim/refund rejection). **Note:** Only one `solana-test-validator` may run at a time across the machine.
 
 ```bash
 # Build Anchor program and extract IDL
 pnpm build
 
-# Run unit and integration tests (launches solana-test-validator locally)
+# Fast offline unit and artifact checks (no validator or open ports needed)
 pnpm test
+
+# Full local validator integration tests (starts solana-test-validator)
+pnpm run test:validator
 
 # Typecheck TypeScript client and tests
 pnpm typecheck

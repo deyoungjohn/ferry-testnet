@@ -13,6 +13,7 @@
   "scripts": {
     "build": "anchor build",
     "test": "vitest run",
+    "test:validator": "vitest run --config vitest.validator.config.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src test",
     "roundtrip:devnet": "tsx src/run-devnet-roundtrip.ts"
