@@ -18,7 +18,9 @@ for (const viewport of VIEWPORTS) {
     await expect(
       page.getByRole('heading', { level: 1, name: /without a bridge/i }),
     ).toBeVisible();
-    await expect(page.getByRole('region', { name: 'Swap' })).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'Swap', exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByRole('button', { name: /get quote/i }),
     ).toBeVisible();
