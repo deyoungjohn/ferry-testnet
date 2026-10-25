@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   Connection,
   Keypair,
@@ -6,47 +6,44 @@ import {
   PublicKey,
   sendAndConfirmTransaction,
   Transaction,
-} from "@solana/web3.js";
+} from '@solana/web3.js';
 import {
   createMint,
   getOrCreateAssociatedTokenAccount,
   mintTo,
   getAccount,
   getAssociatedTokenAddressSync,
-} from "@solana/spl-token";
-import anchorPkg, { type AnchorProvider as AnchorProviderType } from "@coral-xyz/anchor";
+} from '@solana/spl-token';
+import anchorPkg, {
+  type AnchorProvider as AnchorProviderType,
+} from '@coral-xyz/anchor';
 const { AnchorProvider, Wallet } = anchorPkg;
-import { createHash, randomBytes } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
-import { resolve } from "node:path";
+import { createHash, randomBytes } from 'node:crypto';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync, rmSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   getFerryProgram,
-  deriveLockPda,
-  deriveVaultPda,
   buildLockInstruction,
   buildClaimInstruction,
   buildRefundInstruction,
   fetchLockState,
   PROGRAM_ID,
-} from "../src/index.js";
+} from '../src/index.js';
 
-const RPC_URL = "http://127.0.0.1:8899";
-const LEDGER_DIR = "/tmp/ferry-solana-test-ledger";
-const SO_PATH = resolve(
-  __dirname,
-  "../target/deploy/ferry_htlc.so",
-);
+const RPC_URL = 'http://127.0.0.1:8899';
+const LEDGER_DIR = '/tmp/ferry-solana-test-ledger';
+const SO_PATH = resolve(__dirname, '../target/deploy/ferry_htlc.so');
 
 function sha256(data: Uint8Array): Uint8Array {
-  return createHash("sha256").update(data).digest();
+  return createHash('sha256').update(data).digest();
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-describe("Ferry HTLC Solana Program", () => {
+describe('Ferry HTLC Solana Program', () => {
   let validatorProcess: ChildProcess | null = null;
   let connection: Connection;
   let payer: Keypair;
@@ -59,13 +56,13 @@ describe("Ferry HTLC Solana Program", () => {
 
   beforeAll(async () => {
     // Check if test validator is already running
-    connection = new Connection(RPC_URL, "confirmed");
+    connection = new Connection(RPC_URL, 'confirmed');
     let isRunning = false;
     try {
       await connection.getSlot();
       isRunning = true;
     } catch {
-      isRunning = false;
+      // Validator not running yet
     }
 
     if (!isRunning) {
@@ -74,17 +71,17 @@ describe("Ferry HTLC Solana Program", () => {
       }
 
       validatorProcess = spawn(
-        "solana-test-validator",
+        'solana-test-validator',
         [
-          "--bpf-program",
+          '--bpf-program',
           PROGRAM_ID.toBase58(),
           SO_PATH,
-          "--reset",
-          "--quiet",
-          "--ledger",
+          '--reset',
+          '--quiet',
+          '--ledger',
           LEDGER_DIR,
         ],
-        { stdio: "ignore", detached: false },
+        { stdio: 'ignore', detached: false },
       );
 
       // Wait for validator to respond
@@ -99,7 +96,7 @@ describe("Ferry HTLC Solana Program", () => {
         }
       }
       if (attempts >= 60) {
-        throw new Error("solana-test-validator failed to start in 30s");
+        throw new Error('solana-test-validator failed to start in 30s');
       }
     }
 
@@ -139,13 +136,7 @@ describe("Ferry HTLC Solana Program", () => {
     );
 
     // Create a mock USDC mint (6 decimals)
-    mint = await createMint(
-      connection,
-      payer,
-      payer.publicKey,
-      null,
-      6,
-    );
+    mint = await createMint(connection, payer, payer.publicKey, null, 6);
 
     // Create owner ATA and mint 1,000,000,000 tokens (1000 USDC)
     const ownerAtaAccount = await getOrCreateAssociatedTokenAccount(
@@ -168,7 +159,7 @@ describe("Ferry HTLC Solana Program", () => {
 
   afterAll(async () => {
     if (validatorProcess) {
-      validatorProcess.kill("SIGTERM");
+      validatorProcess.kill('SIGTERM');
       await sleep(1000);
       if (existsSync(LEDGER_DIR)) {
         rmSync(LEDGER_DIR, { recursive: true, force: true });
@@ -176,7 +167,7 @@ describe("Ferry HTLC Solana Program", () => {
     }
   });
 
-  it("happy path: lock -> claim with relayer-as-fee-payer (user SOL balance unchanged)", async () => {
+  it('happy path: lock -> claim with relayer-as-fee-payer (user SOL balance unchanged)', async () => {
     const program = getFerryProgram(provider);
     const secret = randomBytes(32);
     const hashLock = sha256(secret);
@@ -184,18 +175,21 @@ describe("Ferry HTLC Solana Program", () => {
     const now = Math.floor(Date.now() / 1000);
     const deadline = BigInt(now + 300);
 
-    const { instruction: lockIx, lockPda, vaultPda } =
-      await buildLockInstruction({
-        program,
-        payer: payer.publicKey,
-        owner: owner.publicKey,
-        recipient: recipient.publicKey,
-        mint,
-        amount,
-        hashLock,
-        deadline,
-        ownerTokenAccount: ownerAta,
-      });
+    const {
+      instruction: lockIx,
+      lockPda,
+      vaultPda,
+    } = await buildLockInstruction({
+      program,
+      payer: payer.publicKey,
+      owner: owner.publicKey,
+      recipient: recipient.publicKey,
+      mint,
+      amount,
+      hashLock,
+      deadline,
+      ownerTokenAccount: ownerAta,
+    });
 
     const lockTx = new Transaction().add(lockIx);
     await sendAndConfirmTransaction(connection, lockTx, [payer, owner]);
@@ -204,7 +198,9 @@ describe("Ferry HTLC Solana Program", () => {
     const lockState = await fetchLockState(program, lockPda);
     expect(lockState).not.toBeNull();
     expect(lockState!.owner.toBase58()).toBe(owner.publicKey.toBase58());
-    expect(lockState!.recipient.toBase58()).toBe(recipient.publicKey.toBase58());
+    expect(lockState!.recipient.toBase58()).toBe(
+      recipient.publicKey.toBase58(),
+    );
     expect(lockState!.mint.toBase58()).toBe(mint.toBase58());
     expect(lockState!.amount.toString()).toBe(amount.toString());
 
@@ -213,9 +209,7 @@ describe("Ferry HTLC Solana Program", () => {
     expect(vaultAccount.amount).toBe(amount);
 
     // Record recipient SOL balance BEFORE claim
-    const recipientSolBefore = await connection.getBalance(
-      recipient.publicKey,
-    );
+    const recipientSolBefore = await connection.getBalance(recipient.publicKey);
 
     // Relayer executes claim
     const { instruction: claimIx } = await buildClaimInstruction({
@@ -241,9 +235,7 @@ describe("Ferry HTLC Solana Program", () => {
     expect(recipientTokenAccount.amount).toBe(amount);
 
     // Invariant: User's SOL balance remains completely unchanged
-    const recipientSolAfter = await connection.getBalance(
-      recipient.publicKey,
-    );
+    const recipientSolAfter = await connection.getBalance(recipient.publicKey);
     expect(recipientSolAfter).toBe(recipientSolBefore);
 
     // Verify PDA and vault are closed
@@ -254,7 +246,7 @@ describe("Ferry HTLC Solana Program", () => {
     expect(vaultInfo).toBeNull();
   }, 20_000);
 
-  it("happy path: lock -> refund after deadline passes", async () => {
+  it('happy path: lock -> refund after deadline passes', async () => {
     const program = getFerryProgram(provider);
     const secret = randomBytes(32);
     const hashLock = sha256(secret);
@@ -263,25 +255,27 @@ describe("Ferry HTLC Solana Program", () => {
     // 2 second deadline
     const deadline = BigInt(now + 2);
 
-    const { instruction: lockIx, lockPda, vaultPda } =
-      await buildLockInstruction({
-        program,
-        payer: payer.publicKey,
-        owner: owner.publicKey,
-        recipient: recipient.publicKey,
-        mint,
-        amount,
-        hashLock,
-        deadline,
-        ownerTokenAccount: ownerAta,
-      });
+    const {
+      instruction: lockIx,
+      lockPda,
+      vaultPda,
+    } = await buildLockInstruction({
+      program,
+      payer: payer.publicKey,
+      owner: owner.publicKey,
+      recipient: recipient.publicKey,
+      mint,
+      amount,
+      hashLock,
+      deadline,
+      ownerTokenAccount: ownerAta,
+    });
 
     const lockTx = new Transaction().add(lockIx);
     await sendAndConfirmTransaction(connection, lockTx, [payer, owner]);
 
-    const ownerBalanceBeforeRefund = (
-      await getAccount(connection, ownerAta)
-    ).amount;
+    const ownerBalanceBeforeRefund = (await getAccount(connection, ownerAta))
+      .amount;
 
     // Wait 3 seconds for deadline to pass
     await sleep(3000);
@@ -300,9 +294,8 @@ describe("Ferry HTLC Solana Program", () => {
     await sendAndConfirmTransaction(connection, refundTx, [relayer]);
 
     // Verify tokens refunded to owner
-    const ownerBalanceAfterRefund = (
-      await getAccount(connection, ownerAta)
-    ).amount;
+    const ownerBalanceAfterRefund = (await getAccount(connection, ownerAta))
+      .amount;
     expect(ownerBalanceAfterRefund).toBe(ownerBalanceBeforeRefund + amount);
 
     // Verify lockState and vault are closed
@@ -313,7 +306,7 @@ describe("Ferry HTLC Solana Program", () => {
     expect(vaultInfo).toBeNull();
   }, 20_000);
 
-  it("rejects claim with invalid secret hash", async () => {
+  it('rejects claim with invalid secret hash', async () => {
     const program = getFerryProgram(provider);
     const secret = randomBytes(32);
     const hashLock = sha256(secret);
@@ -357,7 +350,7 @@ describe("Ferry HTLC Solana Program", () => {
     ).rejects.toThrow();
   }, 20_000);
 
-  it("rejects claim with wrong-length secret", async () => {
+  it('rejects claim with wrong-length secret', async () => {
     const program = getFerryProgram(provider);
     const secret = randomBytes(32);
     const hashLock = sha256(secret);
@@ -401,7 +394,7 @@ describe("Ferry HTLC Solana Program", () => {
     ).rejects.toThrow();
   }, 20_000);
 
-  it("rejects refund before deadline has passed", async () => {
+  it('rejects refund before deadline has passed', async () => {
     const program = getFerryProgram(provider);
     const secret = randomBytes(32);
     const hashLock = sha256(secret);
@@ -443,7 +436,7 @@ describe("Ferry HTLC Solana Program", () => {
     ).rejects.toThrow();
   }, 20_000);
 
-  it("rejects double claim on an already claimed lock", async () => {
+  it('rejects double claim on an already claimed lock', async () => {
     const program = getFerryProgram(provider);
     const secret = randomBytes(32);
     const hashLock = sha256(secret);
@@ -480,9 +473,11 @@ describe("Ferry HTLC Solana Program", () => {
     });
 
     // First claim succeeds
-    await sendAndConfirmTransaction(connection, new Transaction().add(claimIx), [
-      relayer,
-    ]);
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(claimIx),
+      [relayer],
+    );
 
     // Second claim must fail
     await expect(
@@ -492,7 +487,7 @@ describe("Ferry HTLC Solana Program", () => {
     ).rejects.toThrow();
   }, 20_000);
 
-  it("rejects double refund on an already refunded lock", async () => {
+  it('rejects double refund on an already refunded lock', async () => {
     const program = getFerryProgram(provider);
     const secret = randomBytes(32);
     const hashLock = sha256(secret);
@@ -530,9 +525,11 @@ describe("Ferry HTLC Solana Program", () => {
     });
 
     // First refund succeeds
-    await sendAndConfirmTransaction(connection, new Transaction().add(refundIx), [
-      relayer,
-    ]);
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(refundIx),
+      [relayer],
+    );
 
     // Second refund must fail
     await expect(
@@ -542,7 +539,7 @@ describe("Ferry HTLC Solana Program", () => {
     ).rejects.toThrow();
   }, 20_000);
 
-  it("claims to a fresh ATA with idempotent creation funded by relayer", async () => {
+  it('claims to a fresh ATA with idempotent creation funded by relayer', async () => {
     const program = getFerryProgram(provider);
     const freshRecipient = Keypair.generate(); // Brand new keypair with 0 SOL and NO ATA
     const secret = randomBytes(32);
@@ -588,9 +585,11 @@ describe("Ferry HTLC Solana Program", () => {
       payerRentDest: payer.publicKey,
     });
 
-    await sendAndConfirmTransaction(connection, new Transaction().add(claimIx), [
-      relayer,
-    ]);
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(claimIx),
+      [relayer],
+    );
 
     // Verify fresh recipient ATA now exists and holds tokens
     const ataAccount = await getAccount(connection, freshAta);
@@ -603,7 +602,7 @@ describe("Ferry HTLC Solana Program", () => {
     expect(freshSolBalance).toBe(0);
   }, 20_000);
 
-  it("rejects lock with 0 amount or deadline in past", async () => {
+  it('rejects lock with 0 amount or deadline in past', async () => {
     const program = getFerryProgram(provider);
     const secret = randomBytes(32);
     const hashLock = sha256(secret);
@@ -623,11 +622,10 @@ describe("Ferry HTLC Solana Program", () => {
     });
 
     await expect(
-      sendAndConfirmTransaction(
-        connection,
-        new Transaction().add(zeroLockIx),
-        [payer, owner],
-      ),
+      sendAndConfirmTransaction(connection, new Transaction().add(zeroLockIx), [
+        payer,
+        owner,
+      ]),
     ).rejects.toThrow();
 
     // Past deadline
@@ -644,19 +642,19 @@ describe("Ferry HTLC Solana Program", () => {
     });
 
     await expect(
-      sendAndConfirmTransaction(
-        connection,
-        new Transaction().add(pastLockIx),
-        [payer, owner],
-      ),
+      sendAndConfirmTransaction(connection, new Transaction().add(pastLockIx), [
+        payer,
+        owner,
+      ]),
     ).rejects.toThrow();
   }, 20_000);
 
-  it("token edge cases: supports standard SPL Token and notes Token-2022 is out of scope", () => {
+  it('token edge cases: supports standard SPL Token and notes Token-2022 is out of scope', () => {
     // Assert program relies on standard SPL Token program (TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA)
     // Blueprint §24.4: Token-2022 is out of scope for Ferry L6
-    const standardSplTokenProgram = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-    const token2022Program = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+    const standardSplTokenProgram =
+      'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+    const token2022Program = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
     expect(standardSplTokenProgram).not.toBe(token2022Program);
   });
 });

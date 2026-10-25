@@ -39,6 +39,7 @@ Bitcoin Cash is the hub of all Ferry routes; this package provides the Solana en
 ### Relayer-as-Fee-Payer (S-09 Invariant)
 
 To enable gas-free recipient swaps on Solana:
+
 - The transaction `feePayer` is set to the relayer.
 - The relayer funds both the transaction fee and the recipient's ATA rent-exempt balance (if not already existing).
 - Invariant verified on Solana Devnet: The user's native SOL balance delta is exactly **0 lamports** across the swap.

@@ -84,7 +84,9 @@ describe('Key Derivation Vectors & Provenance', () => {
     const { Keypair } = await import('@solana/web3.js');
     const seed = new Uint8Array(32).fill(1);
     const kp = Keypair.fromSeed(seed);
-    const address = deriveSolanaAddress(JSON.stringify(Array.from(kp.secretKey)));
+    const address = deriveSolanaAddress(
+      JSON.stringify(Array.from(kp.secretKey)),
+    );
     expect(address).toBe(kp.publicKey.toBase58());
     expect(isValidSolanaKeypair(JSON.stringify(Array.from(kp.secretKey)))).toBe(
       true,

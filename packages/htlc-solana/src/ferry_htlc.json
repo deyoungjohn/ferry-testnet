@@ -9,16 +9,7 @@
   "instructions": [
     {
       "name": "claim",
-      "discriminator": [
-        62,
-        198,
-        214,
-        193,
-        213,
-        159,
-        108,
-        210
-      ],
+      "discriminator": [62, 198, 214, 193, 213, 159, 108, 210],
       "accounts": [
         {
           "name": "payer",
@@ -32,12 +23,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  108,
-                  111,
-                  99,
-                  107
-                ]
+                "value": [108, 111, 99, 107]
               },
               {
                 "kind": "account",
@@ -59,13 +45,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
+                "value": [118, 97, 117, 108, 116]
               },
               {
                 "kind": "account",
@@ -110,16 +90,7 @@
     },
     {
       "name": "lock",
-      "discriminator": [
-        21,
-        19,
-        208,
-        43,
-        237,
-        62,
-        255,
-        87
-      ],
+      "discriminator": [21, 19, 208, 43, 237, 62, 255, 87],
       "accounts": [
         {
           "name": "payer",
@@ -140,12 +111,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  108,
-                  111,
-                  99,
-                  107
-                ]
+                "value": [108, 111, 99, 107]
               },
               {
                 "kind": "account",
@@ -165,13 +131,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
+                "value": [118, 97, 117, 108, 116]
               },
               {
                 "kind": "account",
@@ -201,10 +161,7 @@
         {
           "name": "hash_lock",
           "type": {
-            "array": [
-              "u8",
-              32
-            ]
+            "array": ["u8", 32]
           }
         },
         {
@@ -219,16 +176,7 @@
     },
     {
       "name": "refund",
-      "discriminator": [
-        2,
-        96,
-        183,
-        251,
-        63,
-        208,
-        46,
-        46
-      ],
+      "discriminator": [2, 96, 183, 251, 63, 208, 46, 46],
       "accounts": [
         {
           "name": "payer",
@@ -242,12 +190,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  108,
-                  111,
-                  99,
-                  107
-                ]
+                "value": [108, 111, 99, 107]
               },
               {
                 "kind": "account",
@@ -269,13 +212,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
+                "value": [118, 97, 117, 108, 116]
               },
               {
                 "kind": "account",
@@ -317,57 +254,21 @@
   "accounts": [
     {
       "name": "LockState",
-      "discriminator": [
-        140,
-        53,
-        195,
-        57,
-        171,
-        177,
-        11,
-        86
-      ]
+      "discriminator": [140, 53, 195, 57, 171, 177, 11, 86]
     }
   ],
   "events": [
     {
       "name": "Claimed",
-      "discriminator": [
-        217,
-        192,
-        123,
-        72,
-        108,
-        150,
-        248,
-        33
-      ]
+      "discriminator": [217, 192, 123, 72, 108, 150, 248, 33]
     },
     {
       "name": "Locked",
-      "discriminator": [
-        188,
-        53,
-        118,
-        62,
-        64,
-        12,
-        198,
-        84
-      ]
+      "discriminator": [188, 53, 118, 62, 64, 12, 198, 84]
     },
     {
       "name": "Refunded",
-      "discriminator": [
-        35,
-        103,
-        149,
-        246,
-        196,
-        123,
-        221,
-        99
-      ]
+      "discriminator": [35, 103, 149, 246, 196, 123, 221, 99]
     }
   ],
   "errors": [
@@ -472,10 +373,7 @@
           {
             "name": "hash_lock",
             "type": {
-              "array": [
-                "u8",
-                32
-              ]
+              "array": ["u8", 32]
             }
           },
           {
@@ -521,10 +419,7 @@
           {
             "name": "hash_lock",
             "type": {
-              "array": [
-                "u8",
-                32
-              ]
+              "array": ["u8", 32]
             }
           },
           {
