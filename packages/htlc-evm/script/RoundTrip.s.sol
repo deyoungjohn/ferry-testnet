@@ -27,9 +27,36 @@ contract RoundTrip is Script {
         require(IERC20(token).balanceOf(user) >= amount, "user USDC too low");
         require(solver.balance > 0, "solver ETH missing");
 
-        uint64 deadline = uint64(block.timestamp + 2 hours);
-        uint256 intentDeadline = block.timestamp + 1 hours;
-        uint256 permitDeadline = block.timestamp + 2 hours;
+        // On Arc Testnet (chainid 5042002), USDC calls consensus precompiles:
+        // 0x1800...0001 (isBlocklisted) and 0x1800...0000 (native transfer).
+        // revm has no native implementation for Arc precompiles, so etch mocks for local script simulation.
+        // On-chain, the Arc node executes its native Go precompiles.
+        if (block.chainid == 5042002) {
+            vm.etch(address(0x1800000000000000000000000000000000000001), hex"600060005260206000f3");
+            vm.etch(address(0x1800000000000000000000000000000000000000), hex"600160005260206000f3");
+            vm.deal(htlcAddress, 100 ether);
+        }
+
+        string memory action = vm.envOr("FERRY_ACTION", string("claim"));
+        bytes32 actionHash = keccak256(bytes(action));
+
+        if (actionHash == keccak256(bytes("refund"))) {
+            bytes32 refundLockId = vm.envBytes32("FERRY_LOCK_ID");
+            console2.log("refund lockId:");
+            console2.logBytes32(refundLockId);
+            console2.log("user USDC before refund:", IERC20(token).balanceOf(user));
+
+            vm.broadcast(solverKey);
+            htlc.refund{ gas: 500_000 }(refundLockId);
+
+            console2.log("user USDC after refund:", IERC20(token).balanceOf(user));
+            return;
+        }
+
+        uint256 duration = vm.envOr("FERRY_DURATION", uint256(2 hours));
+        uint64 deadline = uint64(vm.getBlockTimestamp() + duration);
+        uint256 intentDeadline = vm.getBlockTimestamp() + 1 hours;
+        uint256 permitDeadline = vm.getBlockTimestamp() + 2 hours;
         bytes32 secret = keccak256(
             abi.encodePacked(block.timestamp, block.prevrandao, user, solver, htlcAddress)
         );
@@ -80,7 +107,7 @@ contract RoundTrip is Script {
         console2.log("user USDC before:", IERC20(token).balanceOf(user));
 
         vm.broadcast(solverKey);
-        bytes32 lockedId = htlc.lockWithIntent(
+        bytes32 lockedId = htlc.lockWithIntent{ gas: 1_500_000 }(
             user,
             token,
             user,
@@ -96,8 +123,19 @@ contract RoundTrip is Script {
         );
         require(lockedId == id, "unexpected lock id");
 
-        vm.broadcast(solverKey);
-        htlc.claim(id, secret);
+        if (actionHash == keccak256(bytes("lock"))) {
+            console2.log("lock created for refund test; deadline:", deadline);
+            return;
+        }
+
+        if (actionHash == keccak256(bytes("roundtrip_refund"))) {
+            vm.warp(deadline + 1);
+            vm.broadcast(solverKey);
+            htlc.refund{ gas: 500_000 }(id);
+        } else {
+            vm.broadcast(solverKey);
+            htlc.claim{ gas: 500_000 }(id, secret);
+        }
 
         console2.log("user ETH after:", user.balance);
         console2.log("user USDC after:", IERC20(token).balanceOf(user));

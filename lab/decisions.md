@@ -296,3 +296,38 @@ Lightweight decision records (template below). Spike answers (S-01…S-14, Q-A�
   - Bytecode emitted by `tron-solc 0.8.31` introduces TVM-specific opcodes (`0xd2` and `0xd3` in the constructor preamble for TRC-10 compatibility). Consequently, local logic testing is compiled via standard Solc / Foundry, whereas Nile testnet deployment artifacts are generated with TronBox's `tron-solc`.
 - **Consequence for rebuild:** Maintain `FerryHTLC.sol` in `packages/htlc-tron` without permit support. Swaps on Tron require the user to send an `approve` transaction followed by `lock`. Always wrap TRC-20 token interfaces with `SafeERC20`.
 - **Revisit if:** TRON introduces native EIP-2612 permit standards across major token contracts.
+---
+
+### D-A3-007 · EVM Multi-Chain Deployment, Arc Consensus Precompiles, and Non-Standard Token Handling (S-08, S-12, S-13, S-14)
+
+- **Date:** 2026-10-25
+- **Prompt:** (Part C)
+- **Status:** PASS
+
+#### Context
+Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Arc Testnet (S-08), BSC Testnet (S-12), and Arbitrum Sepolia (S-13), plus Ethereum Mainnet USDT non-standard return-value verification on Anvil fork (S-14). The requirements stipulate deploying the exact same `FerryHTLC` contract at the canonical CREATE2 address `0x5A0C062f4B7b8fF2263530e12bc15De9C836a641` across all chains, verifying RPC characteristics (`safe`/`finalized` tags, `eth_getLogs` limits), investigating issuer token parameters (decimals, EIP-2612 permit support), and executing headless lock → claim and lock → refund round trips.
+
+#### Decisions & Findings
+1. **Canonical CREATE2 Address & Factory EIP-150 Gas Sizing:**
+   - Deployed `FerryHTLC` at canonical CREATE2 address `0x5A0C062f4B7b8fF2263530e12bc15De9C836a641` on Ethereum Sepolia (tx `0x9c7f4563ce7cabbc7ad9f1ee0cdea1188f2e34b86c9de52edd8fbf26b0b10596`) and Arc Testnet (tx `0x366257dd717e683df21e9a9f36b994097f4e8a018c6132b2088c2c4199d4e3b3`).
+   - Bytecode length is exactly 3361 bytes on all chains, matching Base Sepolia byte-for-byte.
+   - Fixed EIP-150 63/64 child gas starvation in `Deploy.s.sol` by passing explicit low-level gas allowances and requiring a minimum `--gas-limit 6000000` for script broadcast on post-Cancun/Prague chains.
+
+2. **Arc Testnet Consensus Architecture (S-08):**
+   - On Arc Testnet (chain ID 5042002), USDC is the native gas token (18 decimals in balances/fees) and is wrapped into ERC-20 standard behavior at `0x3600000000000000000000000000000000000000` (6 decimals).
+   - Arc invokes consensus precompiles `0x1800000000000000000000000000000000000001` (`isBlocklisted`) and `0x1800000000000000000000000000000000000000` (native balance updater).
+   - In Foundry revm simulator, standard execution fails with `StackUnderflow`. Resolved by etching simulation mocks in `RoundTrip.s.sol` and using `--skip-simulation` on broadcast.
+   - Live roundtrips verified on-chain: lock+claim (txs `0x190ffcd9...`, `0x78c8511f...`) and lock+refund (txs `0xae9ffb91...`, `0x72c34137...`). User balance preserved at 80.0 USDC with 0 fee paid by user.
+
+3. **Ethereum Mainnet USDT Non-Standard Return Quirk (S-14):**
+   - Ethereum Mainnet USDT (`0xdAC17F958D2ee523a2206206994597C13D831ec7`) returns 0 bytes on `transfer` and `transferFrom`.
+   - Verified via Anvil fork suite `test/S14UsdtMainnetFork.t.sol`: `SafeERC20` handles the void return cleanly for both `claim` and `refund` without reverting.
+   - Verified that Tether USDT does not support EIP-2612 (`DOMAIN_SEPARATOR()` and `permit()` revert). Direct approval (`lock()`) must be used for USDT routes.
+
+4. **BSC Testnet 18-Decimal Quirk & Exact Amount Preservation (S-12):**
+   - On BSC (both Mainnet `0x55d398326f99059fF775485246999027B3197955` and Testnet `0x7ef95a0FEE0Dd31b22626fA2e10Ee6A223F8a684`), USDT uses **18 decimals** (Binance-Pegged BSC-USD).
+   - Verified exact amount preservation through `test/S12BscUsdtProperty.t.sol` using canonical 25e18 (`25000000000000000000` units, matching `@ferry/core` `bsc18` fixture) and 256 fuzz runs, confirming 0 wei loss/truncation across lock, claim, and refund.
+   - Identified that Binance public RPC (`data-seed-prebsc-1-s1.binance.org`) rejects `eth_getLogs` with `-32005: limit exceeded`; recommended using `bsc-testnet-rpc.publicnode.com`.
+
+5. **Arbitrum Sepolia & BSC Testnet Funding Checklist:**
+   - Both networks require faucet funding for Deployer and Solver wallets before on-chain deployment can execute.
