@@ -4,6 +4,46 @@ import type { BchAddressInfo } from '../bch/address';
 export type WalletStatus =
   'disconnected' | 'connecting' | 'connected' | 'unavailable';
 
+export interface BchUtxo {
+  readonly txid: string;
+  readonly vout: number;
+  readonly satoshis: bigint;
+  readonly lockingBytecode: `0x${string}`;
+  readonly token?:
+    | {
+        readonly category: string;
+        readonly amount: bigint;
+      }
+    | undefined;
+}
+
+export interface BchSourceOutput {
+  readonly outpointIndex: number;
+  readonly outpointTransactionHash: Uint8Array;
+  readonly sequenceNumber: number;
+  readonly unlockingBytecode: Uint8Array;
+  readonly valueSatoshis: bigint;
+  readonly lockingBytecode: Uint8Array;
+  readonly token?:
+    | {
+        readonly category: Uint8Array;
+        readonly amount: bigint;
+      }
+    | undefined;
+}
+
+export interface BchSignTransactionRequest {
+  readonly transaction: string;
+  readonly sourceOutputs: readonly BchSourceOutput[];
+  readonly broadcast?: boolean;
+  readonly userPrompt?: string;
+}
+
+export interface BchSignedTransaction {
+  readonly txHex: string;
+  readonly txid: string;
+}
+
 export interface EvmWallet {
   readonly status: WalletStatus;
   readonly address: Address | null;
@@ -13,6 +53,7 @@ export interface EvmWallet {
   signTypedData(params: TypedDataDefinition): Promise<Hex>;
   readPermitNonce(owner: Address): Promise<bigint>;
   refundLock(id: Hex): Promise<Hex>;
+  claimLock(id: Hex, secret: Hex): Promise<Hex>;
 }
 
 export interface BchWallet {
@@ -23,6 +64,10 @@ export interface BchWallet {
   connect(): void;
   disconnect(): Promise<void>;
   setAddress(address: BchAddressInfo): void;
+  listUtxos(): Promise<readonly BchUtxo[]>;
+  signTransaction(
+    request: BchSignTransactionRequest,
+  ): Promise<BchSignedTransaction>;
   broadcastTransaction(txHex: string): Promise<string>;
 }
 

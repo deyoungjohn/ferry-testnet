@@ -1,4 +1,6 @@
 import {
+  invariantF,
+  invariantR,
   orderId as computeOrderId,
   quoteExactIn,
   verifyOrderSignature,
@@ -20,6 +22,7 @@ export interface TermsCheckConfig {
   readonly bchToken: 'PUSD' | 'MUSD';
   readonly bchTokenCategory: string;
   readonly solverCounterAddress: string;
+  readonly solverBchLockingBytecode: string;
   readonly bchTipHeight: number;
   readonly bchCarrySats: bigint;
   readonly bchMaxFee: bigint;
@@ -117,6 +120,11 @@ export function assertTermsMatchRequest(
     terms.solverCounterAddress,
     config.solverCounterAddress,
   );
+  requireHex(
+    'solver BCH locking bytecode',
+    terms.solverBchLockingBytecode,
+    config.solverBchLockingBytecode,
+  );
 
   if (terms.direction === 'COUNTER_TO_BCH') {
     requireEqual('counter amount', terms.counterAmount, request.amountIn);
@@ -170,6 +178,25 @@ export function assertTermsMatchRequest(
   }
   if (refundBlocks > config.maxBchRefundBlocks) {
     throw new Error('Quote BCH refund height is too far away');
+  }
+}
+
+export function assertTimingInvariant(
+  terms: OrderTerms,
+  config: Pick<TermsCheckConfig, 'bchTipHeight' | 'nowSeconds'>,
+): void {
+  const start = {
+    unixSeconds: config.nowSeconds,
+    bchTipHeight: config.bchTipHeight,
+  };
+  const decision =
+    terms.direction === 'BCH_TO_COUNTER'
+      ? invariantR(terms, start)
+      : invariantF(terms, start);
+  if (!decision.allowed) {
+    throw new Error(
+      `Quote ${terms.direction === 'BCH_TO_COUNTER' ? 'reverse' : 'forward'} timing invariant failed: ${decision.reason}`,
+    );
   }
 }
 

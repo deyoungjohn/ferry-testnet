@@ -1,17 +1,24 @@
 import { evmLockId, type Hex32 } from '@ferry/core';
-import { buildClaimTransaction } from '@ferry/htlc-bch';
+import {
+  buildClaimTransaction,
+  buildRefundTransaction,
+  deriveHtlcAddresses,
+} from '@ferry/htlc-bch';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import {
   BASE_EXPLORER_URL,
+  BCH_ELECTRUM_URL,
   BCH_EXPLORER_URL,
   BCH_NETWORK,
   FERRY_HTLC_ADDRESS,
+  PUSD_SYMBOL,
   explorerTxUrl,
 } from '../lib/config';
 import { addressFromLockingBytecode } from '../lib/bch/address';
 import { loadSecret } from '../lib/vault';
 import { bchParametersFromTerms } from '../lib/recovery';
+import { ElectrumClient } from '../recover/core';
 import { useSolver } from '../lib/solver/context';
 import type { OrderView } from '../lib/solver/types';
 import { buildOrderViewModel, formatDuration } from '../lib/solver/view';
@@ -74,6 +81,7 @@ export function SwapStatusPage() {
     () => (order ? buildOrderViewModel(order, now) : null),
     [order, now],
   );
+  const reverse = order?.terms.direction === 'BCH_TO_COUNTER';
   const bchUserAddress = useMemo(
     () =>
       order
@@ -132,6 +140,120 @@ export function SwapStatusPage() {
     }
   }
 
+  async function handleReverseClaim(gasless: boolean): Promise<void> {
+    if (!id || !order) return;
+    setBusy(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const secret = await loadSecret(id);
+      if (!secret) {
+        throw new Error(
+          'No local recovery secret. Open the recovery file on the device that created this swap.',
+        );
+      }
+      if (!evm.address) {
+        throw new Error('Connect the Base wallet that will receive USDC.');
+      }
+      if (gasless) {
+        await solver.relayClaim(id, secret);
+        setActionMessage(
+          'USDC claim relayed. The solver pays the Base gas and the BCH side settles next.',
+        );
+      } else {
+        const lockId = evmLockId(
+          order.terms.solverCounterAddress,
+          order.terms.hashLock,
+        );
+        const txHash = await evm.claimLock(lockId, secret);
+        setActionMessage(
+          `USDC claim submitted: ${truncateAddress(txHash, 10, 6)}`,
+        );
+      }
+      await refresh();
+    } catch (cause) {
+      setActionError(
+        cause instanceof Error ? cause.message : 'Could not claim USDC',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadUserBchLockUtxo(): Promise<{
+    readonly txid: string;
+    readonly vout: number;
+    readonly satoshis: bigint;
+  }> {
+    if (!order) throw new Error('Order is not loaded');
+    if (order.bchLockUtxo) return order.bchLockUtxo;
+    const addresses = deriveHtlcAddresses(
+      bchParametersFromTerms(order.terms),
+      BCH_NETWORK,
+    );
+    const electrum = new ElectrumClient(BCH_ELECTRUM_URL);
+    try {
+      await electrum.connect();
+      const utxos = await electrum.listUnspent(
+        `0x${Array.from(addresses.lockingBytecode, (byte) =>
+          byte.toString(16).padStart(2, '0'),
+        ).join('')}`,
+      );
+      const category = order.terms.bchTokenCategory
+        .toLowerCase()
+        .replace(/^0x/, '');
+      const match = utxos.find(
+        (utxo) =>
+          utxo.category?.toLowerCase().replace(/^0x/, '') === category &&
+          utxo.amount === order.terms.bchTokenAmount,
+      );
+      if (!match) throw new Error('The BCH lock UTXO is not visible yet');
+      return match;
+    } finally {
+      electrum.close();
+    }
+  }
+
+  async function handleBchRefund(): Promise<void> {
+    if (!order) return;
+    setBusy(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      if (!bch.address) {
+        throw new Error('Connect the BCH wallet that funded this swap.');
+      }
+      if (order.bchTipError) {
+        throw new Error(`BCH refund is disabled: ${order.bchTipError}`);
+      }
+      if (order.bchTipHeight < order.terms.bchRefundHeight) {
+        throw new Error('The BCH refund height has not been reached yet');
+      }
+      const utxo = await loadUserBchLockUtxo();
+      const built = buildRefundTransaction({
+        params: bchParametersFromTerms(order.terms),
+        network: BCH_NETWORK,
+        utxo: {
+          txid: utxo.txid,
+          vout: utxo.vout,
+          satoshis: utxo.satoshis,
+        },
+        feeSats: 500n,
+      });
+      const txid = await bch.broadcastTransaction(built.txHex);
+      await refresh();
+      setActionMessage(`BCH refund broadcast: ${truncateAddress(txid, 10, 6)}`);
+    } catch (cause) {
+      setActionError(
+        cause instanceof Error
+          ? cause.message
+          : 'Could not refund the BCH lock',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleRefund(): Promise<void> {
     if (!order) return;
     setBusy(true);
@@ -156,6 +278,17 @@ export function SwapStatusPage() {
       setBusy(false);
     }
   }
+
+  const sendAmount = order
+    ? reverse
+      ? `${formatPusd(order.terms.bchTokenAmount)} ${PUSD_SYMBOL}`
+      : `${formatUsdc(order.terms.counterAmount)} USDC`
+    : '';
+  const receiveAmount = order
+    ? reverse
+      ? `${formatUsdc(order.terms.counterAmount)} USDC`
+      : `${formatPusd(order.terms.bchTokenAmount)} ${PUSD_SYMBOL}`
+    : '';
 
   if (!id) {
     return (
@@ -210,6 +343,16 @@ export function SwapStatusPage() {
         </div>
       ) : null}
 
+      {order?.bchTipError ? (
+        <p
+          role="alert"
+          className="mt-6 rounded-well border border-warn/25 bg-warn/5 px-4 py-3 text-[11px] leading-5 text-warn"
+        >
+          BCH tip unavailable: {order.bchTipError}. Refund actions stay disabled
+          until an independent Electrum tip is reachable.
+        </p>
+      ) : null}
+
       {order && view ? (
         <>
           <section className="mt-8 rounded-card border border-hairline bg-surface-1 p-5 sm:p-6">
@@ -219,10 +362,13 @@ export function SwapStatusPage() {
                   You send
                 </p>
                 <p className="mt-1 text-2xl font-medium tabular-nums text-text">
-                  {formatUsdc(order.terms.counterAmount)} USDC
+                  {sendAmount}
                 </p>
                 <p className="mt-1 text-[11px] text-text-muted">
-                  on Base · {truncateAddress(order.terms.userCounterAddress)}
+                  {reverse ? 'on BCH · ' : 'on Base · '}
+                  {reverse
+                    ? truncateAddress(bchUserAddress, 12, 6)
+                    : truncateAddress(order.terms.userCounterAddress)}
                 </p>
               </div>
               <span className="text-2xl text-text-muted" aria-hidden="true">
@@ -233,10 +379,13 @@ export function SwapStatusPage() {
                   You receive
                 </p>
                 <p className="mt-1 text-2xl font-medium tabular-nums text-lime">
-                  {formatPusd(order.terms.bchTokenAmount)} tPUSD
+                  {receiveAmount}
                 </p>
                 <p className="mt-1 text-[11px] text-text-muted">
-                  on BCH · {truncateAddress(bchUserAddress, 12, 6)}
+                  {reverse ? 'on Base · ' : 'on BCH · '}
+                  {reverse
+                    ? truncateAddress(order.terms.userCounterAddress)
+                    : truncateAddress(bchUserAddress, 12, 6)}
                 </p>
               </div>
             </div>
@@ -258,7 +407,8 @@ export function SwapStatusPage() {
             </div>
             {order.bchLockUtxo ? (
               <p className="mt-3 truncate border-t border-hairline pt-3 font-mono text-[10px] text-text-muted">
-                BCH lock {truncateAddress(order.bchLockUtxo.txid, 12, 8)}:
+                {reverse ? 'Your BCH lock' : 'BCH lock'}{' '}
+                {truncateAddress(order.bchLockUtxo.txid, 12, 8)}:
                 {order.bchLockUtxo.vout} ·{' '}
                 {order.bchLockUtxo.satoshis.toString()} sats
               </p>
@@ -341,27 +491,63 @@ export function SwapStatusPage() {
             {view.claimAvailable ? (
               <div>
                 <h2 className="text-sm font-semibold text-text">
-                  Claim your tPUSD
+                  {reverse ? 'Claim your USDC' : 'Claim your tPUSD'}
                 </h2>
                 <p className="mt-1 text-[11px] leading-5 text-text-muted">
-                  The solver locked tPUSD on BCH. Claiming reveals the secret
-                  on-chain; only then is it sent to the solver so it can settle
-                  USDC. The status endpoint never returns it.
+                  {reverse
+                    ? 'The solver locked USDC on Base. Relay the claim gaslessly, or self-claim if the Base wallet holds ETH. The secret stays in this browser except for the relay request.'
+                    : 'The solver locked tPUSD on BCH. Claiming reveals the secret on-chain; only then is it sent to the solver so it can settle USDC. The status endpoint never returns it.'}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => void handleClaim()}
-                  disabled={busy || !bch.address}
-                  title={
-                    !bch.address
-                      ? 'Connect the BCH wallet that will receive the claim'
-                      : undefined
-                  }
-                  className="mt-4 flex h-11 w-full items-center justify-center rounded-pill bg-olive px-5 text-sm font-semibold text-text shadow-pill disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {busy ? 'Submitting claim…' : 'Claim tPUSD'}
-                </button>
-                {!bch.address ? (
+                {reverse ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleReverseClaim(true)}
+                      disabled={busy || !evm.address}
+                      title={
+                        !evm.address
+                          ? 'Connect the Base wallet that will receive USDC'
+                          : undefined
+                      }
+                      className="mt-4 flex h-11 w-full items-center justify-center rounded-pill bg-olive px-5 text-sm font-semibold text-text shadow-pill disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {busy ? 'Relaying claim…' : 'Claim USDC (gasless)'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleReverseClaim(false)}
+                      disabled={busy || !evm.address}
+                      className="mt-2 flex h-10 w-full items-center justify-center rounded-pill border border-hairline bg-surface-2 px-5 text-xs font-medium text-text disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Self-claim with Base wallet
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void handleClaim()}
+                    disabled={busy || !bch.address}
+                    title={
+                      !bch.address
+                        ? 'Connect the BCH wallet that will receive the claim'
+                        : undefined
+                    }
+                    className="mt-4 flex h-11 w-full items-center justify-center rounded-pill bg-olive px-5 text-sm font-semibold text-text shadow-pill disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy ? 'Submitting claim…' : 'Claim tPUSD'}
+                  </button>
+                )}
+                {reverse && !evm.address ? (
+                  <button
+                    type="button"
+                    onClick={() => evm.connect()}
+                    disabled={evm.status === 'unavailable'}
+                    className="mt-2 text-[11px] text-text-muted underline decoration-hairline underline-offset-2 hover:text-lime disabled:opacity-40"
+                  >
+                    Connect Base wallet
+                  </button>
+                ) : null}
+                {!reverse && !bch.address ? (
                   <button
                     type="button"
                     onClick={() => bch.connect()}
@@ -373,7 +559,7 @@ export function SwapStatusPage() {
               </div>
             ) : null}
 
-            {view.refundAvailable ? (
+            {view.refundAvailable || view.bchRefundAvailable ? (
               <div
                 className={
                   view.claimAvailable
@@ -382,26 +568,46 @@ export function SwapStatusPage() {
                 }
               >
                 <h2 className="text-sm font-semibold text-text">
-                  Refund your USDC
+                  {reverse ? 'Refund your tPUSD' : 'Refund your USDC'}
                 </h2>
                 <p className="mt-1 text-[11px] leading-5 text-text-muted">
-                  The swap did not complete. Refund the Base lock from the
-                  wallet that created it.
+                  {reverse
+                    ? 'The swap did not complete. After the BCH refund height, refund your own BCH lock to the wallet that funded it.'
+                    : 'The swap did not complete. Refund the Base lock from the wallet that created it.'}
                 </p>
                 <button
                   type="button"
-                  onClick={() => void handleRefund()}
-                  disabled={busy || !evm.address}
+                  onClick={() =>
+                    reverse ? void handleBchRefund() : void handleRefund()
+                  }
+                  disabled={busy || (reverse ? !bch.address : !evm.address)}
                   title={
-                    !evm.address
-                      ? 'Connect the Base wallet that made this lock'
-                      : undefined
+                    reverse
+                      ? !bch.address
+                        ? 'Connect the BCH wallet that funded this swap'
+                        : undefined
+                      : !evm.address
+                        ? 'Connect the Base wallet that made this lock'
+                        : undefined
                   }
                   className="mt-4 flex h-11 w-full items-center justify-center rounded-pill border border-hairline bg-surface-2 px-5 text-sm font-semibold text-text disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {busy ? 'Submitting refund…' : 'Refund USDC'}
+                  {busy
+                    ? 'Submitting refund…'
+                    : reverse
+                      ? 'Refund tPUSD'
+                      : 'Refund USDC'}
                 </button>
-                {!evm.address ? (
+                {reverse && !bch.address ? (
+                  <button
+                    type="button"
+                    onClick={() => bch.connect()}
+                    className="mt-2 text-[11px] text-text-muted underline decoration-hairline underline-offset-2 hover:text-lime"
+                  >
+                    Connect BCH wallet
+                  </button>
+                ) : null}
+                {!reverse && !evm.address ? (
                   <button
                     type="button"
                     onClick={() => evm.connect()}
@@ -414,7 +620,9 @@ export function SwapStatusPage() {
               </div>
             ) : null}
 
-            {!view.claimAvailable && !view.refundAvailable ? (
+            {!view.claimAvailable &&
+            !view.refundAvailable &&
+            !view.bchRefundAvailable ? (
               <div className="flex items-start gap-3">
                 <span
                   className={[

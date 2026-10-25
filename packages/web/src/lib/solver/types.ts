@@ -39,11 +39,13 @@ export interface OrderView {
   readonly terms: OrderTerms;
   readonly lane: Lane;
   readonly bchTipHeight: number;
+  readonly bchTipError: string | null;
   readonly updatedAt: number;
   readonly transactions: readonly OrderTransaction[];
   readonly bchLockUtxo: BchLockUtxo | null;
   readonly claimAvailable: boolean;
   readonly refundAvailable: boolean;
+  readonly bchRefundAvailable: boolean;
 }
 
 export interface SolverClient {
@@ -51,6 +53,7 @@ export interface SolverClient {
   relayLock(request: RelayLockRequest): Promise<{ readonly txHash: string }>;
   getOrder(orderId: Hex32): Promise<OrderView>;
   submitSecret(orderId: Hex32, secret: Hex32): Promise<void>;
+  relayClaim(orderId: Hex32, secret: Hex32): Promise<void>;
 }
 
 export { TERMINAL_ORDER_STATUSES as TERMINAL_STATUSES } from '@ferry/core';
@@ -65,6 +68,23 @@ export const STATUS_LABELS: Record<OrderStatus, string> = {
   USER_CLAIM_SEEN: 'Your BCH claim seen',
   SOLVER_CLAIM_BROADCAST: 'Solver USDC claim broadcast',
   SOLVER_CLAIM_FINAL: 'Solver USDC claim final',
+  DONE: 'Done',
+  EXPIRED: 'Quote expired',
+  REJECTED: 'Swap rejected',
+  SOLVER_REFUND_BROADCAST: 'Solver refund broadcast',
+  SOLVER_REFUNDED: 'Refunded',
+};
+
+export const REVERSE_STATUS_LABELS: Record<OrderStatus, string> = {
+  QUOTED: 'Quote signed',
+  USER_LOCK_SEEN: 'Your BCH lock seen',
+  USER_LOCK_FINAL: 'Your BCH lock final',
+  SOLVER_LOCK_BROADCAST: 'Solver USDC lock broadcast',
+  SOLVER_LOCK_SEEN: 'Solver USDC lock seen',
+  SECRET_KNOWN: 'Secret revealed',
+  USER_CLAIM_SEEN: 'Your USDC claim seen',
+  SOLVER_CLAIM_BROADCAST: 'Solver BCH claim broadcast',
+  SOLVER_CLAIM_FINAL: 'Solver BCH claim final',
   DONE: 'Done',
   EXPIRED: 'Quote expired',
   REJECTED: 'Swap rejected',

@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "build:recover": "node scripts/build-recover.mjs",
+    "check:recover": "node scripts/build-recover.mjs --check",
     "test:e2e:recover": "node scripts/build-recover.mjs && playwright test -c playwright.recover.config.ts"
   },
   "dependencies": {
@@ -27,6 +28,7 @@
     "@wizardconnect/core": "0.2.5",
     "@wizardconnect/dapp": "0.2.2",
     "@wizardconnect/react": "0.2.3",
+    "qrcode.react": "4.2.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "react-router": "8.5.0",

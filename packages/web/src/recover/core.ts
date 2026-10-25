@@ -125,15 +125,20 @@ export function electrumScripthash(lockingBytecode: Hex): string {
   return bytesToHex(hash).slice(2);
 }
 
+function normalizeCategory(category: string): string {
+  return category.toLowerCase().replace(/^0x/, '');
+}
+
 export function findHtlcUtxo(
   utxos: readonly ElectrumUtxo[],
   file: RecoveryFile,
 ): ElectrumUtxo | null {
-  const category = file.terms.bchTokenCategory.toLowerCase();
+  const category = normalizeCategory(file.terms.bchTokenCategory);
   return (
     utxos.find(
       (utxo) =>
-        utxo.category?.toLowerCase() === category &&
+        utxo.category !== null &&
+        normalizeCategory(utxo.category) === category &&
         utxo.amount === file.terms.bchTokenAmount,
     ) ?? null
   );

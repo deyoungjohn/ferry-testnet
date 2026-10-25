@@ -3,7 +3,14 @@ import { useAppKit } from '@reown/appkit/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WizardConnectQRDialog, useWizardConnect } from '@wizardconnect/react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { Address, Hex, TypedDataDefinition } from 'viem';
+import {
+  bytesToHex,
+  hexToBytes,
+  sha256,
+  type Address,
+  type Hex,
+  type TypedDataDefinition,
+} from 'viem';
 import {
   useAccount,
   useDisconnect,
@@ -13,11 +20,23 @@ import {
   WagmiProvider,
 } from 'wagmi';
 import { addressFromPubkey } from '../bch/address';
-import { FERRY_HTLC_ADDRESS, REOWN_PROJECT_ID, USDC_ADDRESS } from '../config';
+import {
+  BCH_ELECTRUM_URL,
+  FERRY_HTLC_ADDRESS,
+  REOWN_PROJECT_ID,
+  USDC_ADDRESS,
+} from '../config';
+import { ElectrumClient } from '../../recover/core';
 import { WalletContext } from './context';
 import { wagmiConfig } from './evm-config';
 import { wizardConnectTheme } from './wizard-theme';
-import type { BchWallet, EvmWallet } from './types';
+import type {
+  BchSignedTransaction,
+  BchSignTransactionRequest,
+  BchUtxo,
+  BchWallet,
+  EvmWallet,
+} from './types';
 
 const queryClient = new QueryClient();
 
@@ -85,7 +104,24 @@ function useRealEvmWallet(): EvmWallet {
         args: [id],
       });
     },
+    claimLock: async (id: Hex, secret: Hex) => {
+      return writeContractAsync({
+        address: FERRY_HTLC_ADDRESS,
+        abi: ferryHtlcAbi,
+        functionName: 'claim',
+        args: [id, secret],
+      });
+    },
   };
+}
+
+function txidOf(txHex: string): string {
+  const first = hexToBytes(
+    sha256((txHex.startsWith('0x') ? txHex : `0x${txHex}`) as Hex),
+  );
+  const second = hexToBytes(sha256(first));
+  second.reverse();
+  return bytesToHex(second).slice(2);
 }
 
 function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
@@ -95,6 +131,12 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
   const derived = useMemo(() => {
     if (wizard.state !== 'connected' || !wizard.manager) return null;
     const pubkey = wizard.manager.getPubkey(0, 0n);
+    return pubkey ? addressFromPubkey(pubkey) : null;
+  }, [wizard.state, wizard.manager]);
+
+  const derivedChange = useMemo(() => {
+    if (wizard.state !== 'connected' || !wizard.manager) return null;
+    const pubkey = wizard.manager.getPubkey(1, 0n);
     return pubkey ? addressFromPubkey(pubkey) : null;
   }, [wizard.state, wizard.manager]);
 
@@ -122,8 +164,102 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
       await wizard.disconnect();
     },
     setAddress: setManualAddress,
-    broadcastTransaction: async () => {
-      throw new Error('BCH broadcast is not wired in L5');
+    listUtxos: async (): Promise<readonly BchUtxo[]> => {
+      if (!address) throw new Error('Connect a BCH wallet first');
+      const owned = [
+        address,
+        ...(derivedChange && derivedChange.address !== address.address
+          ? [derivedChange]
+          : []),
+      ];
+      const electrum = new ElectrumClient(BCH_ELECTRUM_URL);
+      try {
+        await electrum.connect();
+        const lists = await Promise.all(
+          owned.map((ownedAddress) =>
+            electrum.listUnspent(ownedAddress.lockingBytecode),
+          ),
+        );
+        return lists.flatMap((utxos, index) => {
+          const ownedAddress = owned[index];
+          if (!ownedAddress) return [];
+          return utxos.map((utxo) => ({
+            txid: utxo.txid,
+            vout: utxo.vout,
+            satoshis: utxo.satoshis,
+            lockingBytecode: ownedAddress.lockingBytecode,
+            ...(utxo.category !== null && utxo.amount !== null
+              ? {
+                  token: {
+                    category: `0x${utxo.category.replace(/^0x/, '')}`,
+                    amount: utxo.amount,
+                  },
+                }
+              : {}),
+          }));
+        });
+      } finally {
+        electrum.close();
+      }
+    },
+    signTransaction: async (
+      request: BchSignTransactionRequest,
+    ): Promise<BchSignedTransaction> => {
+      if (!wizard.manager)
+        throw new Error('Connect a WizardConnect wallet first');
+      const response = await wizard.manager.signTransaction({
+        transaction: {
+          transaction: request.transaction,
+          sourceOutputs: request.sourceOutputs.map((output) => ({
+            outpointIndex: output.outpointIndex,
+            outpointTransactionHash: output.outpointTransactionHash,
+            sequenceNumber: output.sequenceNumber,
+            unlockingBytecode: output.unlockingBytecode,
+            valueSatoshis: output.valueSatoshis,
+            lockingBytecode: output.lockingBytecode,
+            ...(output.token
+              ? {
+                  token: {
+                    category: output.token.category,
+                    amount: output.token.amount,
+                  },
+                }
+              : {}),
+          })),
+          ...(request.broadcast !== undefined
+            ? { broadcast: request.broadcast }
+            : {}),
+          ...(request.userPrompt !== undefined
+            ? { userPrompt: request.userPrompt }
+            : {}),
+        },
+        inputPaths: request.sourceOutputs.map((output) => {
+          const bytecode = bytesToHex(output.lockingBytecode).toLowerCase();
+          if (derived && bytecode === derived.lockingBytecode.toLowerCase()) {
+            return [0, 'receive', 0] as [number, 'receive', number];
+          }
+          if (
+            derivedChange &&
+            bytecode === derivedChange.lockingBytecode.toLowerCase()
+          ) {
+            return [1, 'change', 0] as [number, 'change', number];
+          }
+          throw new Error(
+            'A BCH input does not belong to the connected wallet receive or change path',
+          );
+        }),
+      });
+      const txHex = response.signedTransaction;
+      return { txHex, txid: txidOf(txHex) };
+    },
+    broadcastTransaction: async (txHex: string) => {
+      const electrum = new ElectrumClient(BCH_ELECTRUM_URL);
+      try {
+        await electrum.connect();
+        return await electrum.broadcast(txHex);
+      } finally {
+        electrum.close();
+      }
     },
   };
 
@@ -158,6 +294,9 @@ const unavailableEvm: EvmWallet = {
     throw new Error('Wallet connect needs a Reown project ID');
   },
   refundLock: async () => {
+    throw new Error('Wallet connect needs a Reown project ID');
+  },
+  claimLock: async () => {
     throw new Error('Wallet connect needs a Reown project ID');
   },
 };

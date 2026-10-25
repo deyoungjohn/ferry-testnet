@@ -1,6 +1,8 @@
+import type { Direction } from '@ferry/core';
 import type { QuoteRequest, SignedQuote } from '../lib/solver/types';
 import {
   assertTermsMatchRequest,
+  assertTimingInvariant,
   isQuoteExpired,
   verifySignedQuote,
   type TermsCheckConfig,
@@ -13,8 +15,10 @@ import {
   buildIntentTypedData,
   buildPermitTypedData,
   formatPusd,
+  formatUsdc,
   generateSecret,
   hashLockForSecret,
+  parsePusdAmount,
   parseUsdcAmount,
   quoteRate,
   truncateAddress,
@@ -22,7 +26,6 @@ import {
 import { PUSD_BCH, USDC_BASE } from '../lib/tokens';
 import { useSolver } from '../lib/solver/context';
 import { useWallets } from '../lib/wallet/context';
-import { parseBchAddress } from '../lib/bch/address';
 import {
   BASE_SEPOLIA_CHAIN_ID,
   BCH_CARRY_SATS,
@@ -32,26 +35,50 @@ import {
   FWD_BCH_REFUND_BLOCKS,
   FWD_EVM_DEADLINE_S,
   PUSD_CATEGORY,
+  PUSD_SYMBOL,
   QUOTE_TTL_S,
+  REV_BCH_REFUND_BLOCKS,
+  REV_EVM_DEADLINE_S,
   requireSolverSigner,
+  SOLVER_BCH_ADDRESS,
   SOLVER_COUNTER_ADDRESS,
   SPREAD_BPS,
   USDC_ADDRESS,
   USDC_DECIMALS,
 } from '../lib/config';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from 'react';
 import { useNavigate } from 'react-router';
 import { ArrowUpDownIcon, CheckIcon, ShieldIcon } from './icons';
+const ReverseFundingPanel = lazy(async () => {
+  const module = await import('./ReverseFundingPanel');
+  return { default: module.ReverseFundingPanel };
+});
 import { TokenPill } from './TokenPill';
 import { Well } from './Well';
 
 type Phase = 'idle' | 'quoting' | 'quoted' | 'locking';
+
+function initialDirection(): Direction {
+  if (typeof window === 'undefined') return 'COUNTER_TO_BCH';
+  return new URLSearchParams(window.location.search).get('direction') ===
+    'reverse'
+    ? 'BCH_TO_COUNTER'
+    : 'COUNTER_TO_BCH';
+}
 
 export function SwapCard() {
   const navigate = useNavigate();
   const { evm, bch, usingMocks } = useWallets();
   const solver = useSolver();
   const [amount, setAmount] = useState('10.00');
+  const [direction, setDirection] = useState<Direction>(initialDirection);
   const [lane, setLane] = useState<'safe' | 'fast'>('safe');
   const [phase, setPhase] = useState<Phase>('idle');
   const [quote, setQuote] = useState<SignedQuote | null>(null);
@@ -72,6 +99,7 @@ export function SwapCard() {
   }, []);
 
   const expired = quote ? isQuoteExpired(quote.terms, now) : false;
+  const reverse = direction === 'BCH_TO_COUNTER';
   const fastDisabled = Number(amount) > 25;
   const solverLabel = import.meta.env.VITE_SOLVER_URL
     ? 'Live solver'
@@ -80,15 +108,21 @@ export function SwapCard() {
   const walletsReady = Boolean(evm.address && bch.address);
   const canQuote = walletsReady && !busy;
 
-  const receiveAmount = quote ? formatPusd(quote.terms.bchTokenAmount) : '—';
+  const receiveAmount = quote
+    ? reverse
+      ? formatUsdc(quote.terms.counterAmount)
+      : formatPusd(quote.terms.bchTokenAmount)
+    : '—';
   const receiveFiat = quote
-    ? `≈ $${formatPusd(quote.terms.bchTokenAmount)}`
+    ? `≈ $${reverse ? formatUsdc(quote.terms.counterAmount) : formatPusd(quote.terms.bchTokenAmount)}`
     : 'A quote will fill this in';
 
   const quoteRows = useMemo(() => {
     if (!quote) return null;
     return {
-      rate: `1 USDC = ${quoteRate(quote.terms)} tPUSD`,
+      rate: reverse
+        ? `1 ${PUSD_SYMBOL} = ${quoteRate(quote.terms)} USDC`
+        : `1 USDC = ${quoteRate(quote.terms)} ${PUSD_SYMBOL}`,
       spread: '0.40%',
       fee: '$0.05',
       arrival:
@@ -96,7 +130,7 @@ export function SwapCard() {
           ? 'Fast lane · under a minute'
           : 'Safe lane · ~1 BCH block',
     };
-  }, [quote]);
+  }, [quote, reverse]);
 
   function resetQuote(): void {
     setQuote(null);
@@ -116,11 +150,13 @@ export function SwapCard() {
     setPhase('quoting');
     setError(null);
     try {
-      const amountIn = parseUsdcAmount(amount);
+      const amountIn = reverse
+        ? parsePusdAmount(amount)
+        : parseUsdcAmount(amount);
       const secret = generateSecret();
       const hashLock = hashLockForSecret(secret);
       const nextRequest: QuoteRequest = {
-        direction: 'COUNTER_TO_BCH',
+        direction,
         bchToken: 'PUSD',
         counterChain: 'base',
         counterSymbol: 'USDC',
@@ -132,6 +168,9 @@ export function SwapCard() {
         ...(lane === 'fast' ? { fastOptIn: true } : {}),
       };
       const next = await solver.quote(nextRequest);
+      const { parseBchAddress } = await import('../lib/bch/address');
+      const solverBch = parseBchAddress(SOLVER_BCH_ADDRESS);
+      if (!solverBch.ok) throw new Error(solverBch.error);
       const signer = requireSolverSigner();
       const valid = await verifySignedQuote(next, signer);
       if (!valid) {
@@ -150,6 +189,7 @@ export function SwapCard() {
         bchToken: nextRequest.bchToken,
         bchTokenCategory: PUSD_CATEGORY,
         solverCounterAddress: SOLVER_COUNTER_ADDRESS,
+        solverBchLockingBytecode: solverBch.value.lockingBytecode,
         bchTipHeight: next.bchTipHeight,
         bchCarrySats: BCH_CARRY_SATS,
         bchMaxFee: BCH_MAX_FEE_SATS,
@@ -159,11 +199,16 @@ export function SwapCard() {
         },
         nowSeconds: Math.floor(Date.now() / 1000),
         maxQuoteFutureSeconds: QUOTE_TTL_S * 2,
-        maxCounterDeadlineSeconds: FWD_EVM_DEADLINE_S + 300,
-        minBchRefundBlocks: FWD_BCH_REFUND_BLOCKS,
-        maxBchRefundBlocks: FWD_BCH_REFUND_BLOCKS + 6,
+        maxCounterDeadlineSeconds:
+          (reverse ? REV_EVM_DEADLINE_S : FWD_EVM_DEADLINE_S) + 300,
+        minBchRefundBlocks: reverse
+          ? REV_BCH_REFUND_BLOCKS
+          : FWD_BCH_REFUND_BLOCKS,
+        maxBchRefundBlocks:
+          (reverse ? REV_BCH_REFUND_BLOCKS : FWD_BCH_REFUND_BLOCKS) + 6,
       };
       assertTermsMatchRequest(next.terms, nextRequest, checkConfig);
+      assertTimingInvariant(next.terms, checkConfig);
       const file = buildRecoveryFile(next.orderId, next.terms, secret);
       await saveSecret(next.orderId, secret);
       setQuote(next);
@@ -179,6 +224,21 @@ export function SwapCard() {
     }
   }
 
+  function handleDirection(): void {
+    resetQuote();
+    setDirection((current) =>
+      current === 'COUNTER_TO_BCH' ? 'BCH_TO_COUNTER' : 'COUNTER_TO_BCH',
+    );
+    setAmount('10.00');
+  }
+
+  function handleFunded(txid: string): void {
+    if (!quote) return;
+    navigate(`/swap/${quote.orderId}`, {
+      state: { fundingTxid: txid },
+    });
+  }
+
   function handleDownload(): void {
     if (!recovery) return;
     downloadRecoveryFile(recovery);
@@ -186,6 +246,10 @@ export function SwapCard() {
   }
 
   async function handleFerry(): Promise<void> {
+    if (reverse) {
+      setError('Use the BCH funding panel for a reverse swap.');
+      return;
+    }
     if (!quote || !recovery || !evm.address) return;
     if (!signatureValid) {
       setError('The quote signature is not valid.');
@@ -225,8 +289,9 @@ export function SwapCard() {
     }
   }
 
-  function handlePaste(event: FormEvent<HTMLFormElement>): void {
+  async function handlePaste(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    const { parseBchAddress } = await import('../lib/bch/address');
     const parsed = parseBchAddress(paste);
     if (!parsed.ok) {
       setPasteError(parsed.error);
@@ -351,7 +416,10 @@ export function SwapCard() {
           <summary className="cursor-pointer select-none hover:text-text">
             Paste a token-aware BCH address instead
           </summary>
-          <form onSubmit={handlePaste} className="mt-2 flex gap-2">
+          <form
+            onSubmit={(event) => void handlePaste(event)}
+            className="mt-2 flex gap-2"
+          >
             <input
               value={paste}
               onChange={(event) => setPaste(event.target.value)}
@@ -379,8 +447,15 @@ export function SwapCard() {
           label="You send"
           amount={amount}
           fiat={`≈ $${amount || '0.00'}`}
-          balance={usingMocks ? '20.00 USDC' : '—'}
-          selector={<TokenPill token={USDC_BASE} />}
+          balance={
+            usingMocks ? (reverse ? `50.00 ${PUSD_SYMBOL}` : '20.00 USDC') : '—'
+          }
+          selector={
+            <TokenPill
+              token={reverse ? PUSD_BCH : USDC_BASE}
+              pinned={reverse}
+            />
+          }
           editable
           disabled={busy}
           onAmountChange={(value) => {
@@ -392,10 +467,15 @@ export function SwapCard() {
         <div className="relative z-10 -my-2.5 flex justify-center">
           <button
             type="button"
-            aria-label="Direction is fixed in L5"
-            aria-disabled="true"
-            title="Reverse direction lands in L5"
-            className="grid size-10 place-items-center rounded-full border-4 border-surface-1 bg-surface-3 text-text-muted shadow-pill transition-colors hover:text-lime"
+            aria-label="Switch swap direction"
+            aria-pressed={reverse}
+            title={
+              reverse
+                ? 'Switch to USDC on Base → tPUSD on BCH'
+                : 'Switch to tPUSD on BCH → USDC on Base'
+            }
+            onClick={handleDirection}
+            className="grid size-10 place-items-center rounded-full border-4 border-surface-1 bg-surface-3 text-text-muted shadow-pill transition-colors hover:text-lime aria-pressed:bg-olive-soft aria-pressed:text-lime"
           >
             <ArrowUpDownIcon className="size-4" />
           </button>
@@ -406,7 +486,12 @@ export function SwapCard() {
           amount={receiveAmount}
           fiat={receiveFiat}
           balance="—"
-          selector={<TokenPill token={PUSD_BCH} pinned />}
+          selector={
+            <TokenPill
+              token={reverse ? USDC_BASE : PUSD_BCH}
+              pinned={!reverse}
+            />
+          }
         />
       </div>
 
@@ -429,8 +514,10 @@ export function SwapCard() {
           <dt className="text-text-muted">Deadlines</dt>
           <dd className="text-right text-text">
             {quote
-              ? `${formatDuration(Math.max(0, quote.terms.counterDeadline - now))} Base · ${FWD_BCH_REFUND_BLOCKS} BCH blocks`
-              : 'Base 24h · BCH 36 blocks'}
+              ? `${formatDuration(Math.max(0, quote.terms.counterDeadline - now))} Base · ${reverse ? REV_BCH_REFUND_BLOCKS : FWD_BCH_REFUND_BLOCKS} BCH blocks`
+              : reverse
+                ? 'Base 6h · BCH 144 blocks'
+                : 'Base 24h · BCH 36 blocks'}
           </dd>
         </div>
         <div className="flex items-baseline justify-between gap-4 py-2.5">
@@ -485,6 +572,30 @@ export function SwapCard() {
                 ? 'Quote expired — get a fresh quote'
                 : 'Get quote'}
           </button>
+        ) : reverse ? (
+          <Suspense
+            fallback={
+              <p
+                className="text-center text-[11px] text-text-muted"
+                role="status"
+              >
+                Loading the BCH funding panel…
+              </p>
+            }
+          >
+            <ReverseFundingPanel
+              terms={quote.terms}
+              onFunded={handleFunded}
+              disabled={!recoveryDownloaded || !signatureValid || !walletsReady}
+              disabledReason={
+                !recoveryDownloaded
+                  ? 'Download the recovery file before funding the BCH lock.'
+                  : !signatureValid
+                    ? 'The solver signature is not valid.'
+                    : 'Connect both wallets before funding.'
+              }
+            />
+          </Suspense>
         ) : (
           <button
             type="button"
