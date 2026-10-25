@@ -26,7 +26,6 @@ import {
 import { PUSD_BCH, USDC_BASE } from '../lib/tokens';
 import { useSolver } from '../lib/solver/context';
 import { useWallets } from '../lib/wallet/context';
-import { parseBchAddress } from '../lib/bch/address';
 import {
   BASE_SEPOLIA_CHAIN_ID,
   BCH_CARRY_SATS,
@@ -47,18 +46,24 @@ import {
   USDC_ADDRESS,
   USDC_DECIMALS,
 } from '../lib/config';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from 'react';
 import { useNavigate } from 'react-router';
 import { ArrowUpDownIcon, CheckIcon, ShieldIcon } from './icons';
-import { ReverseFundingPanel } from './ReverseFundingPanel';
+const ReverseFundingPanel = lazy(async () => {
+  const module = await import('./ReverseFundingPanel');
+  return { default: module.ReverseFundingPanel };
+});
 import { TokenPill } from './TokenPill';
 import { Well } from './Well';
 
 type Phase = 'idle' | 'quoting' | 'quoted' | 'locking';
-
-const solverBch = parseBchAddress(SOLVER_BCH_ADDRESS);
-if (!solverBch.ok) throw new Error(solverBch.error);
-const solverBchLockingBytecode = solverBch.value.lockingBytecode;
 
 function initialDirection(): Direction {
   if (typeof window === 'undefined') return 'COUNTER_TO_BCH';
@@ -163,6 +168,9 @@ export function SwapCard() {
         ...(lane === 'fast' ? { fastOptIn: true } : {}),
       };
       const next = await solver.quote(nextRequest);
+      const { parseBchAddress } = await import('../lib/bch/address');
+      const solverBch = parseBchAddress(SOLVER_BCH_ADDRESS);
+      if (!solverBch.ok) throw new Error(solverBch.error);
       const signer = requireSolverSigner();
       const valid = await verifySignedQuote(next, signer);
       if (!valid) {
@@ -181,7 +189,7 @@ export function SwapCard() {
         bchToken: nextRequest.bchToken,
         bchTokenCategory: PUSD_CATEGORY,
         solverCounterAddress: SOLVER_COUNTER_ADDRESS,
-        solverBchLockingBytecode,
+        solverBchLockingBytecode: solverBch.value.lockingBytecode,
         bchTipHeight: next.bchTipHeight,
         bchCarrySats: BCH_CARRY_SATS,
         bchMaxFee: BCH_MAX_FEE_SATS,
@@ -281,8 +289,9 @@ export function SwapCard() {
     }
   }
 
-  function handlePaste(event: FormEvent<HTMLFormElement>): void {
+  async function handlePaste(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    const { parseBchAddress } = await import('../lib/bch/address');
     const parsed = parseBchAddress(paste);
     if (!parsed.ok) {
       setPasteError(parsed.error);
@@ -407,7 +416,10 @@ export function SwapCard() {
           <summary className="cursor-pointer select-none hover:text-text">
             Paste a token-aware BCH address instead
           </summary>
-          <form onSubmit={handlePaste} className="mt-2 flex gap-2">
+          <form
+            onSubmit={(event) => void handlePaste(event)}
+            className="mt-2 flex gap-2"
+          >
             <input
               value={paste}
               onChange={(event) => setPaste(event.target.value)}
@@ -561,18 +573,29 @@ export function SwapCard() {
                 : 'Get quote'}
           </button>
         ) : reverse ? (
-          <ReverseFundingPanel
-            terms={quote.terms}
-            onFunded={handleFunded}
-            disabled={!recoveryDownloaded || !signatureValid || !walletsReady}
-            disabledReason={
-              !recoveryDownloaded
-                ? 'Download the recovery file before funding the BCH lock.'
-                : !signatureValid
-                  ? 'The solver signature is not valid.'
-                  : 'Connect both wallets before funding.'
+          <Suspense
+            fallback={
+              <p
+                className="text-center text-[11px] text-text-muted"
+                role="status"
+              >
+                Loading the BCH funding panel…
+              </p>
             }
-          />
+          >
+            <ReverseFundingPanel
+              terms={quote.terms}
+              onFunded={handleFunded}
+              disabled={!recoveryDownloaded || !signatureValid || !walletsReady}
+              disabledReason={
+                !recoveryDownloaded
+                  ? 'Download the recovery file before funding the BCH lock.'
+                  : !signatureValid
+                    ? 'The solver signature is not valid.'
+                    : 'Connect both wallets before funding.'
+              }
+            />
+          </Suspense>
         ) : (
           <button
             type="button"

@@ -223,6 +223,9 @@ export function SwapStatusPage() {
       if (!bch.address) {
         throw new Error('Connect the BCH wallet that funded this swap.');
       }
+      if (order.bchTipError) {
+        throw new Error(`BCH refund is disabled: ${order.bchTipError}`);
+      }
       if (order.bchTipHeight < order.terms.bchRefundHeight) {
         throw new Error('The BCH refund height has not been reached yet');
       }
@@ -338,6 +341,16 @@ export function SwapStatusPage() {
             Start a swap
           </Link>
         </div>
+      ) : null}
+
+      {order?.bchTipError ? (
+        <p
+          role="alert"
+          className="mt-6 rounded-well border border-warn/25 bg-warn/5 px-4 py-3 text-[11px] leading-5 text-warn"
+        >
+          BCH tip unavailable: {order.bchTipError}. Refund actions stay disabled
+          until an independent Electrum tip is reachable.
+        </p>
       ) : null}
 
       {order && view ? (

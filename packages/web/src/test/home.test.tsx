@@ -48,18 +48,23 @@ describe('home page', () => {
 });
 
 describe('placeholder routes', () => {
-  it('renders the recover page', () => {
+  it('renders the recover page', async () => {
     renderAt('/recover');
 
     expect(
-      screen.getByRole('heading', { level: 1, name: /recover a swap/i }),
+      await screen.findByRole('heading', {
+        level: 1,
+        name: /recover a swap/i,
+      }),
     ).toBeInTheDocument();
   });
 
-  it('renders the pay link page with the link id', () => {
+  it('renders the pay link page with the link id', async () => {
     renderAt('/p/link_123');
 
-    expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
-    expect(screen.getByText('Link link_123')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { level: 1 }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('Link link_123')).toBeInTheDocument();
   });
 });

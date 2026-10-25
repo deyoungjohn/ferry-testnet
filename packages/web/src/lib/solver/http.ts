@@ -12,7 +12,7 @@ import {
   type QuoteRequest,
 } from '@ferry/core';
 import type { z } from 'zod';
-import { FWD_BCH_REFUND_BLOCKS, REV_BCH_REFUND_BLOCKS } from '../config';
+import { ElectrumBchTipReader, type BchTipReader } from '../bch/tip';
 import type {
   OrderTransaction,
   OrderView,
@@ -82,8 +82,14 @@ function refundAvailable(status: OrderStatus): boolean {
 export class HttpSolverClient implements SolverClient {
   readonly #baseUrl: string;
 
-  constructor(baseUrl: string) {
+  readonly #tipReader: BchTipReader;
+
+  constructor(
+    baseUrl: string,
+    tipReader: BchTipReader = new ElectrumBchTipReader(),
+  ) {
     this.#baseUrl = baseUrl.replace(/\/$/, '');
+    this.#tipReader = tipReader;
   }
 
   async #json<T>(
@@ -117,14 +123,14 @@ export class HttpSolverClient implements SolverClient {
       method: 'POST',
       body: serializeApiJson(parsed),
     });
-    return {
-      ...response,
-      bchTipHeight:
-        response.terms.bchRefundHeight -
-        (response.terms.direction === 'BCH_TO_COUNTER'
-          ? REV_BCH_REFUND_BLOCKS
-          : FWD_BCH_REFUND_BLOCKS),
-    };
+    const bchTipHeight = await this.#tipReader.read().catch((cause) => {
+      throw new Error(
+        `BCH tip unavailable; refusing to quote without an independent height: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+      );
+    });
+    return { ...response, bchTipHeight };
   }
 
   async relayLock(request: RelayLockRequest): Promise<{ txHash: string }> {
@@ -156,24 +162,40 @@ export class HttpSolverClient implements SolverClient {
       OrderStatusResponseSchema,
       `/v1/orders/${orderId}`,
     );
+    let bchTipHeight = 0;
+    let bchTipError: string | null = null;
+    try {
+      bchTipHeight = await this.#tipReader.read();
+    } catch (cause) {
+      bchTipError =
+        cause instanceof Error ? cause.message : 'BCH tip unavailable';
+    }
+    const reverse = response.terms.direction === 'BCH_TO_COUNTER';
     return {
       orderId: response.orderId,
       status: response.status,
       terms: response.terms,
       lane: response.lane,
-      bchTipHeight:
-        response.terms.bchRefundHeight -
-        (response.terms.direction === 'BCH_TO_COUNTER'
-          ? REV_BCH_REFUND_BLOCKS
-          : FWD_BCH_REFUND_BLOCKS),
+      bchTipHeight,
+      bchTipError,
       updatedAt: response.updatedAt,
       transactions: txList(response.txIds),
-      bchLockUtxo: null,
+      bchLockUtxo: response.bchLock
+        ? {
+            txid: response.bchLock.txid,
+            vout: response.bchLock.vout,
+            satoshis: response.bchLock.satoshis,
+          }
+        : null,
       claimAvailable: claimAvailable(response.status),
       refundAvailable:
         response.terms.direction === 'COUNTER_TO_BCH' &&
         refundAvailable(response.status),
-      bchRefundAvailable: false,
+      bchRefundAvailable:
+        reverse &&
+        !bchTipError &&
+        (response.status === 'REJECTED' || response.status === 'EXPIRED') &&
+        bchTipHeight >= response.terms.bchRefundHeight,
     };
   }
 
@@ -200,6 +222,9 @@ export class HttpSolverClient implements SolverClient {
   }
 }
 
-export function createHttpSolverClient(baseUrl: string): SolverClient {
-  return new HttpSolverClient(baseUrl);
+export function createHttpSolverClient(
+  baseUrl: string,
+  tipReader?: BchTipReader,
+): SolverClient {
+  return new HttpSolverClient(baseUrl, tipReader);
 }

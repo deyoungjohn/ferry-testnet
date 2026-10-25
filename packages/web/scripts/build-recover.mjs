@@ -1,6 +1,8 @@
 import { build } from 'esbuild';
 import { readFile, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
+import process from 'node:process';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const entry = fileURLToPath(
@@ -17,6 +19,7 @@ const result = await build({
   format: 'esm',
   platform: 'browser',
   target: ['es2022'],
+  conditions: ['ferry-source', 'import', 'module', 'default'],
   minify: true,
   legalComments: 'none',
   define: {
@@ -46,4 +49,23 @@ const html = `<!doctype html>
 </html>
 `;
 
-await writeFile(`${root}recover.html`, html);
+const outputPath = resolve(root, 'recover.html');
+
+if (process.argv.includes('--check')) {
+  let current;
+  try {
+    current = await readFile(outputPath, 'utf8');
+  } catch {
+    current = '';
+  }
+  if (current !== html) {
+    process.stderr.write(
+      'recover.html is stale. Run `pnpm --filter @ferry/web build:recover` and commit the result.\n',
+    );
+    process.exitCode = 1;
+  } else {
+    process.stdout.write('recover.html matches a fresh build.\n');
+  }
+} else {
+  await writeFile(outputPath, html);
+}

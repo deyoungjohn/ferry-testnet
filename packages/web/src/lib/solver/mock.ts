@@ -398,6 +398,7 @@ export class MockSolverClient implements SolverClient {
       terms: order.quote.terms,
       lane: order.quote.lane,
       bchTipHeight: order.tipHeight,
+      bchTipError: null,
       updatedAt: Math.floor(Date.now() / 1000),
       transactions: order.transactions,
       bchLockUtxo: reverse

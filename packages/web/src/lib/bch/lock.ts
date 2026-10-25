@@ -1,13 +1,8 @@
-import { hexToBin } from '@bitauth/libauth';
 import type { OrderTerms } from '@ferry/core';
-import { deriveHtlcAddresses } from '@ferry/htlc-bch';
+import { buildLockTransaction, deriveHtlcAddresses } from '@ferry/htlc-bch';
 import { BCH_NETWORK } from '../config';
 import { bchParametersFromTerms } from '../recovery';
-import type {
-  BchSignTransactionRequest,
-  BchSourceOutput,
-  BchUtxo,
-} from '../wallet/types';
+import type { BchSignTransactionRequest, BchUtxo } from '../wallet/types';
 
 export interface ReverseFundingTarget {
   readonly htlcP2sh32Address: string;
@@ -80,54 +75,42 @@ export function reverseFundingTarget(
   };
 }
 
-function sourceOutput(utxo: BchUtxo): BchSourceOutput {
-  return {
-    outpointIndex: utxo.vout,
-    outpointTransactionHash: hexToBin(utxo.txid),
-    sequenceNumber: 0,
-    unlockingBytecode: new Uint8Array(0),
-    valueSatoshis: utxo.satoshis,
-    lockingBytecode: hexToBin(utxo.lockingBytecode.slice(2)),
-    ...(utxo.token
-      ? {
-          token: {
-            category: hexToBin(utxo.token.category.slice(2)),
-            amount: utxo.token.amount,
-          },
-        }
-      : {}),
-  };
-}
-
-export function buildMockReverseLock(
+export function buildReverseLock(
   options: BuildReverseLockOptions,
 ): ReverseLockBuild {
   const target = reverseFundingTarget(options.terms, options.network);
   if (options.utxos.length === 0) {
     throw new Error('No BCH token UTXOs available for funding');
   }
-  const category = (value: string): string =>
-    value.toLowerCase().replace(/^0x/, '');
-  const tokenCategory = category(options.terms.bchTokenCategory);
-  const total = options.utxos.reduce(
-    (sum, utxo) =>
-      utxo.token && category(utxo.token.category) === tokenCategory
-        ? sum + utxo.token.amount
-        : sum,
-    0n,
-  );
-  if (total < options.terms.bchTokenAmount) {
-    throw new Error(
-      `Insufficient tPUSD: required ${options.terms.bchTokenAmount.toString()}, available ${total.toString()}`,
-    );
-  }
-  const txHex = '0200000000';
+  const built = buildLockTransaction({
+    params: options.terms,
+    utxos: options.utxos.map((utxo) => ({
+      txid: utxo.txid,
+      vout: utxo.vout,
+      satoshis: utxo.satoshis,
+      lockingBytecode: utxo.lockingBytecode,
+      ...(utxo.token
+        ? {
+            token: {
+              category: utxo.token.category.toLowerCase().replace(/^0x/, ''),
+              amount: utxo.token.amount,
+            },
+          }
+        : {}),
+    })),
+    changeAddress: options.changeAddress,
+    bchCarrySats: options.bchCarrySats ?? options.terms.bchCarrySats,
+    network: options.network ?? BCH_NETWORK,
+    userPrompt:
+      options.userPrompt ??
+      `Lock ${options.terms.bchTokenAmount.toString()} tPUSD into Ferry HTLC`,
+  });
   return {
-    txHex,
-    txid: 'ab'.repeat(32),
+    txHex: built.unsigned.txHex,
+    txid: built.unsigned.txid,
     wcSignRequest: {
-      transaction: txHex,
-      sourceOutputs: options.utxos.map(sourceOutput),
+      transaction: built.unsigned.txHex,
+      sourceOutputs: built.unsigned.sourceOutputs,
       broadcast: false,
       userPrompt:
         options.userPrompt ??
@@ -137,13 +120,4 @@ export function buildMockReverseLock(
     htlcTokenAddress: target.htlcTokenAddress,
     tokenAmount: options.terms.bchTokenAmount,
   };
-}
-
-export function buildReverseLock(
-  options: BuildReverseLockOptions,
-): ReverseLockBuild {
-  void options;
-  throw new Error(
-    'The BCH lock builder is not available in this build yet; use the QR/manual funding path',
-  );
 }

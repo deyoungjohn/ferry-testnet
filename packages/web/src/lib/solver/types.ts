@@ -39,6 +39,7 @@ export interface OrderView {
   readonly terms: OrderTerms;
   readonly lane: Lane;
   readonly bchTipHeight: number;
+  readonly bchTipError: string | null;
   readonly updatedAt: number;
   readonly transactions: readonly OrderTransaction[];
   readonly bchLockUtxo: BchLockUtxo | null;

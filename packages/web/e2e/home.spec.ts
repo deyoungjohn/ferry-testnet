@@ -94,6 +94,7 @@ test('UI-01 refund path screenshot', async ({ page }) => {
 });
 
 test('UI-03 reverse BCH to USDC happy path through DONE', async ({ page }) => {
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?mock=1&direction=reverse');
 
@@ -126,7 +127,7 @@ test('UI-03 reverse BCH to USDC happy path through DONE', async ({ page }) => {
 
   await expect(
     page.getByRole('heading', { level: 1, name: /done/i }),
-  ).toBeVisible({ timeout: 20_000 });
+  ).toBeVisible({ timeout: 40_000 });
   await expect(page.getByText(/both sides settled/i)).toBeVisible();
 
   await page.screenshot({

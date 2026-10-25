@@ -24,7 +24,7 @@ const MOCK_BCH_UTXOS: readonly BchUtxo[] = [
   {
     txid: '11'.repeat(32),
     vout: 0,
-    satoshis: 3_000n,
+    satoshis: 10_000n,
     lockingBytecode: mockBch.lockingBytecode,
     token: { category: PUSD_CATEGORY, amount: 5_000n },
   },

@@ -134,6 +134,12 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
     return pubkey ? addressFromPubkey(pubkey) : null;
   }, [wizard.state, wizard.manager]);
 
+  const derivedChange = useMemo(() => {
+    if (wizard.state !== 'connected' || !wizard.manager) return null;
+    const pubkey = wizard.manager.getPubkey(1, 0n);
+    return pubkey ? addressFromPubkey(pubkey) : null;
+  }, [wizard.state, wizard.manager]);
+
   const address = manualAddress ?? derived;
 
   useEffect(() => {
@@ -160,24 +166,38 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
     setAddress: setManualAddress,
     listUtxos: async (): Promise<readonly BchUtxo[]> => {
       if (!address) throw new Error('Connect a BCH wallet first');
+      const owned = [
+        address,
+        ...(derivedChange && derivedChange.address !== address.address
+          ? [derivedChange]
+          : []),
+      ];
       const electrum = new ElectrumClient(BCH_ELECTRUM_URL);
       try {
         await electrum.connect();
-        const utxos = await electrum.listUnspent(address.lockingBytecode);
-        return utxos.map((utxo) => ({
-          txid: utxo.txid,
-          vout: utxo.vout,
-          satoshis: utxo.satoshis,
-          lockingBytecode: address.lockingBytecode,
-          ...(utxo.category !== null && utxo.amount !== null
-            ? {
-                token: {
-                  category: `0x${utxo.category.replace(/^0x/, '')}`,
-                  amount: utxo.amount,
-                },
-              }
-            : {}),
-        }));
+        const lists = await Promise.all(
+          owned.map((ownedAddress) =>
+            electrum.listUnspent(ownedAddress.lockingBytecode),
+          ),
+        );
+        return lists.flatMap((utxos, index) => {
+          const ownedAddress = owned[index];
+          if (!ownedAddress) return [];
+          return utxos.map((utxo) => ({
+            txid: utxo.txid,
+            vout: utxo.vout,
+            satoshis: utxo.satoshis,
+            lockingBytecode: ownedAddress.lockingBytecode,
+            ...(utxo.category !== null && utxo.amount !== null
+              ? {
+                  token: {
+                    category: `0x${utxo.category.replace(/^0x/, '')}`,
+                    amount: utxo.amount,
+                  },
+                }
+              : {}),
+          }));
+        });
       } finally {
         electrum.close();
       }
@@ -213,9 +233,21 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
             ? { userPrompt: request.userPrompt }
             : {}),
         },
-        inputPaths: request.sourceOutputs.map(
-          () => [0, 'receive', 0] as [number, 'receive', number],
-        ),
+        inputPaths: request.sourceOutputs.map((output) => {
+          const bytecode = bytesToHex(output.lockingBytecode).toLowerCase();
+          if (derived && bytecode === derived.lockingBytecode.toLowerCase()) {
+            return [0, 'receive', 0] as [number, 'receive', number];
+          }
+          if (
+            derivedChange &&
+            bytecode === derivedChange.lockingBytecode.toLowerCase()
+          ) {
+            return [1, 'change', 0] as [number, 'change', number];
+          }
+          throw new Error(
+            'A BCH input does not belong to the connected wallet receive or change path',
+          );
+        }),
       });
       const txHex = response.signedTransaction;
       return { txHex, txid: txidOf(txHex) };

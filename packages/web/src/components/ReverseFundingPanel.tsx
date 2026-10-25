@@ -2,11 +2,7 @@ import { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { OrderTerms } from '@ferry/core';
 import { PUSD_SYMBOL, SOLVER_BCH_ADDRESS } from '../lib/config';
-import {
-  assertReverseFundingTarget,
-  buildMockReverseLock,
-  buildReverseLock,
-} from '../lib/bch/lock';
+import { assertReverseFundingTarget, buildReverseLock } from '../lib/bch/lock';
 import { parseBchAddress } from '../lib/bch/address';
 import { formatPusd, truncateAddress } from '../lib/swap';
 import { useWallets } from '../lib/wallet/context';
@@ -29,7 +25,7 @@ export function ReverseFundingPanel({
   disabled = false,
   disabledReason,
 }: ReverseFundingPanelProps) {
-  const { bch, usingMocks } = useWallets();
+  const { bch } = useWallets();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -54,17 +50,11 @@ export function ReverseFundingPanel({
     setError(null);
     try {
       const utxos = await bch.listUtxos();
-      const build = usingMocks
-        ? buildMockReverseLock({
-            terms,
-            utxos,
-            changeAddress: bch.address?.address ?? '',
-          })
-        : buildReverseLock({
-            terms,
-            utxos,
-            changeAddress: bch.address?.address ?? '',
-          });
+      const build = buildReverseLock({
+        terms,
+        utxos,
+        changeAddress: bch.address?.address ?? '',
+      });
       const signed = await bch.signTransaction(build.wcSignRequest);
       const txid = await bch.broadcastTransaction(signed.txHex);
       onFunded(txid);
@@ -181,13 +171,6 @@ export function ReverseFundingPanel({
               </p>
             </div>
           </details>
-
-          {!usingMocks ? (
-            <p className="mt-2 text-[10px] leading-4 text-text-muted">
-              WizardConnect signing is unavailable until the shared BCH lock
-              builder lands; the QR/manual path works now.
-            </p>
-          ) : null}
         </>
       )}
 

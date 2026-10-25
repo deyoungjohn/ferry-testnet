@@ -34,6 +34,7 @@ import {
 import { buildOrderViewModel } from '../lib/solver/view';
 import {
   assertReverseFundingTarget,
+  buildReverseLock,
   reverseFundingTarget,
 } from '../lib/bch/lock';
 import {
@@ -333,6 +334,25 @@ describe('T9 terms binding', () => {
   });
 });
 
+describe('independent BCH tip binding', () => {
+  it('rejects a validly signed quote one block after the independent tip in both directions', async () => {
+    for (const direction of ['COUNTER_TO_BCH', 'BCH_TO_COUNTER'] as const) {
+      const solver = createMockSolverClient({ direction });
+      const quoteRequest =
+        direction === 'BCH_TO_COUNTER' ? reverseRequest() : request();
+      const quote = await solver.quote(quoteRequest);
+      const config = {
+        ...termsConfig(quote),
+        bchTipHeight: quote.terms.bchRefundHeight - 1,
+      };
+
+      expect(() =>
+        assertTermsMatchRequest(quote.terms, quoteRequest, config),
+      ).toThrow('refund height is too soon');
+    }
+  });
+});
+
 describe('permit and intent deadlines', () => {
   it('uses the short quote expiry for both permit and intent deadlines', async () => {
     const solver = createMockSolverClient();
@@ -366,6 +386,37 @@ describe('BCH spend builder', () => {
     });
     expect(built.txid).toMatch(/^[0-9a-f]{64}$/);
     expect(built.txHex.length).toBeGreaterThan(20);
+  });
+});
+
+describe('BCH lock builder', () => {
+  it('builds a real unsigned reverse lock with the shared htlc-bch builder', async () => {
+    const solver = createMockSolverClient({ direction: 'BCH_TO_COUNTER' });
+    const quote = await solver.quote(reverseRequest());
+    const built = buildReverseLock({
+      terms: quote.terms,
+      utxos: [
+        {
+          txid: '11'.repeat(32),
+          vout: 0,
+          satoshis: 10_000n,
+          lockingBytecode: bchAddress.lockingBytecode,
+          token: { category: PUSD_CATEGORY, amount: 5_000n },
+        },
+      ],
+      changeAddress: bchAddress.address,
+    });
+
+    expect(built.txid).toMatch(/^[0-9a-f]{64}$/);
+    expect(built.txHex.length).toBeGreaterThan(20);
+    expect(built.wcSignRequest.sourceOutputs[0]?.token?.category).toEqual(
+      Uint8Array.from(
+        PUSD_CATEGORY.slice(2)
+          .match(/.{2}/g)!
+          .map((byte) => parseInt(byte, 16)),
+      ),
+    );
+    expect(built.htlcTokenAddress).toMatch(/^bchtest:/);
   });
 });
 
