@@ -14,6 +14,7 @@ Solana chain adapter for Ferry (`ChainAdapter` interface implementation).
 ## Network Configuration & Token Mints
 
 The adapter is configured via `SolanaAdapterConfig`:
+
 - `network`: `'devnet' | 'mainnet' | 'localnet'` (defaults to `'devnet'`)
 - `rpcUrl`: Solana RPC endpoint URL (e.g. `https://api.devnet.solana.com`)
 - `wsUrl`: Optional WebSocket endpoint
@@ -21,6 +22,7 @@ The adapter is configured via `SolanaAdapterConfig`:
 - `assets`: Mapping of asset symbols (`USDC`, `USDT`) to mint public keys, or individual `usdcMint`/`usdtMint` overrides.
 
 Default mints:
+
 - **Devnet**:
   - `USDC`: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`
 - **Mainnet**:
@@ -33,6 +35,7 @@ The test suite is partitioned into two tiers:
 
 1. **Offline default tests** (`pnpm test`):
    Runs pure unit tests and offline adapter verification without spawning any local services or contacting the network. Runs in <1 second.
+
    ```bash
    pnpm --filter @ferry/chain-solana test
    ```

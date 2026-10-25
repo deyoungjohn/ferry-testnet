@@ -182,7 +182,9 @@ describe('SolanaChainAdapter (Offline Suite)', () => {
     expect(payload.mint).toBe(mint.toBase58());
 
     // Deserialize transaction
-    const tx = Transaction.from(Buffer.from(payload.transactionBase64, 'base64'));
+    const tx = Transaction.from(
+      Buffer.from(payload.transactionBase64, 'base64'),
+    );
     expect(tx.feePayer?.toBase58()).toBe(relayer.publicKey.toBase58());
     expect(tx.instructions.length).toBeGreaterThan(0);
   });
