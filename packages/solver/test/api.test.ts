@@ -32,7 +32,10 @@ describe('Solver API contracts & Secret Privacy Rule', () => {
         ageSeconds: 15,
       }),
       listUnspent: async () => [],
+      getHistory: async () => [],
       broadcast: async () => '0xmock-bch-broadcast',
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: async () => {},
       subscribe: () => {},
       unsubscribe: () => {},
       close: () => {},
@@ -85,6 +88,7 @@ describe('Solver API contracts & Secret Privacy Rule', () => {
 
     const config = SolverConfigSchema.parse({
       solverEvmPrivateKey: solverEvmKey,
+      solverBchWif: sampleWif,
       baseHtlcAddress: '0x5A0C062f4B7b8fF2263530e12bc15De9C836a641',
       baseUsdcAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
     });
@@ -262,5 +266,181 @@ describe('Solver API contracts & Secret Privacy Rule', () => {
     expect(orderData.status).toBe('USER_CLAIM_SEEN');
     // Now it IS public on-chain, so it is included!
     expect(orderData.secret).toBe(secret);
+  });
+
+  it('POST /v1/quotes supports reverse direction (BCH_TO_COUNTER) with invariant R and derived solver key', async () => {
+    const secret = `0x${'88'.repeat(32)}` as const;
+    const hashLock = sha256(secret);
+
+    const quoteReq = {
+      direction: 'BCH_TO_COUNTER',
+      bchToken: 'PUSD',
+      counterChain: 'base',
+      counterSymbol: 'USDC',
+      amountIn: '1000', // $10.00 (2 decimals: 1000)
+      userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+      userBchLockingBytecode:
+        '0x76a914444444444444444444444444444444444444444488ac',
+      hashLock,
+      lane: 'safe',
+    };
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: quoteReq,
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body.orderId).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(body.signature).toMatch(/^0x[0-9a-f]{130}$/);
+    expect(body.terms.direction).toBe('BCH_TO_COUNTER');
+    expect(body.terms.bchTokenAmount).toBe('1000');
+    // $10.00 with 40bps spread ($0.04) and $0.05 fixed fee = $9.91 -> 9910000 micros (6 decimals)
+    expect(body.terms.counterAmount).toBe('9910000');
+    // bchRefundHeight = quorumTip + 144
+    expect(body.terms.bchRefundHeight).toBe(330144);
+    // solverBchLockingBytecode derived from sampleWif (cPJEAQPn5NYgtNy9HXR1q2q6vw4EghTgjscBFFseT4UT9gbpoDY9)
+    expect(body.terms.solverBchLockingBytecode).toMatch(/^0x[0-9a-f]+$/);
+    expect(body.terms.solverBchLockingBytecode).not.toBe(
+      '0x76a914000000000000000000000000000000000000000088ac',
+    );
+  });
+
+  it('POST /v1/orders/:id/relay-claim relays EVM claim with gas paid by solver', async () => {
+    const secret = `0x${'99'.repeat(32)}` as const;
+    const hashLock = sha256(secret);
+
+    // 1. Create a reverse quote
+    const quoteRes = await app.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: {
+        direction: 'BCH_TO_COUNTER',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '2500', // $25.00
+        userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+        userBchLockingBytecode:
+          '0x76a914444444444444444444444444444444444444444488ac',
+        hashLock,
+        lane: 'safe',
+      },
+    });
+    const { orderId } = JSON.parse(quoteRes.payload);
+    const orderRecord = db.getOrder(orderId)!;
+
+    // Progress to SOLVER_LOCK_SEEN
+    engine.applyEvent(orderRecord, {
+      type: 'USER_LOCK_SEEN',
+      txId: '0xbch-user-lock',
+    });
+    engine.applyEvent(orderRecord, {
+      type: 'USER_LOCK_FINAL',
+      txId: '0xbch-user-lock',
+    });
+    engine.applyEvent(orderRecord, {
+      type: 'SOLVER_LOCK_BROADCAST',
+      txId: '0xevm-solver-lock',
+    });
+    engine.applyEvent(orderRecord, {
+      type: 'SOLVER_LOCK_SEEN',
+      txId: '0xevm-solver-lock',
+    });
+
+    // 2. Reject wrong secret
+    const badSecretRes = await app.inject({
+      method: 'POST',
+      url: `/v1/orders/${orderId}/relay-claim`,
+      payload: { secret: `0x${'11'.repeat(32)}` },
+    });
+    expect(badSecretRes.statusCode).toBe(400);
+    expect(JSON.parse(badSecretRes.payload).code).toBe('HASH_LOCK_MISMATCH');
+
+    // 3. Relay valid claim
+    isMockLocked = true;
+    const relayRes = await app.inject({
+      method: 'POST',
+      url: `/v1/orders/${orderId}/relay-claim`,
+      payload: { secret },
+    });
+    expect(relayRes.statusCode).toBe(200);
+    const relayBody = JSON.parse(relayRes.payload);
+    expect(relayBody.orderId).toBe(orderId);
+    expect(relayBody.status).toBe('USER_CLAIM_SEEN');
+    expect(relayBody.tx.txId).toBe('0xmock-claim-tx');
+  });
+
+  it('POST /v1/quotes enforces fast-lane explicit opt-in and zero-conf cap ($25)', async () => {
+    const hashLock = sha256(`0x${'77'.repeat(32)}` as const);
+
+    // 1. Missing fastOptIn
+    const noOptInRes = await app.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: {
+        direction: 'BCH_TO_COUNTER',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '1000', // $10.00
+        userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+        userBchLockingBytecode:
+          '0x76a914444444444444444444444444444444444444444488ac',
+        hashLock,
+        lane: 'fast',
+      },
+    });
+    expect(noOptInRes.statusCode).toBe(400);
+    expect(JSON.parse(noOptInRes.payload).code).toBe(
+      'FAST_LANE_OPT_IN_REQUIRED',
+    );
+
+    // 2. Exceeds $25 zero-conf cap ($30.00 = 3000 PUSD)
+    const capExceededRes = await app.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: {
+        direction: 'BCH_TO_COUNTER',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '3000', // $30.00 > $25.00
+        userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+        userBchLockingBytecode:
+          '0x76a914444444444444444444444444444444444444444488ac',
+        hashLock,
+        lane: 'fast',
+        fastOptIn: true,
+      },
+    });
+    expect(capExceededRes.statusCode).toBe(400);
+    expect(JSON.parse(capExceededRes.payload).code).toBe(
+      'FAST_LANE_CAP_EXCEEDED',
+    );
+
+    // 3. Valid fast lane ($20.00 = 2000 PUSD, with opt-in)
+    const validFastRes = await app.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: {
+        direction: 'BCH_TO_COUNTER',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '2000', // $20.00 <= $25.00
+        userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+        userBchLockingBytecode:
+          '0x76a914444444444444444444444444444444444444444488ac',
+        hashLock,
+        lane: 'fast',
+        fastOptIn: true,
+      },
+    });
+    expect(validFastRes.statusCode).toBe(200);
+    const validFastBody = JSON.parse(validFastRes.payload);
+    expect(validFastBody.lane).toBe('fast');
   });
 });

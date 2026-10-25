@@ -213,6 +213,121 @@ describe('Solver pure state machine transitions', () => {
     }
   });
 
-  // Note for reverse direction:
-  // TODO: Add reverse flow table tests in L5 when ReverseOrderStatus and reverse edges are integrated.
+  // Reverse direction (BCH_TO_COUNTER)
+  describe('Reverse direction (BCH_TO_COUNTER)', () => {
+    function makeReverseOrder(
+      status: ForwardOrderStatus,
+      secret?: `0x${string}` | undefined,
+    ): SolverOrderRecord {
+      return {
+        id: '0x5678',
+        direction: 'BCH_TO_COUNTER',
+        status,
+        terms: {
+          ...dummyTerms,
+          direction: 'BCH_TO_COUNTER',
+        },
+        hashLock: dummyTerms.hashLock,
+        secret,
+        createdAt: 1000,
+        updatedAt: 1000,
+      };
+    }
+
+    const reverseEdges: Array<{
+      from: ForwardOrderStatus;
+      event: SolverEvent;
+      expectedNext: ForwardOrderStatus;
+    }> = [
+      {
+        from: 'QUOTED',
+        event: { type: 'USER_LOCK_SEEN', txId: '0xbchlock1' },
+        expectedNext: 'USER_LOCK_SEEN',
+      },
+      {
+        from: 'USER_LOCK_SEEN',
+        event: { type: 'USER_LOCK_FINAL', txId: '0xbchlock1' },
+        expectedNext: 'USER_LOCK_FINAL',
+      },
+      {
+        from: 'USER_LOCK_FINAL',
+        event: { type: 'SOLVER_LOCK_BROADCAST', txId: '0xevmlock1' },
+        expectedNext: 'SOLVER_LOCK_BROADCAST',
+      },
+      {
+        from: 'SOLVER_LOCK_BROADCAST',
+        event: { type: 'SOLVER_LOCK_SEEN', txId: '0xevmlock1' },
+        expectedNext: 'SOLVER_LOCK_SEEN',
+      },
+      {
+        from: 'SOLVER_LOCK_SEEN',
+        event: {
+          type: 'SECRET_REVEALED_COOPERATIVE',
+          secret: `0x${'cc'.repeat(32)}`,
+        },
+        expectedNext: 'SECRET_KNOWN',
+      },
+      {
+        from: 'SOLVER_LOCK_SEEN',
+        event: {
+          type: 'USER_CLAIM_SEEN',
+          txId: '0xevmclaim1',
+          secret: `0x${'cc'.repeat(32)}`,
+        },
+        expectedNext: 'USER_CLAIM_SEEN',
+      },
+      {
+        from: 'SECRET_KNOWN',
+        event: {
+          type: 'USER_CLAIM_SEEN',
+          txId: '0xevmclaim1',
+          secret: `0x${'cc'.repeat(32)}`,
+        },
+        expectedNext: 'USER_CLAIM_SEEN',
+      },
+      {
+        from: 'USER_CLAIM_SEEN',
+        event: { type: 'SOLVER_CLAIM_BROADCAST', txId: '0xbchclaim1' },
+        expectedNext: 'SOLVER_CLAIM_BROADCAST',
+      },
+      {
+        from: 'SOLVER_CLAIM_BROADCAST',
+        event: { type: 'SOLVER_CLAIM_FINAL', txId: '0xbchclaim1' },
+        expectedNext: 'SOLVER_CLAIM_FINAL',
+      },
+      {
+        from: 'SOLVER_CLAIM_FINAL',
+        event: { type: 'SWAP_COMPLETE' },
+        expectedNext: 'DONE',
+      },
+    ];
+
+    for (const edge of reverseEdges) {
+      it(`transitions reverse from ${edge.from} -> ${edge.expectedNext} on ${edge.event.type}`, () => {
+        const order = makeReverseOrder(edge.from);
+        const res = transition(order, edge.event);
+        expect(res.nextStatus).toBe(edge.expectedNext);
+      });
+    }
+
+    it('rejects reverse swap on INVALID_TERMS from USER_LOCK_FINAL (e.g. invariant R failure)', () => {
+      const order = makeReverseOrder('USER_LOCK_FINAL');
+      const res = transition(order, {
+        type: 'INVALID_TERMS',
+        reason: 'Invariant R failed: remaining blocks < 108',
+      });
+      expect(res.nextStatus).toBe('REJECTED');
+      expect(res.mutations?.rejectionReason).toContain('Invariant R failed');
+    });
+
+    it('refunds solver EVM lock on COUNTER_DEADLINE_PASSED from SOLVER_LOCK_SEEN', () => {
+      const order = makeReverseOrder('SOLVER_LOCK_SEEN');
+      const res = transition(order, {
+        type: 'COUNTER_DEADLINE_PASSED',
+        refundTxId: '0xevmrefund1',
+      });
+      expect(res.nextStatus).toBe('SOLVER_REFUNDED');
+      expect(res.mutations?.solverRefundTxId).toBe('0xevmrefund1');
+    });
+  });
 });

@@ -8,6 +8,7 @@
   "scripts": {
     "start": "tsx src/main.ts",
     "live:swap": "tsx test/real-live-swap.ts",
+    "live:reverse": "tsx test/real-live-reverse-swap.ts",
     "live:latency": "tsx test/measure-reaction-latency.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",

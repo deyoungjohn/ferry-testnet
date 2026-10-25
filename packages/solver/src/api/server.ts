@@ -10,6 +10,8 @@ import {
   RevealSecretResponseSchema,
   RelayLockRequestSchema,
   RelayLockResponseSchema,
+  RelayClaimRequestSchema,
+  RelayClaimResponseSchema,
   HealthResponseSchema,
   parseOrderTerms,
   orderId as computeOrderId,
@@ -18,10 +20,13 @@ import {
   checkLimits,
   pegGuard,
   invariantF,
+  invariantR,
   revealPolicy,
+  DEFAULT_REVEAL_CONFIG,
 } from '@ferry/core';
 import type { OrderTerms } from '@ferry/core';
 import type { EvmChainAdapter } from '@ferry/chain-evm';
+import { deriveBchKeyDetails } from '../bch/lock-builder.js';
 import type { SolverDatabase } from '../db/database.js';
 import type { BchQuorumClient } from '../bch/quorum-client.js';
 import type { SolverConfig } from '../config.js';
@@ -82,8 +87,10 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     const request = parseResult.data;
 
     // Check limits
+    const isReverse = request.direction === 'BCH_TO_COUNTER';
     const amountIn = request.amountIn;
-    const isWithinLimits = checkLimits(amountIn, 6, {
+    const inDecimals = isReverse ? 2 : 6;
+    const isWithinLimits = checkLimits(amountIn, inDecimals, {
       minUsdMicros: config.minSwapUsdMicros,
       maxUsdMicros: config.maxSwapUsdMicros,
     });
@@ -92,6 +99,23 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
         code: 'AMOUNT_OUT_OF_BOUNDS',
         message: 'Requested swap amount exceeds bounds',
       });
+    }
+
+    // Fast lane validations (opt-in and cap)
+    if (request.lane === 'fast') {
+      if (!request.fastOptIn) {
+        return reply.status(400).send({
+          code: 'FAST_LANE_OPT_IN_REQUIRED',
+          message: 'Fast lane requires explicit fastOptIn=true',
+        });
+      }
+      const amountUsdMicros = isReverse ? amountIn * 10_000n : amountIn;
+      if (amountUsdMicros > DEFAULT_REVEAL_CONFIG.zeroConfMaxUsdMicros) {
+        return reply.status(400).send({
+          code: 'FAST_LANE_CAP_EXCEEDED',
+          message: `Fast lane amount exceeds maximum zero-conf limit of ${Number(DEFAULT_REVEAL_CONFIG.zeroConfMaxUsdMicros) / 1e6} USD`,
+        });
+      }
     }
 
     // Peg guard check via PriceSource
@@ -134,26 +158,71 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     }
 
     // Compute quote
-    const bchTokenAmount = quoteExactIn(amountIn, 6, 2, {
-      spreadBps: config.spreadBps,
-      fixedFeeUsdMicros: config.fixedFeeUsdMicros,
-    });
+    let bchTokenAmount: bigint;
+    let counterAmount: bigint;
+    if (isReverse) {
+      bchTokenAmount = amountIn;
+      counterAmount = quoteExactIn(amountIn, 2, 6, {
+        spreadBps: config.spreadBps,
+        fixedFeeUsdMicros: config.fixedFeeUsdMicros,
+      });
+    } else {
+      counterAmount = amountIn;
+      bchTokenAmount = quoteExactIn(amountIn, 6, 2, {
+        spreadBps: config.spreadBps,
+        fixedFeeUsdMicros: config.fixedFeeUsdMicros,
+      });
+    }
 
     const now = Math.floor(Date.now() / 1000);
     const quoteExpiry = now + 120; // 2 minutes
-    const counterDeadline = now + 86400; // 24 hours
-    const bchRefundHeight = quorum.quorumTip + 36;
 
-    // Invariant F check
-    const timingDecision = invariantF(
-      { counterDeadline, bchRefundHeight },
-      { unixSeconds: now, bchTipHeight: quorum.quorumTip },
-    );
-    if (!timingDecision.allowed) {
-      return reply.status(400).send({
-        code: 'INVARIANT_F_FAILED',
-        message: `Timing invariant F check failed: ${timingDecision.reason}`,
-      });
+    let counterDeadline: number;
+    let bchRefundHeight: number;
+
+    if (isReverse) {
+      counterDeadline = now + 6 * 3600; // 6 hours
+      bchRefundHeight = quorum.quorumTip + 144; // ~24h of BCH blocks
+
+      const timingDecision = invariantR(
+        { counterDeadline, bchRefundHeight },
+        { unixSeconds: now, bchTipHeight: quorum.quorumTip },
+      );
+      if (!timingDecision.allowed) {
+        return reply.status(400).send({
+          code: 'INVARIANT_R_FAILED',
+          message: `Timing invariant R check failed: ${timingDecision.reason}`,
+        });
+      }
+    } else {
+      counterDeadline = now + 86400; // 24 hours
+      bchRefundHeight = quorum.quorumTip + 36;
+
+      // Invariant F check
+      const timingDecision = invariantF(
+        { counterDeadline, bchRefundHeight },
+        { unixSeconds: now, bchTipHeight: quorum.quorumTip },
+      );
+      if (!timingDecision.allowed) {
+        return reply.status(400).send({
+          code: 'INVARIANT_F_FAILED',
+          message: `Timing invariant F check failed: ${timingDecision.reason}`,
+        });
+      }
+    }
+
+    let solverBchLockingBytecode: `0x${string}` =
+      '0x76a914000000000000000000000000000000000000000088ac';
+    if (config.solverBchWif) {
+      const solverKeys = await deriveBchKeyDetails(
+        config.solverBchWif,
+        config.network === 'mainnet' ? 'bitcoincash' : 'bchtest',
+      );
+      solverBchLockingBytecode = (
+        solverKeys.lockingBytecodeHex.startsWith('0x')
+          ? solverKeys.lockingBytecodeHex
+          : `0x${solverKeys.lockingBytecodeHex}`
+      ) as `0x${string}`;
     }
 
     // Construct terms
@@ -165,7 +234,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
         ? (config.tpusdCategory as `0x${string}`)
         : (`0x${config.tpusdCategory}` as `0x${string}`),
       bchTokenAmount,
-      counterAmount: amountIn,
+      counterAmount,
       counterChain: request.counterChain,
       counterNetworkId: config.baseChainId,
       counterAsset: {
@@ -177,8 +246,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       userCounterAddress: request.userCounterAddress,
       userBchLockingBytecode: request.userBchLockingBytecode,
       solverCounterAddress: solverAddress,
-      solverBchLockingBytecode:
-        '0x76a914000000000000000000000000000000000000000088ac',
+      solverBchLockingBytecode,
       hashLock: request.hashLock,
       counterDeadline,
       bchRefundHeight,
@@ -196,6 +264,8 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       id: orderId,
       direction: terms.direction,
       status: 'QUOTED',
+      lane: request.lane ?? 'safe',
+      fastOptIn: request.fastOptIn ?? false,
       terms,
       hashLock: terms.hashLock,
       createdAt: Date.now(),
@@ -238,9 +308,13 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     const secretToReturn =
       isPublicOnChain && order.secret ? order.secret : undefined;
 
-    const bchLock = order.solverLockTxId
+    const bchTxId =
+      order.terms.direction === 'BCH_TO_COUNTER'
+        ? order.userLockTxId
+        : order.solverLockTxId;
+    const bchLock = bchTxId
       ? {
-          txid: order.solverLockTxId,
+          txid: bchTxId,
           vout: 0,
           satoshis: order.terms.bchCarrySats,
         }
@@ -305,29 +379,56 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     }
 
     // Verify reveal policy with real chain evidence
-    const lockId = evmAdapter.lockId(
-      order.terms.userCounterAddress as `0x${string}`,
-      order.terms.hashLock,
-    );
-    const evmLock = await evmAdapter.getLock(lockId);
-    let confs = 0;
-    let safeFinal = false;
-    if (evmLock.status === 'locked') {
-      safeFinal = await evmAdapter.isFinal(evmLock.lockTx, 'safe');
-      confs = safeFinal ? config.evmConfs : 1;
-    }
+    let policyResult;
+    if (order.terms.direction === 'BCH_TO_COUNTER') {
+      const bchLockExists = Boolean(order.userLockTxId);
+      const confs =
+        order.status === 'USER_LOCK_FINAL' ||
+        order.status === 'SOLVER_LOCK_SEEN' ||
+        order.status === 'SOLVER_LOCK_BROADCAST' ||
+        order.status === 'SECRET_KNOWN' ||
+        order.status === 'USER_CLAIM_SEEN' ||
+        order.status === 'SOLVER_CLAIM_BROADCAST' ||
+        order.status === 'SOLVER_CLAIM_FINAL' ||
+        order.status === 'DONE'
+          ? 1
+          : 0;
 
-    const policyResult = revealPolicy({
-      chain: order.terms.counterChain,
-      lane: 'safe',
-      fastOptIn: false,
-      amountUsdMicros: order.terms.counterAmount,
-      evidence: {
-        exists: evmLock.status === 'locked',
-        confirmations: confs,
-        safe: safeFinal,
-      },
-    });
+      policyResult = revealPolicy({
+        chain: 'bch',
+        lane: 'safe',
+        fastOptIn: false,
+        amountUsdMicros: order.terms.counterAmount,
+        evidence: {
+          exists: bchLockExists,
+          confirmations: confs,
+        },
+      });
+    } else {
+      const lockId = evmAdapter.lockId(
+        order.terms.userCounterAddress as `0x${string}`,
+        order.terms.hashLock,
+      );
+      const evmLock = await evmAdapter.getLock(lockId);
+      let confs = 0;
+      let safeFinal = false;
+      if (evmLock.status === 'locked') {
+        safeFinal = await evmAdapter.isFinal(evmLock.lockTx, 'safe');
+        confs = safeFinal ? config.evmConfs : 1;
+      }
+
+      policyResult = revealPolicy({
+        chain: order.terms.counterChain,
+        lane: 'safe',
+        fastOptIn: false,
+        amountUsdMicros: order.terms.counterAmount,
+        evidence: {
+          exists: evmLock.status === 'locked',
+          confirmations: confs,
+          safe: safeFinal,
+        },
+      });
+    }
 
     if (!policyResult.allowed) {
       return reply.status(400).send({
@@ -418,7 +519,104 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     }
   });
 
-  // 5. GET /v1/health
+  // 5. POST /v1/orders/:id/relay-claim
+  app.post('/v1/orders/:id/relay-claim', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const order = db.getOrder(id);
+    if (!order) {
+      return reply.status(404).send({
+        code: 'ORDER_NOT_FOUND',
+        message: `Order ${id} not found`,
+      });
+    }
+
+    const parseResult = RelayClaimRequestSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        code: 'INVALID_RELAY_CLAIM_REQUEST',
+        message: 'Invalid relay claim payload',
+        issues: parseResult.error.issues,
+      });
+    }
+
+    const { secret, lockId: reqLockId } = parseResult.data;
+
+    // Verify secret matches hashLock
+    const { sha256 } = await import('viem');
+    if (sha256(secret) !== order.hashLock) {
+      return reply.status(400).send({
+        code: 'HASH_LOCK_MISMATCH',
+        message: 'Provided secret does not match hashLock',
+      });
+    }
+
+    // Determine locker address and compute EVM lockId
+    const locker =
+      order.direction === 'BCH_TO_COUNTER'
+        ? order.terms.solverCounterAddress
+        : order.terms.userCounterAddress;
+    const expectedLockId = evmAdapter.lockId(
+      locker as `0x${string}`,
+      order.terms.hashLock,
+    );
+
+    if (reqLockId && reqLockId.toLowerCase() !== expectedLockId.toLowerCase()) {
+      return reply.status(400).send({
+        code: 'LOCK_ID_MISMATCH',
+        message: 'Supplied lockId does not match order parameters',
+      });
+    }
+
+    try {
+      const currentLock = await evmAdapter.getLock(expectedLockId);
+      let txRef;
+
+      if (currentLock.status === 'claimed') {
+        txRef = currentLock.claimTx ?? {
+          chain: order.terms.counterChain,
+          txId:
+            order.userClaimTxId ??
+            '0x0000000000000000000000000000000000000000000000000000000000000000',
+        };
+      } else if (currentLock.status === 'locked') {
+        txRef = await evmAdapter.claim(expectedLockId, secret);
+        engine.applyEvent(order, {
+          type: 'USER_CLAIM_SEEN',
+          txId: txRef.txId,
+          secret,
+        });
+        if (order.direction === 'BCH_TO_COUNTER') {
+          void engine.processSolverBchClaim(order).catch((err) => {
+            logger.warn(
+              { err, orderId: order.id },
+              'Background BCH claim triggered by relay-claim failed; runner will retry',
+            );
+          });
+        }
+      } else {
+        return reply.status(409).send({
+          code: 'LOCK_NOT_ACTIVE',
+          message: `EVM lock status is ${currentLock.status}; cannot claim`,
+        });
+      }
+
+      const response = {
+        orderId: order.id,
+        status: order.status,
+        tx: txRef,
+      };
+      RelayClaimResponseSchema.parse(response);
+      return reply.status(200).send(response);
+    } catch (err: unknown) {
+      logger.error({ err, orderId: order.id }, 'Relay claim execution failed');
+      return reply.status(500).send({
+        code: 'RELAY_CLAIM_FAILED',
+        message: (err as Error).message,
+      });
+    }
+  });
+
+  // 6. GET /v1/health
   app.get('/v1/health', async (_req, reply) => {
     const quorum = bchClient.getQuorumStatus();
     const stale = quorum.ageSeconds > config.tipMaxAgeBchSeconds;

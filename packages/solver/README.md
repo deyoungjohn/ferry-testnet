@@ -27,9 +27,19 @@ Ferryman is the autonomous solver daemon for Ferry. It watches supported chains,
      - `GET /v1/orders/:id`: Returns order status, deadlines, and optional `bchLock` details ({ txid, vout, satoshis }). **Strict privacy enforcement:** never returns secret unless it has already appeared public on chain in a confirmed claim.
      - `POST /v1/orders/:id/secret`: Validates cooperative secret reveal against hashLock and reveal policy.
      - `POST /v1/orders/:id/relay-lock`: Relays gasless user locks via `lockWithIntent`.
+     - `POST /v1/orders/:id/relay-claim`: Relays gasless user claims on EVM counter-locks (solver pays gas, recovered in the spread). Validates secret against hashLock and triggers solver BCH token claim.
      - `GET /v1/health`: Reports node tip heights, tip ages, inventory, and quoting status (automatically disables quoting if tip ages exceed thresholds).
 
-5. **Engine Runner & Chain Watchers (`src/engine/`):**
+5. **Reverse Direction Engine (`BCH_TO_COUNTER`):**
+   - Inverts the chains' roles over the shared `ORDER_STATUSES` state machine:
+     - User locks CashTokens on BCH (supports both wallet and manual QR funding routes). The engine watches the P2SH32 covenant address, matching category, amount, and satoshi carry -> `USER_LOCK_SEEN` -> `USER_LOCK_FINAL`.
+     - At counter-lock time $t_0$, the engine asserts quote expiry and validates timing invariant R ($n = \text{bchRefundHeight} - \text{currentTip} \ge 108$). If either check fails, the order transitions to `REJECTED`.
+     - Solver counter-locks on EVM via `evmAdapter.lock` -> `SOLVER_LOCK_BROADCAST` -> `SOLVER_LOCK_SEEN`.
+     - User claims EVM funds directly or via `POST /v1/orders/:id/relay-claim` -> `USER_CLAIM_SEEN` with secret revealed.
+     - Solver claims user's BCH covenant with `buildClaimTransaction` under the shared write-ahead routine (`SOLVER_CLAIM`) -> `SOLVER_CLAIM_BROADCAST` -> `SOLVER_CLAIM_FINAL` -> `DONE`.
+     - Abort edges: user funds after expiry or invariant R fails (`REJECTED`, user refunds BCH by height); user abandons without EVM claim (`counterDeadline` passes, solver refunds EVM lock via `evmAdapter.refund` -> `SOLVER_REFUNDED`).
+
+6. **Engine Runner & Chain Watchers (`src/engine/`):**
    - Actively subscribes to `evmAdapter.watch` and `bchClient.subscribeScriptHash` to drive events into the state machine.
    - Enforces timing invariant F and quote expiry check at counter-lock time ($t_0$) before broadcasting solver BCH lock.
    - Safe lane reveal policy validation before triggering counter-claims.
@@ -76,8 +86,11 @@ pnpm --filter @ferry/solver test
 Run live Chipnet/Base Sepolia scripts (requires `.env.local` keys and funded balances):
 
 ```bash
-# Real 4-tx swap against live networks
+# Real 4-tx forward swap against live networks
 pnpm --filter @ferry/solver live:swap
+
+# Real 4-tx reverse swaps against live networks (E2E-03 & E2E-04)
+pnpm --filter @ferry/solver live:reverse
 
 # 10-swap reaction latency benchmark across live Fulcrum
 pnpm --filter @ferry/solver live:latency
@@ -91,7 +104,8 @@ pnpm --filter @ferry/solver build
 
 ## Hardening & Safety Guarantees
 
-- **Crash Recovery & Single-UTXO Invariant:** Before broadcasting any BCH counter-lock, the solver engine pre-computes the signed transaction hex and txid and persists a write-ahead intent record in SQLite (`PENDING`). If the daemon crashes or is killed via `SIGKILL` before or after broadcast, restart reconciliation checks on-chain history: if the lock was already mined, it adopts it without broadcasting; if not yet seen, it rebroadcasts the identical pre-signed hex, ensuring exactly one lock UTXO is ever created on-chain.
+- **Crash Recovery & Single-UTXO Invariant:** Before broadcasting any BCH counter-lock, refund, or claim, the solver engine pre-computes the signed transaction hex and txid and persists a write-ahead intent record in SQLite (`executeOrAdoptBchTx`). If the daemon crashes or is killed via `SIGKILL` before or after broadcast, restart reconciliation checks on-chain history: if the transaction was already mined, it adopts it without broadcasting; if not yet seen, it rebroadcasts the identical pre-signed hex, ensuring exactly one transaction UTXO is ever created on-chain.
+- **EVM Check-Then-Act vs BCH Write-Ahead:** In contrast to raw BCH transactions that require local byte persistence to avoid duplicate UTXO spends, EVM on-chain state (`getLock`) is authoritative and atomic. The engine uses check-then-act with Viem for EVM locks, claims, and refunds (D-A2-008).
 - **Order Lookup by Lock ID:** Orders are indexed and looked up by composite EVM lock id (`keccak256(owner, hashLock)`). An SQLite unique constraint on `(user_counter_address, hash_lock)` prevents duplicate orders or quote collision between users sharing a hashLock.
 - **Solver BCH Refund:** Implements the §5.3 abort edge: if a user locks on EVM and solver locks on BCH, but the user abandons without claiming by `bchRefundHeight`, the solver automatically builds and broadcasts a covenant refund transaction via `@ferry/htlc-bch` `buildRefundTransaction`.
 - **Healthy Quorum Tip Requirement:** The solver never uses hardcoded block heights. If the Fulcrum quorum is unhealthy or the tip is unknown, the engine refuses counter-locking (stays in `USER_LOCK_FINAL`) and API returns 503 on quote requests.

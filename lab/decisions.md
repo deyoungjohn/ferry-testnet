@@ -367,4 +367,38 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
   - `isFinal` accurately evaluates commitment states and fails closed on unknown or invalid transaction references.
 - **Consequence for rebuild:** Web UI and solver can consume `@ferry/chain-solana` directly via `@ferry/core`'s interface. Manual checklist for Phantom partial signing is added in the wallet test notes.
 - **Revisit if:** Alternative Solana wallet standards or transaction envelope versions (e.g. VersionedTransaction v0 with address lookup tables) are introduced.
+---
+
+### D-A2-008 · Reverse swap architecture: EVM check-then-act vs shared BCH write-ahead and relay-claim mechanics
+- **Decision:** In reverse swaps (`BCH_TO_COUNTER`), the roles of BCH and EVM chains are inverted while preserving the identical `ORDER_STATUSES` state machine.
+  1. *User BCH lock discovery:* The engine monitors the P2SH32 covenant address matching the order terms (works for both wallet-signed and manual QR funding), verifying the token category, amount, and satoshi carry before advancing to `USER_LOCK_SEEN` and evaluating the reveal policy (`USER_LOCK_FINAL`).
+  2. *Counter-lock gate:* At counter-lock time `t0`, the engine verifies `quoteExpiry` and evaluates `invariantR({ counterDeadline, bchRefundHeight }, { unixSeconds: now, bchTipHeight })`. If either fails, the order transitions to `REJECTED` without counter-locking.
+  3. *On-chain action execution models (EVM check-then-act vs BCH write-ahead):*
+     - For BCH on-chain transactions (solver lock, refund, and claim), raw transactions are assembled and signed locally. If interrupted by SIGKILL, multiple spends or duplicate UTXO creations could occur. Therefore, BCH operations use a strict write-ahead routine (`executeOrAdoptBchTx`) that persists `{ txid, txHex }` intent in SQLite prior to broadcast, adopting or rebroadcasting the cached bytes on restart.
+     - For EVM on-chain actions (`evmAdapter.lock`, `evmAdapter.claim`, `evmAdapter.refund`), the EVM contract storage (`getLock`) is authoritative and atomic on-chain state. Checking `getLock(lockId)` before acting, relying on Viem's internal transaction management, and verifying on-chain state afterwards provides idempotency and crash-safety without duplicating raw EVM transaction bytes in SQLite. the build notes should distinguish this check-then-act pattern from the raw BCH write-ahead requirement.
+  4. *Relay-claim:* In reverse swaps, the user claims USDC on EVM. To preserve a frictionless gasless UX, `POST /v1/orders/:id/relay-claim` allows the user to submit their secret preimage; the solver validates `sha256(secret) === order.hashLock`, submits `evmAdapter.claim(lockId, secret)` paying EVM gas (factored into the swap spread), moves the order to `USER_CLAIM_SEEN`, and triggers `processSolverBchClaim` to claim the user's BCH tokens.
+- **Evidence:** Tested with unit and integration suites:
+  - `state-machine.test.ts`: 12 reverse state transitions and abort paths.
+  - `api.test.ts`: `BCH_TO_COUNTER` quote generation with Invariant R and derived solver WIF key; `POST /v1/orders/:id/relay-claim` gasless EVM claim.
+  - `reverse.test.ts`: E2E reverse flow, quote expiry rejection, Invariant R failure rejection, deadline EVM refund, and SIGKILL crash resilience during solver BCH claim.
+- **Consequence for rebuild:** Differentiate UTXO-based chain raw-transaction write-ahead from account-based EVM contract check-then-act. Support gasless reverse claims via solver relay.
+- **Revisit if:** EVM gas spike exceeds spread buffer or fee abstraction ERC-4337 is integrated.
+
+---
+
+### D-A2-009 · Fast-lane zero-conf policy enforcement and reverse BCH lock parameter verification
+- **Decision:**
+  1. *Fast-lane protection (threat T2):*
+     - Quote requests for `lane: 'fast'` must provide an explicit opt-in (`fastOptIn: true`) and cannot exceed the zero-conf cap ($25.00 / 25,000,000 micros per `DEFAULT_REVEAL_CONFIG.zeroConfMaxUsdMicros`). We explicitly refuse quotes exceeding the cap with HTTP 400 `FAST_LANE_CAP_EXCEEDED` rather than silently downgrading to safe lane, ensuring user UX expectations regarding settlement latency are preserved.
+     - When detecting unconfirmed BCH locks (`confirmations === 0`), the engine queries Fulcrum for double-spend proofs via `blockchain.transaction.dsproof.get` (`BchQuorumClient.getDSProof`).
+     - The engine records the lock observation timestamp (`firstSeenAt`) in the SQLite database and requires the elapsed time to satisfy the 5,000 ms observation window per `D-A3-003` via core's `revealPolicy`.
+     - If a double-spend proof is detected (`dsproof === 'detected'`), the engine marks the order `INVALID_TERMS` and rejects it immediately, guaranteeing zero USDC counter-locks are ever issued against contested locks.
+  2. *Reverse lock parameter verification:*
+     - The reverse engine validates that candidate covenant UTXOs match the exact quoted token amount (`u.token_data.amount === terms.bchTokenAmount`) and provide adequate fee carry (`u.value >= terms.bchCarrySats`). Over-funded/under-funded token amounts and under-funded satoshi carries are rejected immediately (`INVALID_TERMS`), forcing the user to refund by height and protecting the solver from invalid claim transactions or dust outputs.
+- **Evidence:** Tested with unit and integration suites:
+  - `api.test.ts`: Fast lane quote requests without `fastOptIn` rejected with `FAST_LANE_OPT_IN_REQUIRED`; requests exceeding $25 cap rejected with `FAST_LANE_CAP_EXCEEDED`.
+  - `reverse.test.ts`: Fast lane unconfirmed lock with double-spend proof rejected without counter-locking; under-funded satoshi carry rejected; over-funded token amount rejected; unconfirmed fast lock respects DSProof observation window before finalization.
+- **Consequence for rebuild:** Never trust unconfirmed UTXOs without double-spend proof verification and observation time gates; validate both token and satoshi outputs before counter-locking.
+- **Revisit if:** Double-spend notification protocol is updated or zero-conf insurance protocols are adopted.
+
 

@@ -5,8 +5,14 @@ import {
   encodeHtlcParameters,
   buildLockTransaction,
   buildRefundTransaction,
+  buildClaimTransaction,
 } from '@ferry/htlc-bch';
-import { invariantF, type LockEvent } from '@ferry/core';
+import {
+  invariantF,
+  invariantR,
+  revealPolicy,
+  type LockEvent,
+} from '@ferry/core';
 import type { EvmChainAdapter } from '@ferry/chain-evm';
 import { decodeTransaction } from '@bitauth/libauth';
 import type { SolverDatabase } from '../db/database.js';
@@ -131,16 +137,7 @@ export class SolverEngine {
   }
 
   async ensureBchSubscription(order: SolverOrderRecord): Promise<string> {
-    const terms = order.terms;
-    const bchParams = encodeHtlcParameters({
-      recipientLockingBytecode: terms.userBchLockingBytecode,
-      refundLockingBytecode: terms.solverBchLockingBytecode,
-      hashLock: terms.hashLock,
-      refundHeight: terms.bchRefundHeight,
-      tokenCategory: displayToInternalCategory(terms.bchTokenCategory),
-      tokenAmount: terms.bchTokenAmount,
-      maxFee: terms.bchMaxFee,
-    });
+    const bchParams = encodeHtlcParameters(order.terms);
     const addresses = deriveHtlcAddresses(bchParams, this.bchNetwork);
 
     const { sha256: lSha256, binToHex } = await import('@bitauth/libauth');
@@ -148,16 +145,18 @@ export class SolverEngine {
 
     if (!this.subscribedScriptHashes.has(shHex)) {
       this.subscribedScriptHashes.add(shHex);
-      await this.bchClient.subscribeScriptHash(shHex, async () => {
-        try {
-          await this.handleBchNotification(order, shHex);
-        } catch (err) {
-          this.logger.error(
-            { err, orderId: order.id, scriptHash: shHex },
-            'Error handling BCH scripthash notification',
-          );
-        }
-      });
+      if (typeof this.bchClient.subscribeScriptHash === 'function') {
+        await this.bchClient.subscribeScriptHash(shHex, async () => {
+          try {
+            await this.handleBchNotification(order, shHex);
+          } catch (err) {
+            this.logger.error(
+              { err, orderId: order.id, scriptHash: shHex },
+              'Error handling BCH scripthash notification',
+            );
+          }
+        });
+      }
     }
 
     return shHex;
@@ -166,48 +165,76 @@ export class SolverEngine {
   async handleEvmEvent(event: LockEvent): Promise<void> {
     if (event.removed) return;
 
-    if (event.type === 'Locked') {
-      const order = this.db.getOrderByLockId(event.lockId);
-      if (!order) return;
+    const order = this.db.getOrderByLockId(event.lockId);
+    if (!order) return;
 
-      if (order.status === 'QUOTED') {
+    if (order.direction === 'COUNTER_TO_BCH') {
+      if (event.type === 'Locked') {
+        if (order.status === 'QUOTED') {
+          this.applyEvent(order, {
+            type: 'USER_LOCK_SEEN',
+            txId: event.tx.txId,
+          });
+        }
+        const isFinal = await this.evmAdapter.isFinal(event.tx, 'safe');
+        if (
+          isFinal &&
+          (order.status === 'QUOTED' || order.status === 'USER_LOCK_SEEN')
+        ) {
+          this.applyEvent(order, {
+            type: 'USER_LOCK_FINAL',
+            txId: event.tx.txId,
+          });
+        }
+      } else if (event.type === 'Claimed') {
+        if (
+          order.status === 'SOLVER_CLAIM_BROADCAST' ||
+          order.status === 'USER_CLAIM_SEEN'
+        ) {
+          this.applyEvent(order, {
+            type: 'SOLVER_CLAIM_FINAL',
+            txId: event.tx.txId,
+          });
+          this.applyEvent(order, { type: 'SWAP_COMPLETE' });
+        }
+      } else if (event.type === 'Refunded') {
         this.applyEvent(order, {
-          type: 'USER_LOCK_SEEN',
-          txId: event.tx.txId,
+          type: 'BCH_DEADLINE_PASSED',
+          refundTxId: event.tx.txId,
         });
       }
-      const isFinal = await this.evmAdapter.isFinal(event.tx, 'safe');
-      if (
-        isFinal &&
-        (order.status === 'QUOTED' || order.status === 'USER_LOCK_SEEN')
-      ) {
+    } else {
+      // Reverse direction: BCH_TO_COUNTER
+      if (event.type === 'Locked') {
+        if (
+          order.status === 'USER_LOCK_FINAL' ||
+          order.status === 'SOLVER_LOCK_BROADCAST'
+        ) {
+          this.applyEvent(order, {
+            type: 'SOLVER_LOCK_SEEN',
+            txId: event.tx.txId,
+          });
+        }
+      } else if (event.type === 'Claimed') {
+        // User claimed EVM lock; secret is revealed in event
+        if (
+          order.status === 'SOLVER_LOCK_SEEN' ||
+          order.status === 'SOLVER_LOCK_BROADCAST' ||
+          order.status === 'SECRET_KNOWN'
+        ) {
+          this.applyEvent(order, {
+            type: 'USER_CLAIM_SEEN',
+            txId: event.tx.txId,
+            secret: event.secret as `0x${string}`,
+          });
+          await this.processSolverBchClaim(order);
+        }
+      } else if (event.type === 'Refunded') {
         this.applyEvent(order, {
-          type: 'USER_LOCK_FINAL',
-          txId: event.tx.txId,
+          type: 'COUNTER_DEADLINE_PASSED',
+          refundTxId: event.tx.txId,
         });
       }
-    } else if (event.type === 'Claimed') {
-      const order = this.db.getOrderByLockId(event.lockId);
-      if (!order) return;
-
-      if (
-        order.status === 'SOLVER_CLAIM_BROADCAST' ||
-        order.status === 'USER_CLAIM_SEEN'
-      ) {
-        this.applyEvent(order, {
-          type: 'SOLVER_CLAIM_FINAL',
-          txId: event.tx.txId,
-        });
-        this.applyEvent(order, { type: 'SWAP_COMPLETE' });
-      }
-    } else if (event.type === 'Refunded') {
-      const order = this.db.getOrderByLockId(event.lockId);
-      if (!order) return;
-
-      this.applyEvent(order, {
-        type: 'BCH_DEADLINE_PASSED',
-        refundTxId: event.tx.txId,
-      });
     }
   }
 
@@ -215,6 +242,11 @@ export class SolverEngine {
     order: SolverOrderRecord,
     scriptHash: string,
   ): Promise<void> {
+    if (order.direction === 'BCH_TO_COUNTER') {
+      await this.checkUserBchLock(order, scriptHash);
+      return;
+    }
+
     const utxos = await this.bchClient.listUnspent(
       scriptHash,
       'include_tokens',
@@ -294,7 +326,7 @@ export class SolverEngine {
 
   public async executeOrAdoptBchTx(params: {
     orderId: string;
-    actionType: 'SOLVER_LOCK' | 'SOLVER_REFUND';
+    actionType: 'SOLVER_LOCK' | 'SOLVER_REFUND' | 'SOLVER_CLAIM';
     buildTx: () => Promise<{ txid: string; txHex: string }>;
     isOnChain: (txid: string) => Promise<boolean>;
     faultBeforePoint?: string;
@@ -378,13 +410,51 @@ export class SolverEngine {
   }
 
   async reconcileOrder(order: SolverOrderRecord): Promise<void> {
-    const lockId = this.evmAdapter.lockId(
-      order.terms.userCounterAddress as `0x${string}`,
-      order.terms.hashLock,
-    );
+    const isReverse = order.direction === 'BCH_TO_COUNTER';
+    const lockerAddress = isReverse
+      ? (order.terms.solverCounterAddress as `0x${string}`)
+      : (order.terms.userCounterAddress as `0x${string}`);
+    const lockId = this.evmAdapter.lockId(lockerAddress, order.terms.hashLock);
     const evmLock = await this.evmAdapter.getLock(lockId);
 
-    // EVM Lock state reconciliation
+    if (isReverse) {
+      if (evmLock.status === 'locked') {
+        if (
+          order.status === 'USER_LOCK_FINAL' ||
+          order.status === 'SOLVER_LOCK_BROADCAST'
+        ) {
+          this.applyEvent(order, {
+            type: 'SOLVER_LOCK_SEEN',
+            txId: evmLock.lockTx?.txId || order.solverLockTxId || '',
+          });
+        }
+      } else if (evmLock.status === 'claimed') {
+        if (
+          order.status === 'SOLVER_LOCK_SEEN' ||
+          order.status === 'SOLVER_LOCK_BROADCAST' ||
+          order.status === 'SECRET_KNOWN'
+        ) {
+          this.applyEvent(order, {
+            type: 'USER_CLAIM_SEEN',
+            txId: evmLock.claimTx.txId,
+            secret: evmLock.secret,
+          });
+        }
+      } else if (evmLock.status === 'refunded') {
+        this.applyEvent(order, {
+          type: 'COUNTER_DEADLINE_PASSED',
+          refundTxId: evmLock.refundTx.txId,
+        });
+      }
+
+      if (order.status !== 'DONE' && order.status !== 'REJECTED') {
+        const shHex = await this.ensureBchSubscription(order);
+        await this.handleBchNotification(order, shHex);
+      }
+      return;
+    }
+
+    // EVM Lock state reconciliation (forward)
     if (evmLock.status === 'locked') {
       const isFinal = evmLock.lockTx
         ? await this.evmAdapter.isFinal(evmLock.lockTx, 'safe')
@@ -447,10 +517,16 @@ export class SolverEngine {
 
   async processOrder(order: SolverOrderRecord): Promise<void> {
     const terms = order.terms;
-    const lockId = this.evmAdapter.lockId(
-      terms.userCounterAddress as `0x${string}`,
-      terms.hashLock,
-    );
+    const isReverse = order.direction === 'BCH_TO_COUNTER';
+    const lockerAddress = isReverse
+      ? (terms.solverCounterAddress as `0x${string}`)
+      : (terms.userCounterAddress as `0x${string}`);
+    const lockId = this.evmAdapter.lockId(lockerAddress, terms.hashLock);
+
+    if (isReverse) {
+      await this.processReverseOrder(order, lockId);
+      return;
+    }
 
     // USER_LOCK_FINAL -> SOLVER_LOCK_BROADCAST
     if (order.status === 'USER_LOCK_FINAL') {
@@ -769,6 +845,406 @@ export class SolverEngine {
         });
       }
     }
+  }
+
+  private async checkUserBchLock(
+    order: SolverOrderRecord,
+    scriptHash: string,
+  ): Promise<void> {
+    const utxos = await this.bchClient.listUnspent(
+      scriptHash,
+      'include_tokens',
+    );
+    const { binToHex } = await import('@bitauth/libauth');
+    const expectedDisplay = order.terms.bchTokenCategory
+      .toLowerCase()
+      .replace(/^0x/, '');
+    const internalBytes = displayToInternalCategory(
+      order.terms.bchTokenCategory,
+    );
+    const expectedInternal = binToHex(internalBytes).toLowerCase();
+
+    // 1. Filter UTXOs matching category
+    const categoryUtxos = utxos.filter((u) => {
+      if (!u.token_data) return false;
+      const cat = u.token_data.category.toLowerCase().replace(/^0x/, '');
+      return cat === expectedDisplay || cat === expectedInternal;
+    });
+
+    if (categoryUtxos.length === 0) {
+      return;
+    }
+
+    // 2. Validate exact token amount and sufficient BCH carry
+    const validLockUtxo = categoryUtxos.find((u) => {
+      const exactAmount =
+        BigInt(u.token_data!.amount) === order.terms.bchTokenAmount;
+      const sufficientCarry = BigInt(u.value) >= order.terms.bchCarrySats;
+      return exactAmount && sufficientCarry;
+    });
+
+    if (!validLockUtxo) {
+      // User funded address with matching category but invalid amount or carry
+      const candidate = categoryUtxos[0]!;
+      const actualAmount = BigInt(candidate.token_data!.amount);
+      const actualCarry = BigInt(candidate.value);
+      let reason: string;
+      if (actualAmount !== order.terms.bchTokenAmount) {
+        reason = `Token amount ${actualAmount} does not match exact quoted amount ${order.terms.bchTokenAmount}`;
+      } else {
+        reason = `Lock carry ${actualCarry} sats is below required ${order.terms.bchCarrySats} sats`;
+      }
+      this.logger.warn(
+        { orderId: order.id, actualAmount, actualCarry, reason },
+        'User BCH lock has invalid terms; rejecting',
+      );
+      this.applyEvent(order, {
+        type: 'INVALID_TERMS',
+        reason,
+      });
+      return;
+    }
+
+    // 3. Valid lock seen
+    if (order.status === 'QUOTED') {
+      this.applyEvent(order, {
+        type: 'USER_LOCK_SEEN',
+        txId: validLockUtxo.tx_hash,
+      });
+    }
+
+    // 4. Reveal policy evaluation
+    const quorum = this.bchClient.getQuorumStatus();
+    const confirmations =
+      validLockUtxo.height !== undefined &&
+      validLockUtxo.height > 0 &&
+      quorum.quorumTip > 0
+        ? Math.max(1, quorum.quorumTip - validLockUtxo.height + 1)
+        : 0;
+
+    let dsproof: 'clear' | 'detected' | 'unavailable' | undefined;
+    let dsproofElapsedMs: number | undefined;
+
+    if (confirmations === 0) {
+      if (!order.firstSeenAt) {
+        order.firstSeenAt = Date.now();
+        this.db.saveOrder(order);
+      }
+      dsproofElapsedMs = Date.now() - order.firstSeenAt;
+
+      // Query Fulcrum DSProof status if client provides getDSProof
+      if (typeof this.bchClient.getDSProof === 'function') {
+        try {
+          const proof = await this.bchClient.getDSProof(validLockUtxo.tx_hash);
+          dsproof = proof ? 'detected' : 'clear';
+        } catch {
+          dsproof = 'unavailable';
+        }
+      } else {
+        dsproof = 'unavailable';
+      }
+    }
+
+    const amountUsdMicros = order.terms.bchTokenAmount * 10_000n; // 2 decimals -> 6 decimals ($)
+    const decision = revealPolicy({
+      chain: 'bch',
+      amountUsdMicros,
+      lane: order.lane ?? 'safe',
+      fastOptIn: order.fastOptIn ?? false,
+      evidence: {
+        exists: true,
+        confirmations,
+        ...(dsproof ? { dsproof } : {}),
+        ...(dsproofElapsedMs !== undefined ? { dsproofElapsedMs } : {}),
+      },
+    });
+
+    if (decision.reason === 'dsproof') {
+      this.logger.warn(
+        { orderId: order.id, txId: validLockUtxo.tx_hash },
+        'Double-spend proof detected on user BCH lock; rejecting order',
+      );
+      this.applyEvent(order, {
+        type: 'INVALID_TERMS',
+        reason: 'Double-spend proof detected on user lock',
+      });
+      return;
+    }
+
+    if (
+      decision.allowed &&
+      (order.status === 'QUOTED' || order.status === 'USER_LOCK_SEEN')
+    ) {
+      this.applyEvent(order, {
+        type: 'USER_LOCK_FINAL',
+        txId: validLockUtxo.tx_hash,
+      });
+    }
+  }
+
+  private async processReverseOrder(
+    order: SolverOrderRecord,
+    lockId: string,
+  ): Promise<void> {
+    const terms = order.terms;
+    const now = Math.floor(Date.now() / 1000);
+
+    // 1. In QUOTED or USER_LOCK_SEEN: check for user's BCH lock UTXO
+    if (order.status === 'QUOTED' || order.status === 'USER_LOCK_SEEN') {
+      const shHex = await this.ensureBchSubscription(order);
+      await this.checkUserBchLock(order, shHex);
+      if (order.status === 'QUOTED' && now > terms.quoteExpiry) {
+        this.applyEvent(order, { type: 'QUOTE_EXPIRED' });
+        return;
+      }
+    }
+
+    // 2. USER_LOCK_FINAL -> SOLVER_LOCK_BROADCAST (Solver counter-locks on EVM)
+    if (order.status === 'USER_LOCK_FINAL') {
+      // Check quote expiry
+      if (now > terms.quoteExpiry) {
+        this.logger.warn(
+          { orderId: order.id, quoteExpiry: terms.quoteExpiry, now },
+          'Quote expired before user lock finalized in reverse swap; refusing to counter-lock',
+        );
+        this.applyEvent(order, {
+          type: 'INVALID_TERMS',
+          reason: 'Quote expired before user lock finalized',
+        });
+        return;
+      }
+
+      // Check Invariant R at counter-lock time t0
+      const quorum = this.bchClient.getQuorumStatus();
+      if (
+        !quorum.isQuorumHealthy ||
+        !quorum.quorumTip ||
+        quorum.quorumTip <= 0
+      ) {
+        this.logger.warn(
+          { orderId: order.id, quorum },
+          'BCH quorum unhealthy or tip unknown at counter-lock time; delaying counter-lock',
+        );
+        return;
+      }
+
+      const bchTipHeight = quorum.quorumTip;
+      const timingDecision = invariantR(
+        {
+          counterDeadline: terms.counterDeadline,
+          bchRefundHeight: terms.bchRefundHeight,
+        },
+        { unixSeconds: now, bchTipHeight },
+      );
+      if (!timingDecision.allowed) {
+        this.logger.warn(
+          { orderId: order.id, reason: timingDecision.reason },
+          'Invariant R violation at counter-lock time; refusing to counter-lock',
+        );
+        this.applyEvent(order, {
+          type: 'INVALID_TERMS',
+          reason: `Invariant R violation at counter-lock: ${timingDecision.reason}`,
+        });
+        return;
+      }
+
+      // Pre-broadcast check on EVM chain state
+      const currentLock = await this.evmAdapter.getLock(lockId);
+      if (currentLock.status === 'locked') {
+        this.logger.info(
+          { orderId: order.id, lockTxId: currentLock.lockTx.txId },
+          'Solver EVM counter-lock already on chain; adopting',
+        );
+        this.db.recordActionBroadcast(
+          order.id,
+          'SOLVER_LOCK',
+          currentLock.lockTx.txId,
+        );
+        this.applyEvent(order, {
+          type: 'SOLVER_LOCK_BROADCAST',
+          txId: currentLock.lockTx.txId,
+        });
+        this.applyEvent(order, {
+          type: 'SOLVER_LOCK_SEEN',
+          txId: currentLock.lockTx.txId,
+        });
+        return;
+      }
+
+      // Write-ahead intent for EVM lock
+      const existingAction = this.db.getAction(order.id, 'SOLVER_LOCK');
+      if (!existingAction || existingAction.status === 'PENDING') {
+        this.db.recordActionIntent(order.id, 'SOLVER_LOCK', { lockId });
+        this.triggerFaultInjection('BEFORE_EVM_LOCK_BROADCAST');
+        const lockTx = await this.evmAdapter.lock(order.terms);
+        this.triggerFaultInjection('AFTER_EVM_LOCK_BROADCAST');
+        this.db.recordActionBroadcast(order.id, 'SOLVER_LOCK', lockTx.txId);
+        this.applyEvent(order, {
+          type: 'SOLVER_LOCK_BROADCAST',
+          txId: lockTx.txId,
+        });
+      }
+    }
+
+    // 3. SOLVER_LOCK_BROADCAST -> SOLVER_LOCK_SEEN -> SOLVER_LOCK_FINAL
+    if (order.status === 'SOLVER_LOCK_BROADCAST' && order.solverLockTxId) {
+      const currentLock = await this.evmAdapter.getLock(lockId);
+      if (currentLock.status === 'locked') {
+        this.applyEvent(order, {
+          type: 'SOLVER_LOCK_SEEN',
+          txId: order.solverLockTxId,
+        });
+      }
+    }
+
+    // 4. Check if user claimed on EVM (revealing secret)
+    if (
+      order.status === 'SOLVER_LOCK_SEEN' ||
+      order.status === 'SOLVER_LOCK_BROADCAST' ||
+      order.status === 'SECRET_KNOWN'
+    ) {
+      const currentLock = await this.evmAdapter.getLock(lockId);
+      if (currentLock.status === 'claimed') {
+        this.logger.info(
+          { orderId: order.id, claimTx: currentLock.claimTx.txId },
+          'User claimed on EVM; extracted secret, proceeding to claim BCH tokens',
+        );
+        this.applyEvent(order, {
+          type: 'USER_CLAIM_SEEN',
+          txId: currentLock.claimTx.txId,
+          secret: currentLock.secret,
+        });
+        await this.processSolverBchClaim(order);
+        return;
+      }
+    }
+
+    // 5. USER_CLAIM_SEEN -> SOLVER_CLAIM_BROADCAST (Solver claims BCH tokens)
+    if (order.status === 'USER_CLAIM_SEEN' && order.secret) {
+      await this.processSolverBchClaim(order);
+    }
+
+    // 6. SOLVER_CLAIM_BROADCAST -> SOLVER_CLAIM_FINAL -> DONE
+    if (order.status === 'SOLVER_CLAIM_BROADCAST' && order.solverClaimTxId) {
+      const shHex = await this.ensureBchSubscription(order);
+      const history = await this.bchClient.getHistory(shHex);
+      const claimOnChain = history.some(
+        (h) => h.tx_hash === order.solverClaimTxId,
+      );
+      if (claimOnChain) {
+        this.applyEvent(order, {
+          type: 'SOLVER_CLAIM_FINAL',
+          txId: order.solverClaimTxId,
+        });
+        this.applyEvent(order, { type: 'SWAP_COMPLETE' });
+      }
+    }
+
+    // 7. Abort edge: Solver EVM refund after counterDeadline
+    if (
+      (order.status === 'SOLVER_LOCK_SEEN' ||
+        order.status === 'SOLVER_LOCK_BROADCAST' ||
+        order.status === 'SECRET_KNOWN') &&
+      !order.userClaimTxId
+    ) {
+      if (now >= terms.counterDeadline) {
+        const currentLock = await this.evmAdapter.getLock(lockId);
+        if (currentLock.status === 'claimed') {
+          this.logger.info(
+            { orderId: order.id },
+            'User claimed EVM lock at deadline; proceeding to claim BCH',
+          );
+          this.applyEvent(order, {
+            type: 'USER_CLAIM_SEEN',
+            txId: currentLock.claimTx.txId,
+            secret: currentLock.secret,
+          });
+          await this.processSolverBchClaim(order);
+          return;
+        }
+
+        if (currentLock.status === 'locked') {
+          this.logger.info(
+            { orderId: order.id, deadline: terms.counterDeadline, now },
+            'EVM counterDeadline reached without user claim; broadcasting solver EVM refund',
+          );
+          try {
+            const refundTx = await this.evmAdapter.refund(lockId);
+            this.applyEvent(order, {
+              type: 'COUNTER_DEADLINE_PASSED',
+              refundTxId: refundTx.txId,
+            });
+          } catch (err: unknown) {
+            this.logger.warn(
+              { err, orderId: order.id },
+              'EVM refund broadcast failed; re-checking lock state',
+            );
+            const recheck = await this.evmAdapter.getLock(lockId);
+            if (recheck.status === 'claimed') {
+              this.applyEvent(order, {
+                type: 'USER_CLAIM_SEEN',
+                txId: recheck.claimTx.txId,
+                secret: recheck.secret,
+              });
+              await this.processSolverBchClaim(order);
+            }
+          }
+        } else if (currentLock.status === 'refunded') {
+          this.applyEvent(order, {
+            type: 'COUNTER_DEADLINE_PASSED',
+            refundTxId: currentLock.refundTx.txId,
+          });
+        }
+      }
+    }
+  }
+
+  public async processSolverBchClaim(order: SolverOrderRecord): Promise<void> {
+    if (!order.secret) return;
+    const shHex = await this.ensureBchSubscription(order);
+    const utxos = await this.bchClient.listUnspent(shHex, 'include_tokens');
+    const userUtxo =
+      utxos.find((u) => u.tx_hash === order.userLockTxId) ?? utxos[0];
+
+    if (!userUtxo) {
+      this.logger.warn(
+        { orderId: order.id },
+        'No UTXO available yet to claim user BCH lock; will retry',
+      );
+      return;
+    }
+
+    const result = await this.executeOrAdoptBchTx({
+      orderId: order.id,
+      actionType: 'SOLVER_CLAIM',
+      buildTx: async () => {
+        if (!userUtxo) {
+          throw new Error('No UTXO available to claim user BCH lock');
+        }
+        const claimResult = buildClaimTransaction({
+          params: encodeHtlcParameters(order.terms),
+          utxo: {
+            txid: userUtxo.tx_hash,
+            vout: userUtxo.tx_pos ?? 0,
+            satoshis: userUtxo.value ?? order.terms.bchCarrySats,
+          },
+          secret: order.secret!,
+          network: this.bchNetwork,
+        });
+        return { txid: claimResult.txid, txHex: claimResult.txHex };
+      },
+      isOnChain: async (txid) => {
+        const history = await this.bchClient.getHistory(shHex);
+        return history.some((h) => h.tx_hash === txid);
+      },
+      faultBeforePoint: 'BEFORE_BCH_CLAIM_BROADCAST',
+      faultAfterPoint: 'AFTER_BCH_CLAIM_BROADCAST',
+    });
+
+    this.applyEvent(order, {
+      type: 'SOLVER_CLAIM_BROADCAST',
+      txId: result.txid,
+    });
   }
 
   applyEvent(order: SolverOrderRecord, event: SolverEvent): void {
