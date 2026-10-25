@@ -30,6 +30,8 @@ export interface SolverOrderRecord {
   userClaimTxId?: string | undefined;
   solverClaimTxId?: string | undefined;
   solverRefundTxId?: string | undefined;
+  needsAttention?: boolean | undefined;
+  rejectionReason?: string | undefined;
   createdAt: number;
   updatedAt: number;
 }

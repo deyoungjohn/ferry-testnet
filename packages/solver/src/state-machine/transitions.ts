@@ -156,8 +156,15 @@ export function transition(
     }
 
     case 'INVALID_TERMS': {
-      if (current === 'QUOTED' || current === 'USER_LOCK_SEEN') {
-        return { nextStatus: 'REJECTED' };
+      if (
+        current === 'QUOTED' ||
+        current === 'USER_LOCK_SEEN' ||
+        current === 'USER_LOCK_FINAL'
+      ) {
+        return {
+          nextStatus: 'REJECTED',
+          mutations: { rejectionReason: event.reason },
+        };
       }
       return { nextStatus: current };
     }

@@ -27,6 +27,7 @@ import {
 import { SolverDatabase } from '../src/db/database.js';
 import { SolverEngine } from '../src/engine/runner.js';
 import { BchQuorumClient } from '../src/bch/quorum-client.js';
+import { deriveBchKeyDetails } from '../src/bch/lock-builder.js';
 
 const ANVIL_PORT = 8546;
 const RPC_URL = `http://127.0.0.1:${ANVIL_PORT}`;
@@ -50,6 +51,8 @@ describe('E2E-01: Forward swap on Anvil + Chipnet contracts', () => {
   let db: SolverDatabase;
   let bchClient: BchQuorumClient;
   let engine: SolverEngine;
+  let solverBchWif: string;
+  let userBchWif: string;
 
   const publicClient = createPublicClient({
     chain: foundry,
@@ -75,28 +78,47 @@ describe('E2E-01: Forward swap on Anvil + Chipnet contracts', () => {
   });
 
   beforeAll(async () => {
-    // 1. Spawn anvil on port 8546
+    // Read .env.local
+    let dir = process.cwd();
+    while (
+      !fs.existsSync(path.join(dir, '.env.local')) &&
+      path.dirname(dir) !== dir
+    ) {
+      dir = path.dirname(dir);
+    }
+    const envLocalContent = fs.readFileSync(
+      path.join(dir, '.env.local'),
+      'utf8',
+    );
+    const solverMatch = envLocalContent.match(/SOLVER_BCH_WIF=([^\r\n]+)/);
+    const userMatch = envLocalContent.match(/USER_BCH_WIF=([^\r\n]+)/);
+    if (!solverMatch || !solverMatch[1] || !userMatch || !userMatch[1]) {
+      throw new Error('SOLVER_BCH_WIF or USER_BCH_WIF missing from .env.local');
+    }
+    solverBchWif = solverMatch[1].trim();
+    userBchWif = userMatch[1].trim();
+
+    // Start local anvil on port 8546
     anvilProcess = spawn('anvil', ['--port', String(ANVIL_PORT)], {
       stdio: 'pipe',
     });
 
-    await new Promise<void>((resolve, reject) => {
-      const start = Date.now();
-      const check = async () => {
-        try {
-          await publicClient.getBlockNumber();
-          resolve();
-        } catch {
-          if (Date.now() - start > 10000)
-            reject(new Error('Anvil startup timed out'));
-          else setTimeout(check, 100);
-        }
-      };
-      check();
-    });
+    // Wait for anvil to become healthy
+    let connected = false;
+    for (let i = 0; i < 40; i++) {
+      try {
+        await publicClient.getBlockNumber();
+        connected = true;
+        break;
+      } catch {
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+    if (!connected) {
+      throw new Error(`Could not connect to Anvil on port ${ANVIL_PORT}`);
+    }
 
-    // 2. Load compiled Foundry artifacts
-    const rootDir = path.resolve(import.meta.dirname, '../../..');
+    const rootDir = dir;
     const htlcArtifactPath = path.join(
       rootDir,
       'packages/htlc-evm/out/FerryHTLC.sol/FerryHTLC.json',
@@ -171,12 +193,14 @@ describe('E2E-01: Forward swap on Anvil + Chipnet contracts', () => {
       evmAdapter,
       bchClient,
       solverAccount.address as `0x${string}`,
+      solverBchWif,
     );
-  }, 25000);
+  }, 35000);
 
   afterAll(async () => {
-    bchClient.close();
-    db.close();
+    if (engine) engine.stop();
+    if (bchClient) bchClient.close();
+    if (db) db.close();
     if (anvilProcess && !anvilProcess.killed) {
       anvilProcess.kill('SIGINT');
     }
@@ -188,16 +212,22 @@ describe('E2E-01: Forward swap on Anvil + Chipnet contracts', () => {
 
     const amountIn = 10000000n; // 10.00 USDC
     const bchTokenAmount = quoteExactIn(amountIn, 6, 2, {
-      spreadBps: 50,
-      fixedFeeUsdMicros: 100000n,
-    }); // 985 units = 9.85 tPUSD
+      spreadBps: 40,
+      fixedFeeUsdMicros: 50000n,
+    }); // 991 units = 9.91 tPUSD
 
     const now = Math.floor(Date.now() / 1000);
     const counterDeadline = now + 86400;
-    const bchRefundHeight = 330036;
+
+    // Use current Chipnet tip for bchRefundHeight to ensure Invariant F passes
+    const tip = bchClient.getQuorumStatus().quorumTip || 330000;
+    const bchRefundHeight = tip + 36;
 
     const tpusdCat =
       '0xec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac';
+
+    const solverKeys = await deriveBchKeyDetails(solverBchWif);
+    const userKeys = await deriveBchKeyDetails(userBchWif);
 
     const terms: OrderTerms = parseOrderTerms({
       version: 1,
@@ -215,11 +245,9 @@ describe('E2E-01: Forward swap on Anvil + Chipnet contracts', () => {
       },
       counterHtlc: htlcAddress,
       userCounterAddress: userAccount.address,
-      userBchLockingBytecode:
-        '0x76a914444444444444444444444444444444444444444488ac',
+      userBchLockingBytecode: `0x${userKeys.p2pkhBytecodeHex}`,
       solverCounterAddress: solverAccount.address,
-      solverBchLockingBytecode:
-        '0x76a914666666666666666666666666666666666666666688ac',
+      solverBchLockingBytecode: `0x${solverKeys.p2pkhBytecodeHex}`,
       hashLock,
       counterDeadline,
       bchRefundHeight,
@@ -270,15 +298,16 @@ describe('E2E-01: Forward swap on Anvil + Chipnet contracts', () => {
       txId: userLockTx.txId,
     });
 
-    // TX 2: Solver BCH Lock
+    // TX 2: Real Solver BCH Lock on Chipnet
     await engine.step();
     const t0Broadcast = Date.now();
     const detectToBroadcastMs = t0Broadcast - t0Detect;
-    expect(detectToBroadcastMs).toBeLessThan(5000); // Measured latency bound well within 60s!
+    expect(detectToBroadcastMs).toBeLessThan(10000);
 
     let currentOrder = db.getOrder(orderId)!;
     expect(currentOrder.status).toBe('SOLVER_LOCK_BROADCAST');
     expect(currentOrder.solverLockTxId).toBeDefined();
+    expect(currentOrder.solverLockTxId).toMatch(/^[0-9a-fA-F]{64}$/);
 
     // Derive BCH HTLC contract parameters
     const bchParams = encodeHtlcParameters({
@@ -293,23 +322,25 @@ describe('E2E-01: Forward swap on Anvil + Chipnet contracts', () => {
     const addresses = deriveHtlcAddresses(bchParams, 'chipnet');
     expect(addresses.p2sh32Address).toMatch(/^bchtest:p[0-9a-z]{60,65}$/);
 
-    // TX 3: User BCH Claim (simulated / built spend)
+    // TX 3: Real User BCH Claim broadcast on Chipnet!
     const claimTxResult = buildClaimTransaction({
       params: bchParams,
       utxo: {
         txid: currentOrder.solverLockTxId!,
         vout: 0,
-        satoshis: 3000n,
+        satoshis: terms.bchCarrySats,
       },
       secret,
     });
-    expect(claimTxResult.txid).toMatch(/^[0-9a-fA-F]{64}$/);
+
+    const userClaimTxId = await bchClient.broadcast(claimTxResult.txHex);
+    expect(userClaimTxId).toBe(claimTxResult.txid);
 
     // Engine detects USER_CLAIM_SEEN with secret
     const t1Detect = Date.now();
     engine.applyEvent(currentOrder, {
       type: 'USER_CLAIM_SEEN',
-      txId: claimTxResult.txid,
+      txId: userClaimTxId,
       secret,
     });
 
@@ -320,7 +351,6 @@ describe('E2E-01: Forward swap on Anvil + Chipnet contracts', () => {
     expect(claimLatencyMs).toBeLessThan(5000);
 
     currentOrder = db.getOrder(orderId)!;
-    // Solver broadcast and finalized EVM claim, reaching DONE
     expect(currentOrder.status).toBe('DONE');
     expect(currentOrder.solverClaimTxId).toBeDefined();
 
@@ -338,5 +368,5 @@ describe('E2E-01: Forward swap on Anvil + Chipnet contracts', () => {
       args: [solverAccount.address],
     });
     expect(solverBalance).toBe(amountIn); // Solver received 10.00 USDC
-  }, 30000);
+  }, 60000);
 });

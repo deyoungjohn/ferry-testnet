@@ -44,6 +44,8 @@ export class SolverDatabase {
         user_claim_txid TEXT,
         solver_claim_txid TEXT,
         solver_refund_txid TEXT,
+        needs_attention INTEGER NOT NULL DEFAULT 0,
+        rejection_reason TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -69,11 +71,11 @@ export class SolverDatabase {
       INSERT INTO orders (
         id, direction, status, terms_json, hash_lock, secret, secret_source,
         user_lock_txid, solver_lock_txid, user_claim_txid, solver_claim_txid,
-        solver_refund_txid, created_at, updated_at
+        solver_refund_txid, needs_attention, rejection_reason, created_at, updated_at
       ) VALUES (
         @id, @direction, @status, @terms_json, @hash_lock, @secret, @secret_source,
         @user_lock_txid, @solver_lock_txid, @user_claim_txid, @solver_claim_txid,
-        @solver_refund_txid, @created_at, @updated_at
+        @solver_refund_txid, @needs_attention, @rejection_reason, @created_at, @updated_at
       )
       ON CONFLICT(id) DO UPDATE SET
         status = excluded.status,
@@ -84,6 +86,8 @@ export class SolverDatabase {
         user_claim_txid = excluded.user_claim_txid,
         solver_claim_txid = excluded.solver_claim_txid,
         solver_refund_txid = excluded.solver_refund_txid,
+        needs_attention = excluded.needs_attention,
+        rejection_reason = excluded.rejection_reason,
         updated_at = excluded.updated_at
     `);
 
@@ -102,6 +106,8 @@ export class SolverDatabase {
       user_claim_txid: order.userClaimTxId ?? null,
       solver_claim_txid: order.solverClaimTxId ?? null,
       solver_refund_txid: order.solverRefundTxId ?? null,
+      needs_attention: order.needsAttention ? 1 : 0,
+      rejection_reason: order.rejectionReason ?? null,
       created_at: order.createdAt,
       updated_at: order.updatedAt,
     });
@@ -114,11 +120,41 @@ export class SolverDatabase {
     return this.mapOrderRow(row);
   }
 
+  getOrderByHashLock(hashLock: string): SolverOrderRecord | null {
+    const cleanHash = hashLock.toLowerCase();
+    const stmt = this.db.prepare(
+      'SELECT * FROM orders WHERE lower(hash_lock) = lower(?) LIMIT 1',
+    );
+    const row = stmt.get(cleanHash) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return this.mapOrderRow(row);
+  }
+
+  markNeedsAttention(orderId: string, reason?: string): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      UPDATE orders
+      SET needs_attention = 1,
+          rejection_reason = COALESCE(rejection_reason, ?),
+          updated_at = ?
+      WHERE id = ?
+    `);
+    stmt.run(reason ?? null, now, orderId);
+  }
+
   listNonTerminalOrders(): SolverOrderRecord[] {
     const stmt = this.db.prepare(`
       SELECT * FROM orders
       WHERE status NOT IN ('DONE', 'EXPIRED', 'REJECTED', 'SOLVER_REFUNDED')
       ORDER BY created_at ASC
+    `);
+    const rows = stmt.all() as Record<string, unknown>[];
+    return rows.map((r) => this.mapOrderRow(r));
+  }
+
+  listNeedsAttentionOrders(): SolverOrderRecord[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM orders WHERE needs_attention = 1 ORDER BY updated_at DESC
     `);
     const rows = stmt.all() as Record<string, unknown>[];
     return rows.map((r) => this.mapOrderRow(r));
@@ -167,6 +203,16 @@ export class SolverDatabase {
     stmt.run(txId, now, orderId, action);
   }
 
+  recordActionFailed(orderId: string, action: string): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      UPDATE actions
+      SET status = 'FAILED', updated_at = ?
+      WHERE order_id = ? AND action = ?
+    `);
+    stmt.run(now, orderId, action);
+  }
+
   getAction(orderId: string, action: string): ActionRecord | null {
     const stmt = this.db.prepare(
       'SELECT * FROM actions WHERE order_id = ? AND action = ?',
@@ -211,6 +257,8 @@ export class SolverDatabase {
       userClaimTxId: (row.user_claim_txid as string) || undefined,
       solverClaimTxId: (row.solver_claim_txid as string) || undefined,
       solverRefundTxId: (row.solver_refund_txid as string) || undefined,
+      needsAttention: row.needs_attention === 1,
+      rejectionReason: (row.rejection_reason as string) || undefined,
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
     };

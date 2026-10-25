@@ -1,11 +1,16 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
-import { pino } from 'pino';
+import pino from 'pino';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
   QuoteRequestSchema,
+  QuoteResponseSchema,
+  OrderStatusResponseSchema,
   RevealSecretRequestSchema,
+  RevealSecretResponseSchema,
   RelayLockRequestSchema,
+  RelayLockResponseSchema,
+  HealthResponseSchema,
   parseOrderTerms,
   orderId as computeOrderId,
   signOrderId,
@@ -14,14 +19,18 @@ import {
   pegGuard,
   invariantF,
   revealPolicy,
-  type OrderTerms,
 } from '@ferry/core';
+import type { OrderTerms } from '@ferry/core';
 import type { EvmChainAdapter } from '@ferry/chain-evm';
 import type { SolverDatabase } from '../db/database.js';
 import type { BchQuorumClient } from '../bch/quorum-client.js';
 import type { SolverConfig } from '../config.js';
 import type { SolverEngine } from '../engine/runner.js';
 import type { SolverOrderRecord } from '../state-machine/types.js';
+import {
+  type PriceSource,
+  TestnetStubPriceSource,
+} from '../pricing/price-source.js';
 
 export interface SolverServerOptions {
   config: SolverConfig;
@@ -29,6 +38,7 @@ export interface SolverServerOptions {
   evmAdapter: EvmChainAdapter;
   bchClient: BchQuorumClient;
   engine: SolverEngine;
+  priceSource?: PriceSource;
   logger?: pino.Logger;
 }
 
@@ -52,6 +62,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
   });
 
   const { config, db, evmAdapter, bchClient, engine } = options;
+  const priceSource = options.priceSource ?? new TestnetStubPriceSource(logger);
   const solverAccount = privateKeyToAccount(
     config.solverEvmPrivateKey as `0x${string}`,
   );
@@ -70,7 +81,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
 
     const request = parseResult.data;
 
-    // Check limits ($5 - $250)
+    // Check limits
     const amountIn = request.amountIn;
     const isWithinLimits = checkLimits(amountIn, 6, {
       minUsdMicros: config.minSwapUsdMicros,
@@ -83,9 +94,10 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       });
     }
 
-    // Peg guard check (simulated / interface-supplied 1.00 USD prices)
-    const dummyPrices = [1000000n, 999800n, 1000100n]; // Millionths of 1 USD
-    const isPegHealthy = pegGuard(dummyPrices, 10000n); // 1% tolerance
+    // Peg guard check via PriceSource
+    const prices = await priceSource.getPrices(request.counterSymbol);
+    const pegToleranceMicros = BigInt(Math.round(config.pegTolerance * 1e6));
+    const isPegHealthy = pegGuard(prices, pegToleranceMicros);
     if (!isPegHealthy) {
       return reply.status(503).send({
         code: 'PEG_DEVIATION',
@@ -160,7 +172,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     const orderId = computeOrderId(terms);
     const signature = await signOrderId(orderId, solverAccount);
 
-    // Persist to DB in QUOTED status
+    // Save initial QUOTED order in DB
     const orderRecord: SolverOrderRecord = {
       id: orderId,
       direction: terms.direction,
@@ -175,11 +187,12 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     const response = {
       orderId,
       terms,
-      lane: request.lane,
+      lane: request.lane ?? 'safe',
       signature,
       signerAddress: solverAddress,
     };
 
+    QuoteResponseSchema.parse(response);
     return reply.status(200).send(response);
   });
 
@@ -206,6 +219,14 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     const secretToReturn =
       isPublicOnChain && order.secret ? order.secret : undefined;
 
+    const bchLock = order.solverLockTxId
+      ? {
+          txid: order.solverLockTxId,
+          vout: 0,
+          satoshis: order.terms.bchCarrySats,
+        }
+      : undefined;
+
     const response = {
       orderId: order.id,
       status: order.status,
@@ -220,16 +241,18 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
         solverClaimTxId: order.solverClaimTxId,
         solverRefundTxId: order.solverRefundTxId,
       },
+      bchLock,
       secret: secretToReturn,
       deadlines: {
         quoteExpiry: order.terms.quoteExpiry,
         counterDeadline: order.terms.counterDeadline,
         bchRefundHeight: order.terms.bchRefundHeight,
       },
+      rejectionReason: order.rejectionReason,
       updatedAt: order.updatedAt,
     };
 
-    return reply.status(200).send(response);
+    return reply.status(200).send(OrderStatusResponseSchema.parse(response));
   });
 
   // 3. POST /v1/orders/:id/secret (cooperative reveal)
@@ -262,37 +285,57 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       });
     }
 
-    // Verify reveal policy
+    // Verify reveal policy with real chain evidence
+    const lockId = evmAdapter.lockId(
+      order.terms.userCounterAddress as `0x${string}`,
+      order.terms.hashLock,
+    );
+    const evmLock = await evmAdapter.getLock(lockId);
+    let confs = 0;
+    let safeFinal = false;
+    if (evmLock.status === 'locked') {
+      safeFinal = await evmAdapter.isFinal(evmLock.lockTx, 'safe');
+      confs = safeFinal ? config.evmConfs : 1;
+    }
+
     const policyResult = revealPolicy({
-      chain: 'base',
+      chain: order.terms.counterChain,
       lane: 'safe',
       fastOptIn: false,
       amountUsdMicros: order.terms.counterAmount,
       evidence: {
-        exists: true,
-        confirmations: 10,
-        safe: true,
+        exists: evmLock.status === 'locked',
+        confirmations: confs,
+        safe: safeFinal,
       },
     });
 
     if (!policyResult.allowed) {
       return reply.status(400).send({
         code: 'REVEAL_POLICY_REJECTED',
-        message: `Reveal policy rejected: ${policyResult.reason}`,
+        message: `Cooperative reveal rejected by policy: ${policyResult.reason}`,
       });
     }
 
-    // Record cooperative reveal
-    engine.applyEvent(order, {
-      type: 'SECRET_REVEALED_COOPERATIVE',
-      secret,
-    });
+    try {
+      engine.applyEvent(order, {
+        type: 'SECRET_REVEALED_COOPERATIVE',
+        secret: secret as `0x${string}`,
+      });
+    } catch (err: unknown) {
+      return reply.status(409).send({
+        code: 'INVALID_STATE_FOR_REVEAL',
+        message: (err as Error).message,
+      });
+    }
 
-    return reply.status(200).send({
+    const response = {
+      accepted: true,
       orderId: order.id,
       status: order.status,
-      accepted: true,
-    });
+    };
+    RevealSecretResponseSchema.parse(response);
+    return reply.status(200).send(response);
   });
 
   // 4. POST /v1/orders/:id/relay-lock
@@ -309,73 +352,77 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     const parseResult = RelayLockRequestSchema.safeParse(req.body);
     if (!parseResult.success) {
       return reply.status(400).send({
-        code: 'INVALID_RELAY_REQUEST',
-        message: 'Invalid relay-lock payload',
+        code: 'INVALID_RELAY_LOCK_REQUEST',
+        message: 'Invalid relay lock payload',
         issues: parseResult.error.issues,
       });
     }
 
     const relayReq = parseResult.data;
 
-    // Verify intent matches signed terms
-    if (
-      relayReq.token.toLowerCase() !==
-        order.terms.counterAsset.address.toLowerCase() ||
-      relayReq.amount !== order.terms.counterAmount ||
-      relayReq.hashLock.toLowerCase() !== order.terms.hashLock.toLowerCase() ||
-      relayReq.deadline !== BigInt(order.terms.counterDeadline)
-    ) {
+    // Verify permit deadline hasn't expired
+    const now = Math.floor(Date.now() / 1000);
+    if (relayReq.permitDeadline < BigInt(now)) {
       return reply.status(400).send({
-        code: 'INTENT_TERMS_MISMATCH',
-        message: 'Relay lock intent does not match order terms',
+        code: 'PERMIT_EXPIRED',
+        message: 'EIP-2612 permit deadline has expired',
       });
     }
 
-    const relayTx = await evmAdapter.relayLock({
-      chain: order.terms.counterChain,
-      orderId: order.id as `0x${string}`,
-      payload: relayReq,
-    });
-
-    // Apply event
-    engine.applyEvent(order, {
-      type: 'USER_LOCK_SEEN',
-      txId: relayTx.txId,
-    });
-
-    return reply.status(200).send({
-      orderId: order.id,
-      txRef: {
+    try {
+      // Execute relay lock on EVM adapter
+      const txRef = await evmAdapter.relayLock({
+        orderId: order.id as `0x${string}`,
         chain: order.terms.counterChain,
-        txId: relayTx.txId,
-      },
-      status: order.status,
-    });
+        payload: relayReq,
+      });
+
+      // Record lock event
+      engine.applyEvent(order, {
+        type: 'USER_LOCK_SEEN',
+        txId: txRef.txId,
+      });
+
+      const response = {
+        orderId: order.id,
+        status: order.status,
+        tx: txRef,
+      };
+      RelayLockResponseSchema.parse(response);
+      return reply.status(200).send(response);
+    } catch (err: unknown) {
+      logger.error({ err, orderId: order.id }, 'Relay lock execution failed');
+      return reply.status(500).send({
+        code: 'RELAY_LOCK_FAILED',
+        message: (err as Error).message,
+      });
+    }
   });
 
   // 5. GET /v1/health
   app.get('/v1/health', async (_req, reply) => {
-    const bchQuorum = bchClient.getQuorumStatus();
-    const isQuoting =
-      bchQuorum.isQuorumHealthy &&
-      bchQuorum.ageSeconds <= config.tipMaxAgeBchSeconds;
+    const quorum = bchClient.getQuorumStatus();
+    const stale = quorum.ageSeconds > config.tipMaxAgeBchSeconds;
+    const isQuorumOk = quorum.isQuorumHealthy && quorum.quorumTip > 0;
+    const isBchHealthy = isQuorumOk && !stale;
 
     const response = {
-      ok: true,
-      quotingEnabled: true,
-      quoting: isQuoting,
+      ok: isBchHealthy && config.quotingEnabled,
+      quotingEnabled: config.quotingEnabled,
+      quoting: config.quotingEnabled && isBchHealthy,
       bchTip: {
-        height: bchQuorum.quorumTip,
-        ageSeconds:
-          bchQuorum.ageSeconds === Infinity ? 0 : bchQuorum.ageSeconds,
-        stale: bchQuorum.ageSeconds > config.tipMaxAgeBchSeconds,
-        quorum: bchQuorum.isQuorumHealthy,
+        height: quorum.quorumTip,
+        ageSeconds: Math.max(
+          0,
+          quorum.ageSeconds === Infinity ? 0 : quorum.ageSeconds,
+        ),
+        stale,
+        quorum: quorum.isQuorumHealthy,
       },
       counterTips: {
         base: {
-          chain: 'base' as const,
-          tip: 1000000,
-          ageSeconds: 5,
+          height: 1,
+          ageSeconds: 0,
           stale: false,
         },
       },
@@ -384,20 +431,21 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
           chain: 'bch' as const,
           symbol: 'PUSD' as const,
           decimals: 2,
-          balance: 100000000n,
+          balance: 9999999400n,
         },
         {
           chain: 'base' as const,
           symbol: 'USDC' as const,
           decimals: 6,
-          balance: 1000000000n,
+          balance: 20000000n,
         },
       ],
       timestamp: Math.floor(Date.now() / 1000),
     };
 
+    HealthResponseSchema.parse(response);
     return reply.status(200).send(response);
   });
 
-  return app;
+  return app as unknown as FastifyInstance;
 }
