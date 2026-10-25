@@ -285,3 +285,14 @@ Lightweight decision records (template below). Spike answers (S-01…S-14, Q-A�
 - **Evidence:** Web unit tests 77/77; full UI E2E 9/9, including create → preview → quote → lock and the reserved-invoice block; root typecheck/lint/format green; 278 tests pass outside htlc-solana with 2 skipped; root build excluding Solana green. Initial JS is 252.17 kB (78.10 kB gzip); the pay-link routes are 10.85 kB and 12.91 kB lazy chunks; `recover.html` is unchanged at 1,493,381 bytes with SHA-256 `6b749cb260f851bc0cacf90f4faefeee8b3d78df60431ab610ed74f8f056bd89`.
 - **Consequence for rebuild:** Keep the link id as the only URL payload, re-fetch the link before quoting, and never trust a payer-supplied amount for an invoice. Treat message-signing capability as optional and surface the unverified state rather than faking a badge.
 - **Revisit if:** WizardConnect adds a standard message-signature request, or open links need to be single-use rather than reusable.
+
+
+### D-A3-006 · S-10 Tron HTLC Architecture, No-Permit Flow, and SafeERC20 USDT Quirk Handling
+- **Decision:** Port `FerryHTLC.sol` to Tron TVM in `packages/htlc-tron` with identical lock, claim, and refund semantics while dropping `lockWithIntent`. Tron TRC-20 tokens (notably Tether USDT) lack EIP-2612 permit functionality; swaps rely entirely on standard TRC-20 approve and lock. Use OpenZeppelin's `SafeERC20` wrapper for all token transfers to safely accommodate non-standard TRC-20 implementations that do not return a boolean value.
+- **Evidence:**
+  - Evaluated Tron TRC-20 USDT specification and contract behavior. Tether USDT on Tron historically returns void (zero return bytes) rather than boolean true/false on `transfer` and `transferFrom`.
+  - Scaffolding a mock token with this exact non-standard return quirk (`MockNoReturnTRC20`) and executing tests with standard OpenZeppelin `SafeERC20` demonstrated that `safeTransfer` and `safeTransferFrom` handle zero-return bytes correctly without reverting, successfully completing lock, claim, and refund flows.
+  - Contract unit test suite in `packages/htlc-tron` covers lock, claim, refund, bad secret, premature refund, double claim, double refund, and the USDT void-return quirk across 7 test suites, all passing.
+  - Bytecode emitted by `tron-solc 0.8.31` introduces TVM-specific opcodes (`0xd2` and `0xd3` in the constructor preamble for TRC-10 compatibility). Consequently, local logic testing is compiled via standard Solc / Foundry, whereas Nile testnet deployment artifacts are generated with TronBox's `tron-solc`.
+- **Consequence for rebuild:** Maintain `FerryHTLC.sol` in `packages/htlc-tron` without permit support. Swaps on Tron require the user to send an `approve` transaction followed by `lock`. Always wrap TRC-20 token interfaces with `SafeERC20`.
+- **Revisit if:** TRON introduces native EIP-2612 permit standards across major token contracts.

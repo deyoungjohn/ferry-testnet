@@ -5,6 +5,7 @@ import {
   BCH_KEY_ROLES,
   EVM_KEY_ROLES,
   SOL_KEY_ROLES,
+  TRON_KEY_ROLES,
   type KeyRole,
   type RoleAddresses,
 } from './types.js';
@@ -12,12 +13,15 @@ import {
   generateBchTestnetWif,
   generateEvmPrivateKey,
   generateSolanaKeypair,
+  generateTronPrivateKey,
   deriveBchAddressesFromWif,
   deriveEvmAddress,
   deriveSolanaAddress,
+  deriveTronAddress,
   isValidBchWif,
   isValidEvmPrivateKey,
   isValidSolanaKeypair,
+  isValidTronPrivateKey,
 } from './derive.js';
 import bs58 from 'bs58';
 
@@ -109,6 +113,11 @@ export function generateMissingKeys(
       SOLVER_SOL_KEYPAIR: null,
       USER_SOL_KEYPAIR: null,
     },
+    tron: {
+      DEPLOYER_TRON_KEY: null,
+      SOLVER_TRON_KEY: null,
+      USER_TRON_KEY: null,
+    },
   };
 
   const keysToFillInPlace = new Map<string, string>();
@@ -190,6 +199,29 @@ export function generateMissingKeys(
       }
       generatedKeys.push(role);
       addresses.sol[role] = deriveSolanaAddress(newKey);
+      if (rawVal === '') {
+        keysToFillInPlace.set(role, newKey);
+      } else {
+        keysToAppend.push({ key: role, value: newKey });
+      }
+    }
+  }
+
+  // 4. Process Tron roles
+  for (const role of TRON_KEY_ROLES) {
+    const rawVal = parsedEnv[role];
+    if (rawVal !== undefined && rawVal !== '') {
+      skippedKeys.push(role);
+      if (isValidTronPrivateKey(rawVal)) {
+        addresses.tron[role] = deriveTronAddress(rawVal);
+      } else {
+        addresses.tron[role] = 'INVALID';
+        invalidKeys.push(role);
+      }
+    } else {
+      const newKey = generateTronPrivateKey();
+      generatedKeys.push(role);
+      addresses.tron[role] = deriveTronAddress(newKey);
       if (rawVal === '') {
         keysToFillInPlace.set(role, newKey);
       } else {
@@ -284,6 +316,11 @@ export function getAddressesFromEnv(
       SOLVER_SOL_KEYPAIR: null,
       USER_SOL_KEYPAIR: null,
     },
+    tron: {
+      DEPLOYER_TRON_KEY: null,
+      SOLVER_TRON_KEY: null,
+      USER_TRON_KEY: null,
+    },
   };
 
   for (const role of BCH_KEY_ROLES) {
@@ -317,6 +354,18 @@ export function getAddressesFromEnv(
         addresses.sol[role] = deriveSolanaAddress(val);
       } else {
         addresses.sol[role] = 'INVALID';
+        invalidKeys.push(role);
+      }
+    }
+  }
+
+  for (const role of TRON_KEY_ROLES) {
+    const val = env[role];
+    if (val !== undefined && val !== '') {
+      if (isValidTronPrivateKey(val)) {
+        addresses.tron[role] = deriveTronAddress(val);
+      } else {
+        addresses.tron[role] = 'INVALID';
         invalidKeys.push(role);
       }
     }
@@ -366,6 +415,19 @@ export function formatAddressesOutput(addresses: RoleAddresses): string {
   lines.push('\n=== Solana Devnet Roles ===');
   for (const role of SOL_KEY_ROLES) {
     const addr = addresses.sol[role];
+    lines.push(`  ${role}:`);
+    if (addr === 'INVALID') {
+      lines.push('    Address:             INVALID');
+    } else if (addr) {
+      lines.push(`    Address:             ${addr}`);
+    } else {
+      lines.push('    [Not configured in .env.local]');
+    }
+  }
+
+  lines.push('\n=== Tron Nile Roles ===');
+  for (const role of TRON_KEY_ROLES) {
+    const addr = addresses.tron[role];
     lines.push(`  ${role}:`);
     if (addr === 'INVALID') {
       lines.push('    Address:             INVALID');

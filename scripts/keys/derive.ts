@@ -188,3 +188,42 @@ export function deriveSolanaAddress(key: string): string {
   }
   return kp.publicKey.toBase58();
 }
+
+/**
+ * Generate a new Tron private key hex string (32 bytes hex, without 0x prefix).
+ */
+export function generateTronPrivateKey(): string {
+  const bytes = crypto.randomBytes(32);
+  return bytes.toString('hex');
+}
+
+/**
+ * Validate a Tron private key (32 bytes hex, with or without 0x prefix).
+ */
+export function isValidTronPrivateKey(key: string): boolean {
+  const trimmed = key.trim();
+  if (!trimmed) return false;
+  const hex = trimmed.startsWith('0x') ? trimmed.slice(2) : trimmed;
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) return false;
+  try {
+    privateKeyToAccount(`0x${hex}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Derive Tron Base58Check address starting with 'T' from a private key.
+ */
+export function deriveTronAddress(privateKey: string): string {
+  const trimmed = privateKey.trim();
+  const hex = trimmed.startsWith('0x') ? trimmed.slice(2) : trimmed;
+  const account = privateKeyToAccount(`0x${hex}`);
+  const evmBytes = Buffer.from(account.address.slice(2), 'hex');
+  const tronBytes = Buffer.concat([Buffer.from([0x41]), evmBytes]);
+  const h1 = crypto.createHash('sha256').update(tronBytes).digest();
+  const h2 = crypto.createHash('sha256').update(h1).digest();
+  const checksum = h2.subarray(0, 4);
+  return bs58.encode(Buffer.concat([tronBytes, checksum]));
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@ferry/htlc-tron",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "forge build && tronbox compile",
+    "compile": "tronbox compile",
+    "test": "vitest run",
+    "roundtrip:nile": "tsx scripts/roundtrip-nile.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint test scripts"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "5.6.1",
+    "tronweb": "6.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "viem": "2.57.10",
+    "vitest": "5.0.5"
+  }
+}

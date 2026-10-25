@@ -8,9 +8,11 @@ import {
   deriveBchAddressesFromWif,
   deriveEvmAddress,
   deriveSolanaAddress,
+  deriveTronAddress,
   isValidBchWif,
   isValidEvmPrivateKey,
   isValidSolanaKeypair,
+  isValidTronPrivateKey,
 } from './derive.js';
 import {
   generateMissingKeys,
@@ -18,7 +20,12 @@ import {
   parseEnvFile,
   formatAddressesOutput,
 } from './env.js';
-import { BCH_KEY_ROLES, EVM_KEY_ROLES, SOL_KEY_ROLES } from './types.js';
+import {
+  BCH_KEY_ROLES,
+  EVM_KEY_ROLES,
+  SOL_KEY_ROLES,
+  TRON_KEY_ROLES,
+} from './types.js';
 
 describe('Key Derivation Vectors & Provenance', () => {
   it('correctly derives BCH plain and token-aware addresses from known Libauth test vector', () => {
@@ -92,6 +99,21 @@ describe('Key Derivation Vectors & Provenance', () => {
       true,
     );
   });
+
+  it('correctly derives Tron address from standard secp256k1 key vector', () => {
+    // Key 1 in anvil/hardhat standard accounts:
+    // PrivKey: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+    // EVM: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+    // Tron Base58Check: TYBNgWfhGuNzdLtjKtxXTfskAhTbMcqbaG
+    const privKey =
+      'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+    expect(isValidTronPrivateKey(privKey)).toBe(true);
+    expect(isValidTronPrivateKey(`0x${privKey}`)).toBe(true);
+    const tronAddress = deriveTronAddress(privKey);
+    expect(tronAddress).toBe('TYBNgWfhGuNzdLtjKtxXTfskAhTbMcqbaG');
+    expect(tronAddress.startsWith('T')).toBe(true);
+    expect(tronAddress.length).toBe(34);
+  });
 });
 
 describe('Key Generation & Storage Safety', () => {
@@ -115,7 +137,10 @@ describe('Key Generation & Storage Safety', () => {
     const res = generateMissingKeys(tempEnvPath);
 
     expect(res.generatedKeys.length).toBe(
-      BCH_KEY_ROLES.length + EVM_KEY_ROLES.length + SOL_KEY_ROLES.length,
+      BCH_KEY_ROLES.length +
+        EVM_KEY_ROLES.length +
+        SOL_KEY_ROLES.length +
+        TRON_KEY_ROLES.length,
     );
     expect(res.skippedKeys.length).toBe(0);
     expect(fs.existsSync(tempEnvPath)).toBe(true);
@@ -141,6 +166,11 @@ describe('Key Generation & Storage Safety', () => {
       expect(val).toBeDefined();
       expect(isValidSolanaKeypair(val!)).toBe(true);
     }
+    for (const role of TRON_KEY_ROLES) {
+      const val = parsed[role];
+      expect(val).toBeDefined();
+      expect(isValidTronPrivateKey(val!)).toBe(true);
+    }
   });
 
   it('never overwrites existing keys on subsequent runs', () => {
@@ -156,7 +186,10 @@ describe('Key Generation & Storage Safety', () => {
 
     expect(res2.generatedKeys.length).toBe(0);
     expect(res2.skippedKeys.length).toBe(
-      BCH_KEY_ROLES.length + EVM_KEY_ROLES.length + SOL_KEY_ROLES.length,
+      BCH_KEY_ROLES.length +
+        EVM_KEY_ROLES.length +
+        SOL_KEY_ROLES.length +
+        TRON_KEY_ROLES.length,
     );
     expect(secondContent).toBe(initialContent);
 
@@ -273,8 +306,23 @@ describe('Key Generation & Storage Safety', () => {
       }
     }
 
+    for (const role of TRON_KEY_ROLES) {
+      const addr = res.addresses.tron[role];
+      expect(addr).toBeDefined();
+      expect(addr).not.toBe('INVALID');
+      if (typeof addr === 'string') {
+        expect(output).toContain(addr);
+        expect(addr.startsWith('T')).toBe(true);
+      }
+    }
+
     // Verify NO secret material is in output
-    for (const role of [...BCH_KEY_ROLES, ...EVM_KEY_ROLES]) {
+    for (const role of [
+      ...BCH_KEY_ROLES,
+      ...EVM_KEY_ROLES,
+      ...SOL_KEY_ROLES,
+      ...TRON_KEY_ROLES,
+    ]) {
       const secret = parsed[role];
       expect(secret).toBeDefined();
       if (secret) {

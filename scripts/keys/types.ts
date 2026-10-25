@@ -23,7 +23,15 @@ export const SOL_KEY_ROLES = [
 
 export type SolKeyRole = (typeof SOL_KEY_ROLES)[number];
 
-export type KeyRole = BchKeyRole | EvmKeyRole | SolKeyRole;
+export const TRON_KEY_ROLES = [
+  'DEPLOYER_TRON_KEY',
+  'SOLVER_TRON_KEY',
+  'USER_TRON_KEY',
+] as const;
+
+export type TronKeyRole = (typeof TRON_KEY_ROLES)[number];
+
+export type KeyRole = BchKeyRole | EvmKeyRole | SolKeyRole | TronKeyRole;
 
 export interface BchAddressInfo {
   plain: string;
@@ -36,4 +44,5 @@ export interface RoleAddresses {
   bch: Record<BchKeyRole, AddressOrStatus<BchAddressInfo>>;
   evm: Record<EvmKeyRole, AddressOrStatus<string>>;
   sol: Record<SolKeyRole, AddressOrStatus<string>>;
+  tron: Record<TronKeyRole, AddressOrStatus<string>>;
 }
