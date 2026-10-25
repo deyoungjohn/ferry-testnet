@@ -121,6 +121,8 @@ Given a list of UTXOs (accepts Fulcrum UTXOs from `blockchain.scripthash.listuns
 
 ## Verification & Tests
 
+Hermetic test rule: Tests must be hermetic; any artifact required by tests must be compiled as part of the test script or checked in (the sequence `pnpm install` then `pnpm test` without an intermediate build step must always succeed).
+
 Run all unit and consensus VM tests:
 
 ```bash

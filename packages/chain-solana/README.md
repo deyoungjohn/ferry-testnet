@@ -31,6 +31,8 @@ Default mints:
 
 ## Testing
 
+Hermetic test rule: Tests must be hermetic; any artifact required by tests must be compiled as part of the test script or checked in (the sequence `pnpm install` then `pnpm test` without an intermediate build step must always succeed).
+
 The test suite is partitioned into two tiers:
 
 1. **Offline default tests** (`pnpm test`):

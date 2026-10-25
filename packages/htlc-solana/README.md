@@ -46,6 +46,8 @@ To enable gas-free recipient swaps on Solana:
 
 ## Testing & Scripts
 
+Hermetic test rule: Tests must be hermetic; any artifact required by tests must be compiled as part of the test script or checked in (the sequence `pnpm install` then `pnpm test` without an intermediate build step must always succeed).
+
 Testing is split into fast offline verification (default) and local validator integration:
 
 - `pnpm test`: Fast offline unit and artifact tests (<1s). Validates IDL consistency, Anchor program ID alignment (`Anchor.toml` and Rust `declare_id!`), PDA derivations, and instruction builder structures with zero network access and no local services.

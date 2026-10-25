@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -16,22 +16,21 @@ import { localhost } from 'viem/chains';
 const ANVIL_PORT = 8547; // reserved Anvil port
 const RPC_URL = `http://127.0.0.1:${ANVIL_PORT}`;
 
+// Hermetic test requirement: ensure forge artifacts exist before loading
+const outDir = resolve(__dirname, '../out');
+const ferryArtifactPath = resolve(outDir, 'FerryHTLC.sol/FerryHTLC.json');
+if (!existsSync(ferryArtifactPath)) {
+  execSync('forge build', { cwd: resolve(__dirname, '..'), stdio: 'pipe' });
+}
+
 // Load compiled artifacts from forge build (standard EVM bytecode for local anvil testing)
-const ferryArtifact = JSON.parse(
-  readFileSync(
-    resolve(__dirname, '../out/FerryHTLC.sol/FerryHTLC.json'),
-    'utf8',
-  ),
-);
+const ferryArtifact = JSON.parse(readFileSync(ferryArtifactPath, 'utf8'));
 const mockTrc20Artifact = JSON.parse(
-  readFileSync(
-    resolve(__dirname, '../out/MockTRC20.sol/MockTRC20.json'),
-    'utf8',
-  ),
+  readFileSync(resolve(outDir, 'MockTRC20.sol/MockTRC20.json'), 'utf8'),
 );
 const mockNoReturnArtifact = JSON.parse(
   readFileSync(
-    resolve(__dirname, '../out/MockNoReturnTRC20.sol/MockNoReturnTRC20.json'),
+    resolve(outDir, 'MockNoReturnTRC20.sol/MockNoReturnTRC20.json'),
     'utf8',
   ),
 );
