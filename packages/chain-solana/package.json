@@ -17,7 +17,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src test",
-    "test": "vitest run --config vitest.config.ts"
+    "test": "vitest run --config vitest.config.ts",
+    "test:validator": "vitest run --config vitest.validator.config.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.32.1",

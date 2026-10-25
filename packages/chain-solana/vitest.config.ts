@@ -10,5 +10,6 @@ export default defineProject({
     root: import.meta.dirname,
     environment: 'node',
     include: ['test/**/*.test.ts'],
+    exclude: ['test/**/*.validator.test.ts', '**/node_modules/**'],
   },
 });

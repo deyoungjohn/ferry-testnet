@@ -38,12 +38,40 @@ import {
 
 const { Program, AnchorProvider } = anchorPkg;
 
+export type SolanaNetwork = 'devnet' | 'mainnet' | 'localnet';
+
+export interface SolanaNetworkConfig {
+  rpcUrl: string;
+  usdcMint: string;
+  usdtMint: string;
+}
+
+export const SOLANA_DEVNET_CONFIG: SolanaNetworkConfig = Object.freeze({
+  rpcUrl: 'https://api.devnet.solana.com',
+  usdcMint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', // Circle Solana devnet USDC
+  usdtMint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // Devnet USDT fallback
+});
+
+export const SOLANA_MAINNET_CONFIG: SolanaNetworkConfig = Object.freeze({
+  rpcUrl: 'https://api.mainnet-beta.solana.com',
+  usdcMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // Circle Solana mainnet USDC
+  usdtMint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // Tether Solana mainnet USDT
+});
+
+export const SOLANA_LOCALNET_CONFIG: SolanaNetworkConfig = Object.freeze({
+  rpcUrl: 'http://127.0.0.1:8899',
+  usdcMint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+  usdtMint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+});
+
 export interface SolanaAdapterConfig {
   connection?: Connection;
   rpcUrl?: string;
+  network?: SolanaNetwork;
   programId?: PublicKey | string;
   usdcMint?: PublicKey | string;
   usdtMint?: PublicKey | string;
+  assets?: readonly CounterAsset[];
   relayerPublicKey?: PublicKey | string;
   payerKeypair?: Keypair;
   confirmations?: number;
@@ -87,25 +115,32 @@ export class SolanaChainAdapter implements ChainAdapter {
   private lockPayerByLockId = new Map<string, PublicKey>();
 
   constructor(config: SolanaAdapterConfig = {}) {
+    const network = config.network ?? 'devnet';
+    const networkDefaults =
+      network === 'mainnet'
+        ? SOLANA_MAINNET_CONFIG
+        : network === 'localnet'
+          ? SOLANA_LOCALNET_CONFIG
+          : SOLANA_DEVNET_CONFIG;
+
     if (config.connection) {
       this.connection = config.connection;
     } else if (config.rpcUrl) {
       this.connection = new Connection(config.rpcUrl, 'confirmed');
     } else {
-      this.connection = new Connection('http://127.0.0.1:8899', 'confirmed');
+      this.connection = new Connection(networkDefaults.rpcUrl, 'confirmed');
     }
 
     this.programId = config.programId
       ? new PublicKey(config.programId)
       : PROGRAM_ID;
 
-    // Devnet / mainnet default USDC & USDT mints
     this.usdcMint = config.usdcMint
       ? new PublicKey(config.usdcMint)
-      : new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+      : new PublicKey(networkDefaults.usdcMint);
     this.usdtMint = config.usdtMint
       ? new PublicKey(config.usdtMint)
-      : new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB');
+      : new PublicKey(networkDefaults.usdtMint);
 
     this.payerKeypair = config.payerKeypair;
     if (config.relayerPublicKey) {
@@ -138,20 +173,24 @@ export class SolanaChainAdapter implements ChainAdapter {
 
     this.program = new Program(FERRY_HTLC_IDL as Idl, provider);
 
-    this.assets = Object.freeze([
-      {
-        symbol: 'USDC',
-        decimals: 6,
-        address: this.usdcMint.toBase58(),
-        permit: false,
-      },
-      {
-        symbol: 'USDT',
-        decimals: 6,
-        address: this.usdtMint.toBase58(),
-        permit: false,
-      },
-    ]);
+    if (config.assets && config.assets.length > 0) {
+      this.assets = Object.freeze([...config.assets]);
+    } else {
+      this.assets = Object.freeze([
+        {
+          symbol: 'USDC',
+          decimals: 6,
+          address: this.usdcMint.toBase58(),
+          permit: false,
+        },
+        {
+          symbol: 'USDT',
+          decimals: 6,
+          address: this.usdtMint.toBase58(),
+          permit: false,
+        },
+      ]);
+    }
   }
 
   lockId(owner: string, hashLock: Hex32): string {
