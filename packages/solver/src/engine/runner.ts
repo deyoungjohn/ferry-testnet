@@ -3,6 +3,8 @@ import {
   deriveHtlcAddresses,
   displayToInternalCategory,
   encodeHtlcParameters,
+  buildLockTransaction,
+  buildRefundTransaction,
 } from '@ferry/htlc-bch';
 import { invariantF, type LockEvent } from '@ferry/core';
 import type { EvmChainAdapter } from '@ferry/chain-evm';
@@ -12,7 +14,7 @@ import type { BchQuorumClient } from '../bch/quorum-client.js';
 import { transition } from '../state-machine/transitions.js';
 import type { SolverOrderRecord, SolverEvent } from '../state-machine/types.js';
 import {
-  buildSolverBchLockTx,
+  deriveBchKeyDetails,
   extractSecretFromClaimUnlock,
 } from '../bch/lock-builder.js';
 
@@ -37,7 +39,7 @@ export class SolverEngine {
     public readonly evmAdapter: EvmChainAdapter,
     public readonly bchClient: BchQuorumClient,
     public readonly solverPrivateKey: `0x${string}`,
-    public readonly solverBchWif?: string,
+    public readonly solverBchWif: string,
     logger?: pino.Logger,
   ) {
     this.logger =
@@ -140,7 +142,7 @@ export class SolverEngine {
     if (event.removed) return;
 
     if (event.type === 'Locked') {
-      const order = this.db.getOrderByHashLock(event.lock.hashLock);
+      const order = this.db.getOrderByLockId(event.lockId);
       if (!order) return;
 
       if (order.status === 'QUOTED') {
@@ -160,14 +162,7 @@ export class SolverEngine {
         });
       }
     } else if (event.type === 'Claimed') {
-      const activeOrders = this.db.listNonTerminalOrders();
-      const order = activeOrders.find(
-        (o) =>
-          this.evmAdapter.lockId(
-            o.terms.userCounterAddress as `0x${string}`,
-            o.terms.hashLock,
-          ) === event.lockId,
-      );
+      const order = this.db.getOrderByLockId(event.lockId);
       if (!order) return;
 
       if (
@@ -181,14 +176,7 @@ export class SolverEngine {
         this.applyEvent(order, { type: 'SWAP_COMPLETE' });
       }
     } else if (event.type === 'Refunded') {
-      const activeOrders = this.db.listNonTerminalOrders();
-      const order = activeOrders.find(
-        (o) =>
-          this.evmAdapter.lockId(
-            o.terms.userCounterAddress as `0x${string}`,
-            o.terms.hashLock,
-          ) === event.lockId,
-      );
+      const order = this.db.getOrderByLockId(event.lockId);
       if (!order) return;
 
       this.applyEvent(order, {
@@ -206,49 +194,59 @@ export class SolverEngine {
       scriptHash,
       'include_tokens',
     );
-    if (utxos.length > 0) {
-      if (order.status === 'SOLVER_LOCK_BROADCAST') {
+
+    // 1. Check if solver lock is seen
+    if (order.status === 'SOLVER_LOCK_BROADCAST' && order.solverLockTxId) {
+      const hasUtxo = utxos.some((u) => u.tx_hash === order.solverLockTxId);
+      if (hasUtxo) {
         this.applyEvent(order, {
           type: 'SOLVER_LOCK_SEEN',
-          txId: utxos[0]!.tx_hash,
+          txId: order.solverLockTxId,
         });
       }
-      return;
     }
 
-    // If no UTXO exists, it was spent or refunded. Inspect history
-    const history = await this.bchClient.getHistory(scriptHash);
-    if (history.length > 1) {
-      // Input 0 was lock tx, input 1 was spend/refund tx
-      const spendEntry = history[history.length - 1]!;
-      const spendTxHex = (await this.bchClient.getTransaction(
-        spendEntry.tx_hash,
-        false,
-      )) as string;
-
-      if (typeof spendTxHex === 'string') {
-        const decoded = decodeTransaction(Buffer.from(spendTxHex, 'hex'));
-        if (typeof decoded !== 'string' && decoded.inputs.length > 0) {
-          const unlocking = decoded.inputs[0]!.unlockingBytecode;
-          const secret = extractSecretFromClaimUnlock(
-            unlocking,
-            order.hashLock,
+    // 2. Check if user claimed the lock (spent UTXO revealing secret in unlocking script)
+    if (
+      order.status === 'SOLVER_LOCK_SEEN' ||
+      order.status === 'SOLVER_LOCK_BROADCAST' ||
+      order.status === 'SECRET_KNOWN'
+    ) {
+      const history = await this.bchClient.getHistory(scriptHash);
+      if (history.length >= 2) {
+        // Find spend transaction (different from solver lock)
+        const spendEntry = history.find(
+          (h) => h.tx_hash !== order.solverLockTxId,
+        );
+        if (spendEntry) {
+          const rawSpend = await this.bchClient.getTransaction(
+            spendEntry.tx_hash,
           );
-          if (secret) {
-            this.applyEvent(order, {
-              type: 'USER_CLAIM_SEEN',
-              txId: spendEntry.tx_hash,
-              secret,
-            });
-            return;
+          const rawHex =
+            typeof rawSpend === 'string'
+              ? rawSpend
+              : (rawSpend as { hex?: string })?.hex;
+          if (rawHex) {
+            const decoded = decodeTransaction(Buffer.from(rawHex, 'hex'));
+            if (typeof decoded !== 'string') {
+              for (const input of decoded.inputs) {
+                const secret = extractSecretFromClaimUnlock(
+                  input.unlockingBytecode,
+                  order.terms.hashLock,
+                );
+                if (secret) {
+                  this.applyEvent(order, {
+                    type: 'USER_CLAIM_SEEN',
+                    txId: spendEntry.tx_hash,
+                    secret,
+                  });
+                  break;
+                }
+              }
+            }
           }
         }
       }
-
-      this.applyEvent(order, {
-        type: 'BCH_DEADLINE_PASSED',
-        refundTxId: spendEntry.tx_hash,
-      });
     }
   }
 
@@ -267,88 +265,59 @@ export class SolverEngine {
   }
 
   async reconcileOrder(order: SolverOrderRecord): Promise<void> {
-    const terms = order.terms;
     const lockId = this.evmAdapter.lockId(
-      terms.userCounterAddress as `0x${string}`,
-      terms.hashLock,
+      order.terms.userCounterAddress as `0x${string}`,
+      order.terms.hashLock,
     );
-
-    // 1. Check EVM lock state
     const evmLock = await this.evmAdapter.getLock(lockId);
-    if (evmLock.status === 'claimed') {
-      // Finding 9: Unexpected combinations land in an explicit needs_attention flag rather than DONE
+
+    // EVM Lock state reconciliation
+    if (evmLock.status === 'locked') {
+      const isFinal = evmLock.lockTx
+        ? await this.evmAdapter.isFinal(evmLock.lockTx, 'safe')
+        : true;
       if (
-        order.status === 'QUOTED' ||
-        order.status === 'USER_LOCK_SEEN' ||
-        order.status === 'USER_LOCK_FINAL'
+        isFinal &&
+        (order.status === 'QUOTED' || order.status === 'USER_LOCK_SEEN')
       ) {
+        this.applyEvent(order, {
+          type: 'USER_LOCK_FINAL',
+          txId: evmLock.lockTx?.txId || order.userLockTxId || '',
+        });
+      } else if (order.status === 'QUOTED') {
+        this.applyEvent(order, {
+          type: 'USER_LOCK_SEEN',
+          txId: evmLock.lockTx?.txId || order.userLockTxId || '',
+        });
+      }
+    } else if (evmLock.status === 'claimed') {
+      if (order.status === 'SOLVER_CLAIM_BROADCAST') {
+        this.applyEvent(order, {
+          type: 'SOLVER_CLAIM_FINAL',
+          txId: evmLock.claimTx.txId,
+        });
+        this.applyEvent(order, { type: 'SWAP_COMPLETE' });
+      } else if (order.status !== 'DONE') {
         this.logger.warn(
           { orderId: order.id, status: order.status },
           'Reconciliation: EVM lock is claimed unexpectedly early; marking needs_attention',
         );
         this.db.markNeedsAttention(
           order.id,
-          `Unexpected EVM claim while order was in state ${order.status}`,
+          'EVM lock claimed in unexpected order state',
         );
-        order.needsAttention = true;
-        return;
-      }
-
-      if (order.status !== 'DONE') {
-        if (evmLock.secret && !order.secret) {
-          this.applyEvent(order, {
-            type: 'USER_CLAIM_SEEN',
-            txId: order.solverClaimTxId || 'reconciled-claim',
-            secret: evmLock.secret,
-          });
-        }
-        this.applyEvent(order, {
-          type: 'SOLVER_CLAIM_FINAL',
-          txId: order.solverClaimTxId || 'reconciled-claim',
-        });
-        this.applyEvent(order, { type: 'SWAP_COMPLETE' });
-        return;
       }
     } else if (evmLock.status === 'refunded') {
       this.applyEvent(order, {
         type: 'BCH_DEADLINE_PASSED',
-        refundTxId: 'reconciled-refund',
+        refundTxId: evmLock.refundTx.txId,
       });
-      return;
-    } else if (evmLock.status === 'locked') {
-      if (order.status === 'QUOTED') {
-        const lockTxId = order.userLockTxId || 'reconciled-user-lock';
-        this.applyEvent(order, {
-          type: 'USER_LOCK_SEEN',
-          txId: lockTxId,
-        });
-      }
-      if (order.status === 'USER_LOCK_SEEN') {
-        const isFinal = await this.evmAdapter.isFinal(
-          {
-            chain: terms.counterChain,
-            txId: order.userLockTxId || 'reconciled-user-lock',
-          },
-          'safe',
-        );
-        if (isFinal) {
-          this.applyEvent(order, {
-            type: 'USER_LOCK_FINAL',
-            txId: order.userLockTxId || 'reconciled-user-lock',
-          });
-        }
-      }
     }
 
-    // 2. Check BCH lock state
-    try {
+    // BCH lock state reconciliation
+    if (order.status !== 'DONE' && order.status !== 'REJECTED') {
       const shHex = await this.ensureBchSubscription(order);
       await this.handleBchNotification(order, shHex);
-    } catch (err) {
-      this.logger.error(
-        { err, orderId: order.id },
-        'Error during BCH lock state reconciliation',
-      );
     }
   }
 
@@ -388,7 +357,20 @@ export class SolverEngine {
       }
 
       // Check Invariant F at counter-lock time t0 (CH-04)
-      const bchTipHeight = this.bchClient.getQuorumStatus().quorumTip || 329000;
+      const quorum = this.bchClient.getQuorumStatus();
+      if (
+        !quorum.isQuorumHealthy ||
+        !quorum.quorumTip ||
+        quorum.quorumTip <= 0
+      ) {
+        this.logger.warn(
+          { orderId: order.id, quorum },
+          'BCH quorum unhealthy or tip unknown at counter-lock time; delaying counter-lock',
+        );
+        return;
+      }
+
+      const bchTipHeight = quorum.quorumTip;
       const timingDecision = invariantF(
         {
           counterDeadline: terms.counterDeadline,
@@ -423,30 +405,91 @@ export class SolverEngine {
         }
       }
 
+      // CRASH RECOVERY & PRE-BROADCAST WRITE-AHEAD:
+      // Build tx first, compute txid and txHex, persist with intent BEFORE broadcasting.
+      // On restart, check chain (transaction.get / HTLC UTXOs) and either adopt existing tx or rebroadcast the SAME hex.
       const existingAction = this.db.getAction(order.id, 'SOLVER_LOCK');
-      if (!existingAction || existingAction.status === 'PENDING') {
-        const startDetect = Date.now();
-        this.db.recordActionIntent(order.id, 'SOLVER_LOCK', {
-          tokenCategory: terms.bchTokenCategory,
-          amount: terms.bchTokenAmount.toString(),
-        });
+      if (existingAction) {
+        let intent: { txid: string; txHex: string };
+        try {
+          intent = JSON.parse(existingAction.intentPayload);
+        } catch {
+          intent = { txid: existingAction.txId || '', txHex: '' };
+        }
 
-        // Broadcast real solver BCH lock transaction
-        const bchTxId = await this.broadcastSolverBchLock(order);
-        this.db.recordActionBroadcast(order.id, 'SOLVER_LOCK', bchTxId);
+        if (intent.txid) {
+          // Check if already on chain or in mempool
+          const shHex = await this.ensureBchSubscription(order);
+          const utxos = await this.bchClient.listUnspent(
+            shHex,
+            'include_tokens',
+          );
+          const isMinedOrSeen = utxos.some((u) => u.tx_hash === intent.txid);
 
-        const latency = Date.now() - startDetect;
-        this.metrics.lastReactionTimeMs = latency;
-        this.metrics.reactionTimesMs.push(latency);
+          if (!isMinedOrSeen && intent.txHex) {
+            try {
+              await this.bchClient.broadcast(intent.txHex);
+            } catch (err: unknown) {
+              this.logger.debug(
+                { err, txid: intent.txid },
+                'Rebroadcast returned error (may already be in mempool)',
+              );
+            }
+          }
 
-        this.applyEvent(order, {
-          type: 'SOLVER_LOCK_BROADCAST',
-          txId: bchTxId,
-        });
-
-        // Ensure we watch the new BCH contract
-        await this.ensureBchSubscription(order);
+          this.db.recordActionBroadcast(order.id, 'SOLVER_LOCK', intent.txid);
+          this.applyEvent(order, {
+            type: 'SOLVER_LOCK_BROADCAST',
+            txId: intent.txid,
+          });
+          await this.ensureBchSubscription(order);
+          return;
+        }
       }
+
+      // If no existing action, build the transaction first
+      const startDetect = Date.now();
+      const built = await this.buildSolverBchLock(order);
+
+      // Persist {txid, txHex} with intent BEFORE broadcasting
+      this.db.recordActionIntent(order.id, 'SOLVER_LOCK', {
+        txid: built.txid,
+        txHex: built.txHex,
+      });
+
+      // Named fault injection hook: crash before broadcast
+      if (process.env.FAULT_CRASH_POINT === 'BEFORE_BCH_LOCK_BROADCAST') {
+        this.logger.warn(
+          { orderId: order.id },
+          'Injected fault: BEFORE_BCH_LOCK_BROADCAST',
+        );
+        process.kill(process.pid, 'SIGKILL');
+      }
+
+      // Broadcast real solver BCH lock transaction
+      await this.bchClient.broadcast(built.txHex);
+
+      // Named fault injection hook: crash after broadcast
+      if (process.env.FAULT_CRASH_POINT === 'AFTER_BCH_LOCK_BROADCAST') {
+        this.logger.warn(
+          { orderId: order.id },
+          'Injected fault: AFTER_BCH_LOCK_BROADCAST',
+        );
+        process.kill(process.pid, 'SIGKILL');
+      }
+
+      this.db.recordActionBroadcast(order.id, 'SOLVER_LOCK', built.txid);
+
+      const latency = Date.now() - startDetect;
+      this.metrics.lastReactionTimeMs = latency;
+      this.metrics.reactionTimesMs.push(latency);
+
+      this.applyEvent(order, {
+        type: 'SOLVER_LOCK_BROADCAST',
+        txId: built.txid,
+      });
+
+      await this.ensureBchSubscription(order);
     }
 
     // USER_CLAIM_SEEN -> SOLVER_CLAIM_BROADCAST
@@ -458,8 +501,17 @@ export class SolverEngine {
           lockId,
         });
 
-        // Pre-broadcast check
+        // Pre-broadcast check on chain state
         const currentLock = await this.evmAdapter.getLock(lockId);
+        if (currentLock.status === 'claimed') {
+          this.applyEvent(order, {
+            type: 'SOLVER_CLAIM_FINAL',
+            txId: currentLock.claimTx.txId,
+          });
+          this.applyEvent(order, { type: 'SWAP_COMPLETE' });
+          return;
+        }
+
         if (currentLock.status === 'locked') {
           const claimTx = await this.evmAdapter.claim(lockId, order.secret);
           this.db.recordActionBroadcast(order.id, 'SOLVER_CLAIM', claimTx.txId);
@@ -490,6 +542,80 @@ export class SolverEngine {
         this.applyEvent(order, { type: 'SWAP_COMPLETE' });
       }
     }
+
+    // SOLVER REFUND: §5.3 abort edge
+    // SOLVER_LOCK_SEEN -> (height >= bchRefundHeight && no claim) -> SOLVER_REFUNDED
+    if (
+      (order.status === 'SOLVER_LOCK_SEEN' ||
+        order.status === 'SOLVER_LOCK_BROADCAST') &&
+      !order.userClaimTxId &&
+      order.solverLockTxId
+    ) {
+      const quorum = this.bchClient.getQuorumStatus();
+      if (
+        quorum.isQuorumHealthy &&
+        quorum.quorumTip &&
+        quorum.quorumTip >= terms.bchRefundHeight
+      ) {
+        const existingRefund = this.db.getAction(order.id, 'SOLVER_REFUND');
+        if (existingRefund) {
+          let intent: { txid: string; txHex: string };
+          try {
+            intent = JSON.parse(existingRefund.intentPayload);
+          } catch {
+            intent = { txid: existingRefund.txId || '', txHex: '' };
+          }
+          if (intent.txid) {
+            this.db.recordActionBroadcast(
+              order.id,
+              'SOLVER_REFUND',
+              intent.txid,
+            );
+            this.applyEvent(order, {
+              type: 'BCH_DEADLINE_PASSED',
+              refundTxId: intent.txid,
+            });
+            return;
+          }
+        }
+
+        this.logger.info(
+          {
+            orderId: order.id,
+            refundHeight: terms.bchRefundHeight,
+            tip: quorum.quorumTip,
+          },
+          'BCH refund height reached without user claim; broadcasting solver BCH refund',
+        );
+
+        const refundResult = buildRefundTransaction({
+          params: encodeHtlcParameters(order.terms),
+          utxo: {
+            txid: order.solverLockTxId,
+            vout: 0,
+            satoshis: order.terms.bchCarrySats,
+          },
+          network: 'chipnet',
+        });
+
+        this.db.recordActionIntent(order.id, 'SOLVER_REFUND', {
+          txid: refundResult.txid,
+          txHex: refundResult.txHex,
+        });
+
+        await this.bchClient.broadcast(refundResult.txHex);
+        this.db.recordActionBroadcast(
+          order.id,
+          'SOLVER_REFUND',
+          refundResult.txid,
+        );
+
+        this.applyEvent(order, {
+          type: 'BCH_DEADLINE_PASSED',
+          refundTxId: refundResult.txid,
+        });
+      }
+    }
   }
 
   applyEvent(order: SolverOrderRecord, event: SolverEvent): void {
@@ -502,31 +628,38 @@ export class SolverEngine {
     this.db.saveOrder(order);
   }
 
-  async broadcastSolverBchLock(order: SolverOrderRecord): Promise<string> {
-    if (this.solverBchWif) {
-      this.logger.info(
-        { orderId: order.id },
-        'Building and broadcasting real BCH lock transaction',
-      );
-      const built = await buildSolverBchLockTx({
-        wif: this.solverBchWif,
-        terms: order.terms,
-        bchClient: this.bchClient,
-      });
+  async buildSolverBchLock(
+    order: SolverOrderRecord,
+  ): Promise<{ txid: string; txHex: string }> {
+    this.logger.info(
+      { orderId: order.id },
+      'Building real BCH lock transaction with @ferry/htlc-bch buildLockTransaction',
+    );
 
-      const broadcastTxid = await this.bchClient.broadcast(built.txHex);
-      this.logger.info(
-        { orderId: order.id, txid: broadcastTxid },
-        'Real BCH lock broadcast successfully',
-      );
-      return broadcastTxid;
+    const solverKeys = await deriveBchKeyDetails(this.solverBchWif);
+    const utxos = await this.bchClient.listUnspent(
+      solverKeys.scriptHash,
+      'include_tokens',
+    );
+
+    // Explicit bchCarrySats from order terms
+    const result = buildLockTransaction({
+      params: order.terms,
+      utxos,
+      changeAddress: solverKeys.lockingBytecodeHex,
+      tokenChangeAddress: solverKeys.lockingBytecodeHex,
+      bchCarrySats: order.terms.bchCarrySats,
+      wif: this.solverBchWif,
+      network: 'chipnet',
+    });
+
+    if (!result.signed) {
+      throw new Error('Failed to sign solver BCH lock transaction');
     }
 
-    // If no WIF provided (e.g. testing with simulated chain adapter), broadcast simulated tx via bchClient
-    const txId =
-      order.solverLockTxId ||
-      `0x${Buffer.from(`bch-lock-${order.id}-${Date.now()}`).toString('hex')}`;
-    await this.bchClient.broadcast(txId);
-    return txId;
+    return {
+      txid: result.signed.txid,
+      txHex: result.signed.txHex,
+    };
   }
 }

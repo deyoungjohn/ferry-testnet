@@ -78,6 +78,11 @@ async function main(): Promise<void> {
     'Connected to BCH Fulcrum quorum',
   );
 
+  if (!config.solverBchWif) {
+    logger.error('SOLVER_BCH_WIF is required to run the solver daemon');
+    process.exit(1);
+  }
+
   // 5. Initialize Engine
   const engine = new SolverEngine(
     db,

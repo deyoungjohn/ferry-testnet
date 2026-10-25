@@ -73,8 +73,26 @@ Run test suite:
 pnpm --filter @ferry/solver test
 ```
 
+Run live Chipnet/Base Sepolia scripts (requires `.env.local` keys and funded balances):
+
+```bash
+# Real 4-tx swap against live networks
+pnpm --filter @ferry/solver live:swap
+
+# 10-swap reaction latency benchmark across live Fulcrum
+pnpm --filter @ferry/solver live:latency
+```
+
 Build distribution bundle:
 
 ```bash
 pnpm --filter @ferry/solver build
 ```
+
+## Hardening & Safety Guarantees
+
+- **Crash Recovery & Single-UTXO Invariant:** Before broadcasting any BCH counter-lock, the solver engine pre-computes the signed transaction hex and txid and persists a write-ahead intent record in SQLite (`PENDING`). If the daemon crashes or is killed via `SIGKILL` before or after broadcast, restart reconciliation checks on-chain history: if the lock was already mined, it adopts it without broadcasting; if not yet seen, it rebroadcasts the identical pre-signed hex, ensuring exactly one lock UTXO is ever created on-chain.
+- **Order Lookup by Lock ID:** Orders are indexed and looked up by composite EVM lock id (`keccak256(owner, hashLock)`). An SQLite unique constraint on `(user_counter_address, hash_lock)` prevents duplicate orders or quote collision between users sharing a hashLock.
+- **Solver BCH Refund:** Implements the §5.3 abort edge: if a user locks on EVM and solver locks on BCH, but the user abandons without claiming by `bchRefundHeight`, the solver automatically builds and broadcasts a covenant refund transaction via `@ferry/htlc-bch` `buildRefundTransaction`.
+- **Healthy Quorum Tip Requirement:** The solver never uses hardcoded block heights. If the Fulcrum quorum is unhealthy or the tip is unknown, the engine refuses counter-locking (stays in `USER_LOCK_FINAL`) and API returns 503 on quote requests.
+

@@ -244,3 +244,13 @@ Lightweight decision records (template below). Spike answers (S-01…S-14, Q-A�
 - **Revisit if:** Token-2022 confidential transfers or custom transfer hooks are required in future phases.
 
 > Note (2026-10-27): the S-09 Solana decision was submitted as D-A3-003, a duplicate of the Fulcrum latency decision; renumbered D-A3-004. References to "D-A3-003" in the Solana PR text mean D-A3-004.
+### D-A2-007 · Crash recovery with pre-computed txid/hex and strict lockId DB uniqueness
+- **Decision:** Solver engine persists `{ txid, txHex }` intent into SQLite ahead of broadcasting any BCH counter-lock (`PENDING`). On crash or restart during forward swap execution, the engine inspects the action intent: if already broadcast on-chain, it adopts the existing lock without re-broadcasting; if not yet mined, it rebroadcasts the exact identical signed `txHex` rather than generating a new transaction. Additionally, order lookups in the solver database use composite EVM lock id (`keccak256(owner, hashLock)`), enforcing an SQLite unique constraint on `(user_counter_address, hash_lock)`.
+- **Evidence:** Tested with real child process SIGKILL in `test/chaos.test.ts`:
+  - `CH-01b` (crash point `BEFORE_BCH_LOCK_BROADCAST`): Process killed immediately after persisting intent; upon restart, broadcasts exactly once and creates exactly one lock UTXO on fake chain.
+  - `CH-01c` (crash point `AFTER_BCH_LOCK_BROADCAST`): Process killed immediately after broadcast; upon restart, detects existing lock, adopts it, and performs zero duplicate broadcasts.
+  - `db-uniqueness.test.ts`: Two distinct users sharing the same hashLock both succeed with distinct lockIds. A single user attempting to create a second quote or order for the same `(userCounterAddress, hashLock)` throws an SQLite unique constraint error and is rejected with HTTP 400.
+- **Consequence for rebuild:** Guarantees zero duplicate solver locks and eliminates orphaned counter-lock UTXOs across crashes. Prevents hash collision and order hijack across multiple users.
+- **Revisit if:** Multichain or dynamic nonce parameters are added to EVM lock ids.
+
+

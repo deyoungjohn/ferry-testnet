@@ -15,6 +15,7 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
   const solverEvmKey =
     '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as const;
   const solverAddress = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8' as const;
+  const sampleWif = 'cPJEAQPn5NYgtNy9HXR1q2q6vw4EghTgjscBFFseT4UT9gbpoDY9';
 
   beforeEach(() => {
     tempDbPath = path.join(
@@ -54,7 +55,7 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
         '0x76a914444444444444444444444444444444444444444488ac',
       solverCounterAddress: solverAddress,
       solverBchLockingBytecode:
-        '0x76a914111111111111111111111111111111111111111188ac',
+        '0x76a9143bc28d6d92d9073fb5e3adf481795eaf446bceed88ac',
       hashLock: `0x${'bb'.repeat(32)}`,
       counterDeadline: Math.floor(Date.now() / 1000) + 86400,
       bchRefundHeight: 330036,
@@ -168,20 +169,37 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
           isQuorumHealthy: true,
           ageSeconds: 5,
         }),
-        listUnspent: async () =>
-          state === 'SOLVER_LOCK_BROADCAST'
-            ? [
-                {
-                  tx_hash: '0xsolver-lock',
-                  tx_pos: 0,
-                  value: 3000,
-                  height: 330001,
-                },
-              ]
-            : [],
+        listUnspent: async () => {
+          if (state === 'SOLVER_LOCK_BROADCAST') {
+            return [
+              {
+                tx_hash: '0xsolver-lock',
+                tx_pos: 0,
+                value: 3000,
+                height: 330001,
+              },
+            ];
+          }
+          return [
+            {
+              tx_hash: '11'.repeat(32),
+              tx_pos: 0,
+              value: 20000,
+              token_data: {
+                category: 'aa'.repeat(32),
+                amount: '10000000',
+              },
+            },
+            {
+              tx_hash: '22'.repeat(32),
+              tx_pos: 0,
+              value: 50000,
+            },
+          ];
+        },
         getHistory: async () => [],
-        broadcast: async () => {
-          recordedBchBroadcasts.push('0xnew-bch-lock');
+        broadcast: async (hex: string) => {
+          recordedBchBroadcasts.push(hex);
           return '0xnew-bch-lock';
         },
         subscribeScriptHash: async () => {},
@@ -193,6 +211,7 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
         consistentEvm,
         consistentBch,
         solverEvmKey,
+        sampleWif,
       );
 
       // Reconcile and process step
@@ -297,7 +316,13 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
       isFinal: async () => true,
     } as unknown as EvmChainAdapter;
 
-    const engine = new SolverEngine(db, fakeEvm, fakeBch, solverEvmKey);
+    const engine = new SolverEngine(
+      db,
+      fakeEvm,
+      fakeBch,
+      solverEvmKey,
+      sampleWif,
+    );
     await engine.step();
 
     const order = db.getOrder(orderId)!;
@@ -355,7 +380,13 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
       isFinal: async () => true,
     } as unknown as EvmChainAdapter;
 
-    const engine = new SolverEngine(db, fakeEvm, fakeBch, solverEvmKey);
+    const engine = new SolverEngine(
+      db,
+      fakeEvm,
+      fakeBch,
+      solverEvmKey,
+      sampleWif,
+    );
     await engine.step();
 
     const order = db.getOrder(orderId)!;
@@ -404,7 +435,13 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
       unsubscribeScriptHash: () => {},
     } as unknown as BchQuorumClient;
 
-    const engine = new SolverEngine(db, fakeEvm, fakeBch, solverEvmKey);
+    const engine = new SolverEngine(
+      db,
+      fakeEvm,
+      fakeBch,
+      solverEvmKey,
+      sampleWif,
+    );
 
     // Initial check: reorged out / unconfirmed
     await engine.reconcileOrder(db.getOrder(orderId)!);
@@ -456,7 +493,13 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
       unsubscribeScriptHash: () => {},
     } as unknown as BchQuorumClient;
 
-    const engine = new SolverEngine(db, fakeEvm, fakeBch, solverEvmKey);
+    const engine = new SolverEngine(
+      db,
+      fakeEvm,
+      fakeBch,
+      solverEvmKey,
+      sampleWif,
+    );
     await engine.reconcileOrder(db.getOrder(orderId)!);
 
     const order = db.getOrder(orderId)!;
@@ -465,6 +508,344 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
 
     const attentionList = db.listNeedsAttentionOrders();
     expect(attentionList.some((o) => o.id === orderId)).toBe(true);
+
+    engine.stop();
+  });
+
+  it('CH-01b: SIGKILL fault injection BEFORE_BCH_LOCK_BROADCAST: restart broadcasts exactly once and creates exactly one lock UTXO', async () => {
+    db.db.exec('DELETE FROM orders; DELETE FROM actions;');
+    const orderId = `0x${'aa'.repeat(32)}`;
+    const dummyTerms = getDummyTerms();
+    db.saveOrder({
+      id: orderId,
+      direction: 'COUNTER_TO_BCH',
+      status: 'USER_LOCK_FINAL',
+      terms: dummyTerms,
+      hashLock: dummyTerms.hashLock,
+      userLockTxId: '0xuser-lock',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    const broadcastLog = `${tempDbPath}-broadcasts-b.log`;
+    if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
+
+    const child = spawn(
+      'pnpm',
+      [
+        'exec',
+        'tsx',
+        'test/helpers/chaos-child.ts',
+        `--dbPath=${tempDbPath}`,
+        `--orderId=${orderId}`,
+        '--runStep',
+        `--broadcastLogPath=${broadcastLog}`,
+      ],
+      {
+        stdio: 'pipe',
+        env: {
+          ...process.env,
+          FAULT_CRASH_POINT: 'BEFORE_BCH_LOCK_BROADCAST',
+        },
+      },
+    );
+
+    await new Promise<void>((resolve) => {
+      child.on('close', () => resolve());
+    });
+
+    // 1. Verify child died before broadcast
+    const recordedBefore = fs.existsSync(broadcastLog)
+      ? fs.readFileSync(broadcastLog, 'utf8').trim().split('\n').filter(Boolean)
+      : [];
+    expect(recordedBefore.length).toBe(0);
+
+    // 2. Verify intent was persisted with { txid, txHex } ahead of broadcast
+    const action = db.getAction(orderId, 'SOLVER_LOCK')!;
+    expect(action).not.toBeNull();
+    expect(action.status).toBe('PENDING');
+    const intent = JSON.parse(action.intentPayload);
+    expect(intent.txid).toBeDefined();
+    expect(intent.txHex).toBeDefined();
+
+    // 3. Restart engine on same DB
+    const recordedRestartBroadcasts: string[] = [];
+    const restartBch = {
+      getQuorumStatus: () => ({
+        quorumTip: 330000,
+        tips: {},
+        isQuorumHealthy: true,
+        ageSeconds: 5,
+      }),
+      listUnspent: async () => [],
+      getHistory: async () => [],
+      broadcast: async (hex: string) => {
+        recordedRestartBroadcasts.push(hex);
+        return intent.txid;
+      },
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: () => {},
+    } as unknown as BchQuorumClient;
+
+    const restartEvm = {
+      address: solverAddress,
+      lockId: () => dummyTerms.hashLock,
+      getLock: async () => ({ status: 'locked' as const }),
+      isFinal: async () => true,
+    } as unknown as EvmChainAdapter;
+
+    const restartEngine = new SolverEngine(
+      db,
+      restartEvm,
+      restartBch,
+      solverEvmKey,
+      sampleWif,
+    );
+
+    await restartEngine.step();
+
+    // Exactly one broadcast happened across the lifecycle!
+    expect(recordedRestartBroadcasts.length).toBe(1);
+    const updated = db.getOrder(orderId)!;
+    expect(updated.status).toBe('SOLVER_LOCK_BROADCAST');
+    expect(updated.solverLockTxId).toBe(intent.txid);
+
+    restartEngine.stop();
+    if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
+  }, 20000);
+
+  it('CH-01c: SIGKILL fault injection AFTER_BCH_LOCK_BROADCAST: restart adopts existing lock without duplicate broadcast', async () => {
+    db.db.exec('DELETE FROM orders; DELETE FROM actions;');
+    const orderId = `0x${'bb'.repeat(32)}`;
+    const dummyTerms = getDummyTerms();
+    db.saveOrder({
+      id: orderId,
+      direction: 'COUNTER_TO_BCH',
+      status: 'USER_LOCK_FINAL',
+      terms: dummyTerms,
+      hashLock: dummyTerms.hashLock,
+      userLockTxId: '0xuser-lock',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    const broadcastLog = `${tempDbPath}-broadcasts-c.log`;
+    if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
+
+    const child = spawn(
+      'pnpm',
+      [
+        'exec',
+        'tsx',
+        'test/helpers/chaos-child.ts',
+        `--dbPath=${tempDbPath}`,
+        `--orderId=${orderId}`,
+        '--runStep',
+        `--broadcastLogPath=${broadcastLog}`,
+      ],
+      {
+        stdio: 'pipe',
+        env: {
+          ...process.env,
+          FAULT_CRASH_POINT: 'AFTER_BCH_LOCK_BROADCAST',
+        },
+      },
+    );
+
+    await new Promise<void>((resolve) => {
+      child.on('close', () => resolve());
+    });
+
+    // 1. Verify broadcast happened before crash
+    const recordedInChild = fs.existsSync(broadcastLog)
+      ? fs.readFileSync(broadcastLog, 'utf8').trim().split('\n').filter(Boolean)
+      : [];
+    expect(recordedInChild.length).toBe(1);
+
+    // 2. Action is still PENDING because process was killed before recording broadcast
+    const action = db.getAction(orderId, 'SOLVER_LOCK')!;
+    expect(action).not.toBeNull();
+    expect(action.status).toBe('PENDING');
+    const intent = JSON.parse(action.intentPayload);
+
+    // 3. Restart engine on same DB, simulating chain that already has the broadcast UTXO
+    const recordedRestartBroadcasts: string[] = [];
+    const restartBch = {
+      getQuorumStatus: () => ({
+        quorumTip: 330000,
+        tips: {},
+        isQuorumHealthy: true,
+        ageSeconds: 5,
+      }),
+      listUnspent: async () => [
+        {
+          tx_hash: intent.txid,
+          tx_pos: 0,
+          value: 3000,
+          height: 330001,
+        },
+      ],
+      getHistory: async () => [{ tx_hash: intent.txid, height: 330001 }],
+      broadcast: async (hex: string) => {
+        recordedRestartBroadcasts.push(hex);
+        return intent.txid;
+      },
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: () => {},
+    } as unknown as BchQuorumClient;
+
+    const restartEvm = {
+      address: solverAddress,
+      lockId: () => dummyTerms.hashLock,
+      getLock: async () => ({ status: 'locked' as const }),
+      isFinal: async () => true,
+    } as unknown as EvmChainAdapter;
+
+    const restartEngine = new SolverEngine(
+      db,
+      restartEvm,
+      restartBch,
+      solverEvmKey,
+      sampleWif,
+    );
+
+    await restartEngine.step();
+
+    // Zero duplicate broadcasts from restart! It adopted the existing on-chain tx!
+    expect(recordedRestartBroadcasts.length).toBe(0);
+    const updated = db.getOrder(orderId)!;
+    expect(updated.status).toBe('SOLVER_LOCK_BROADCAST');
+    expect(updated.solverLockTxId).toBe(intent.txid);
+
+    restartEngine.stop();
+    if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
+  }, 20000);
+
+  it('E2E-06 forward half: user abandons after solver BCH lock -> solver refunds at bchRefundHeight', async () => {
+    db.db.exec('DELETE FROM orders; DELETE FROM actions;');
+    const orderId = `0x${'cc'.repeat(32)}`;
+    const refundHeight = 330036;
+    const dummyTerms = getDummyTerms({ bchRefundHeight: refundHeight });
+
+    db.saveOrder({
+      id: orderId,
+      direction: 'COUNTER_TO_BCH',
+      status: 'SOLVER_LOCK_SEEN',
+      terms: dummyTerms,
+      hashLock: dummyTerms.hashLock,
+      userLockTxId: '0xuser-evm-lock',
+      solverLockTxId: '11'.repeat(32),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    const recordedRefundBroadcasts: string[] = [];
+    let currentBchTip = 330000;
+
+    const fakeBch = {
+      getQuorumStatus: () => ({
+        quorumTip: currentBchTip,
+        tips: {},
+        isQuorumHealthy: true,
+        ageSeconds: 5,
+      }),
+      listUnspent: async () => [],
+      getHistory: async () => [],
+      broadcast: async (hex: string) => {
+        recordedRefundBroadcasts.push(hex);
+        return '0xsolver-refund-tx';
+      },
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: () => {},
+    } as unknown as BchQuorumClient;
+
+    const fakeEvm = {
+      address: solverAddress,
+      lockId: () => dummyTerms.hashLock,
+      getLock: async () => ({ status: 'locked' as const }),
+      isFinal: async () => true,
+    } as unknown as EvmChainAdapter;
+
+    const engine = new SolverEngine(
+      db,
+      fakeEvm,
+      fakeBch,
+      solverEvmKey,
+      sampleWif,
+    );
+
+    // 1. Before refund height (tip 330000 < 330036), solver does NOT refund
+    await engine.step();
+    expect(db.getOrder(orderId)!.status).toBe('SOLVER_LOCK_SEEN');
+    expect(recordedRefundBroadcasts.length).toBe(0);
+
+    // 2. Advance tip to refund height (tip 330036 >= 330036)
+    currentBchTip = refundHeight;
+    await engine.step();
+
+    // Solver builds and broadcasts refund transaction!
+    expect(recordedRefundBroadcasts.length).toBe(1);
+    const refundedOrder = db.getOrder(orderId)!;
+    expect(refundedOrder.status).toBe('SOLVER_REFUNDED');
+    expect(refundedOrder.solverRefundTxId).toBeDefined();
+    expect(refundedOrder.solverRefundTxId).toHaveLength(64);
+
+    engine.stop();
+  });
+
+  it('Hard-coded tip fallback removal: Unhealthy or unknown quorum tip delays counter-lock without hard-coded fallback', async () => {
+    db.db.exec('DELETE FROM orders; DELETE FROM actions;');
+    const orderId = `0x${'dd'.repeat(32)}`;
+    const dummyTerms = getDummyTerms();
+
+    db.saveOrder({
+      id: orderId,
+      direction: 'COUNTER_TO_BCH',
+      status: 'USER_LOCK_FINAL',
+      terms: dummyTerms,
+      hashLock: dummyTerms.hashLock,
+      userLockTxId: '0xuser-lock',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    let broadcastAttempted = false;
+    const unhealthyBch = {
+      getQuorumStatus: () => ({
+        quorumTip: 0, // Unknown tip!
+        tips: {},
+        isQuorumHealthy: false, // Unhealthy!
+        ageSeconds: 9999,
+      }),
+      listUnspent: async () => [],
+      getHistory: async () => [],
+      broadcast: async () => {
+        broadcastAttempted = true;
+        return '0xtx';
+      },
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: () => {},
+    } as unknown as BchQuorumClient;
+
+    const fakeEvm = {
+      address: solverAddress,
+      lockId: () => dummyTerms.hashLock,
+      getLock: async () => ({ status: 'locked' as const }),
+      isFinal: async () => true,
+    } as unknown as EvmChainAdapter;
+
+    const engine = new SolverEngine(
+      db,
+      fakeEvm,
+      unhealthyBch,
+      solverEvmKey,
+      sampleWif,
+    );
+    await engine.step();
+
+    // Must NOT broadcast with a dummy tip like 329000; must stay in USER_LOCK_FINAL
+    expect(broadcastAttempted).toBe(false);
+    expect(db.getOrder(orderId)!.status).toBe('USER_LOCK_FINAL');
 
     engine.stop();
   });

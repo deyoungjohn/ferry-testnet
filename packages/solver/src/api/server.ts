@@ -105,12 +105,31 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       });
     }
 
-    // Check tip ages
+    // Check tip ages and quorum health
     const quorum = bchClient.getQuorumStatus();
-    if (quorum.ageSeconds > config.tipMaxAgeBchSeconds) {
+    if (
+      !quorum.isQuorumHealthy ||
+      !quorum.quorumTip ||
+      quorum.quorumTip <= 0 ||
+      quorum.ageSeconds > config.tipMaxAgeBchSeconds
+    ) {
       return reply.status(503).send({
-        code: 'BCH_TIP_STALE',
-        message: 'BCH tip is stale; quoting disabled',
+        code: 'BCH_TIP_UNHEALTHY',
+        message:
+          'BCH quorum is unhealthy or tip is unknown/stale; quoting disabled',
+      });
+    }
+
+    // Check uniqueness constraint on (userCounterAddress, hashLock)
+    const existingOrder = db.getOrderByUserAndHashLock(
+      request.userCounterAddress,
+      request.hashLock,
+    );
+    if (existingOrder) {
+      return reply.status(400).send({
+        code: 'DUPLICATE_ORDER',
+        message:
+          'An order for this user counter address and hashLock already exists',
       });
     }
 
@@ -123,12 +142,12 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     const now = Math.floor(Date.now() / 1000);
     const quoteExpiry = now + 120; // 2 minutes
     const counterDeadline = now + 86400; // 24 hours
-    const bchRefundHeight = (quorum.quorumTip || 329000) + 36;
+    const bchRefundHeight = quorum.quorumTip + 36;
 
     // Invariant F check
     const timingDecision = invariantF(
       { counterDeadline, bchRefundHeight },
-      { unixSeconds: now, bchTipHeight: quorum.quorumTip || 329000 },
+      { unixSeconds: now, bchTipHeight: quorum.quorumTip },
     );
     if (!timingDecision.allowed) {
       return reply.status(400).send({

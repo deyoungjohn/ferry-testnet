@@ -74,7 +74,14 @@ describe('Solver API contracts & Secret Privacy Rule', () => {
       estimateRelayCostUsd: async () => 0.002,
     } as unknown as EvmChainAdapter;
 
-    engine = new SolverEngine(db, fakeEvmAdapter, fakeBchClient, solverEvmKey);
+    const sampleWif = 'cPJEAQPn5NYgtNy9HXR1q2q6vw4EghTgjscBFFseT4UT9gbpoDY9';
+    engine = new SolverEngine(
+      db,
+      fakeEvmAdapter,
+      fakeBchClient,
+      solverEvmKey,
+      sampleWif,
+    );
 
     const config = SolverConfigSchema.parse({
       solverEvmPrivateKey: solverEvmKey,

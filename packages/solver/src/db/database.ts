@@ -1,7 +1,7 @@
 import DatabaseConstructor, {
   type Database as DatabaseType,
 } from 'better-sqlite3';
-import type { OrderTerms } from '@ferry/core';
+import { evmLockId, type OrderTerms } from '@ferry/core';
 import type {
   SolverOrderRecord,
   ForwardOrderStatus,
@@ -35,6 +35,8 @@ export class SolverDatabase {
         id TEXT PRIMARY KEY,
         direction TEXT NOT NULL,
         status TEXT NOT NULL,
+        user_counter_address TEXT NOT NULL,
+        lock_id TEXT NOT NULL,
         terms_json TEXT NOT NULL,
         hash_lock TEXT NOT NULL,
         secret TEXT,
@@ -47,7 +49,8 @@ export class SolverDatabase {
         needs_attention INTEGER NOT NULL DEFAULT 0,
         rejection_reason TEXT,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        UNIQUE (user_counter_address, hash_lock)
       );
 
       CREATE TABLE IF NOT EXISTS actions (
@@ -62,18 +65,25 @@ export class SolverDatabase {
       );
 
       CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+      CREATE INDEX IF NOT EXISTS idx_orders_lock_id ON orders(lock_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_user_hashlock ON orders(user_counter_address, hash_lock);
       CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status);
     `);
   }
 
   saveOrder(order: SolverOrderRecord): void {
+    const lockId = evmLockId(
+      order.terms.userCounterAddress,
+      order.hashLock,
+    ).toLowerCase();
+
     const stmt = this.db.prepare(`
       INSERT INTO orders (
-        id, direction, status, terms_json, hash_lock, secret, secret_source,
+        id, direction, status, user_counter_address, lock_id, terms_json, hash_lock, secret, secret_source,
         user_lock_txid, solver_lock_txid, user_claim_txid, solver_claim_txid,
         solver_refund_txid, needs_attention, rejection_reason, created_at, updated_at
       ) VALUES (
-        @id, @direction, @status, @terms_json, @hash_lock, @secret, @secret_source,
+        @id, @direction, @status, @user_counter_address, @lock_id, @terms_json, @hash_lock, @secret, @secret_source,
         @user_lock_txid, @solver_lock_txid, @user_claim_txid, @solver_claim_txid,
         @solver_refund_txid, @needs_attention, @rejection_reason, @created_at, @updated_at
       )
@@ -95,10 +105,12 @@ export class SolverDatabase {
       id: order.id,
       direction: order.direction,
       status: order.status,
+      user_counter_address: order.terms.userCounterAddress.toLowerCase(),
+      lock_id: lockId,
       terms_json: JSON.stringify(order.terms, (_, v) =>
         typeof v === 'bigint' ? v.toString() : v,
       ),
-      hash_lock: order.hashLock,
+      hash_lock: order.hashLock.toLowerCase(),
       secret: order.secret ?? null,
       secret_source: order.secretSource ?? null,
       user_lock_txid: order.userLockTxId ?? null,
@@ -120,12 +132,27 @@ export class SolverDatabase {
     return this.mapOrderRow(row);
   }
 
-  getOrderByHashLock(hashLock: string): SolverOrderRecord | null {
-    const cleanHash = hashLock.toLowerCase();
+  getOrderByLockId(lockId: string): SolverOrderRecord | null {
+    const cleanId = lockId.toLowerCase();
     const stmt = this.db.prepare(
-      'SELECT * FROM orders WHERE lower(hash_lock) = lower(?) LIMIT 1',
+      'SELECT * FROM orders WHERE lower(lock_id) = lower(?) LIMIT 1',
     );
-    const row = stmt.get(cleanHash) as Record<string, unknown> | undefined;
+    const row = stmt.get(cleanId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return this.mapOrderRow(row);
+  }
+
+  getOrderByUserAndHashLock(
+    userCounterAddress: string,
+    hashLock: string,
+  ): SolverOrderRecord | null {
+    const stmt = this.db.prepare(
+      'SELECT * FROM orders WHERE lower(user_counter_address) = lower(?) AND lower(hash_lock) = lower(?) LIMIT 1',
+    );
+    const row = stmt.get(
+      userCounterAddress.toLowerCase(),
+      hashLock.toLowerCase(),
+    ) as Record<string, unknown> | undefined;
     if (!row) return null;
     return this.mapOrderRow(row);
   }
