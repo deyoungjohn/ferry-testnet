@@ -1,18 +1,36 @@
 import {
+  CancelPayLinkRequestSchema,
   checkLimits,
+  CreatePayLinkRequestSchema,
+  ListPayLinksQuerySchema,
   orderId as computeOrderId,
   parseOrderTerms,
+  PayLinkQuoteRequestSchema,
   quoteExactIn,
+  quoteExactOut,
   QuoteRequestSchema,
   QuoteResponseSchema,
+  type CancelPayLinkRequest,
+  type CreatePayLinkRequest,
   type Direction,
   type Hex32,
+  type ListPayLinksQuery,
   type OrderTerms,
+  type PayLink,
+  type PayLinkQuoteRequest,
   type QuoteRequest,
 } from '@ferry/core';
 import { keccak256, sha256, toBytes, type Address } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { parseBchAddress } from '../bch/address';
+import {
+  createLinkId,
+  MOCK_EXPIRED_LINK_ID,
+  MOCK_PAY_LINK_ID,
+  MOCK_RESERVED_LINK_ID,
+  verifyPayLinkSignature,
+  verifyPayLinksSignature,
+} from '../paylink/link';
 import {
   BCH_CARRY_SATS,
   BCH_MAX_FEE_SATS,
@@ -23,6 +41,7 @@ import {
   MAX_SWAP_USD_MICROS,
   MIN_SWAP_USD_MICROS,
   MOCK_BCH_SOLVER_ADDRESS,
+  MOCK_BCH_USER_ADDRESS,
   PUSD_CATEGORY,
   PUSD_DECIMALS,
   QUOTE_TTL_S,
@@ -57,6 +76,10 @@ if (
 const solverBchResult = parseBchAddress(MOCK_BCH_SOLVER_ADDRESS);
 if (!solverBchResult.ok) throw new Error(solverBchResult.error);
 const solverBch = solverBchResult.value;
+
+const userBchResult = parseBchAddress(MOCK_BCH_USER_ADDRESS);
+if (!userBchResult.ok) throw new Error(userBchResult.error);
+const userBch = userBchResult.value;
 
 const FORWARD_PATH: readonly OrderStatus[] = [
   'USER_LOCK_SEEN',
@@ -99,10 +122,13 @@ interface MockOrder {
   transactions: OrderTransaction[];
 }
 
+type MutablePayLink = { -readonly [K in keyof PayLink]: PayLink[K] };
+
 export interface MockSolverOptions {
   readonly scenario?: 'happy' | 'refund';
   readonly direction?: Direction;
   readonly bchTipHeight?: number;
+  readonly linkIdFactory?: () => string;
 }
 
 function transaction(
@@ -139,14 +165,94 @@ function pathFor(order: MockOrder): readonly OrderStatus[] {
 
 export class MockSolverClient implements SolverClient {
   readonly #orders = new Map<string, MockOrder>();
+  readonly #links = new Map<string, MutablePayLink>();
+  readonly #linkOrders = new Map<string, string>();
   readonly #scenario: 'happy' | 'refund';
   readonly #direction: Direction;
   readonly #bchTipHeight: number;
+  readonly #linkIdFactory: () => string;
 
   constructor(options: MockSolverOptions = {}) {
     this.#scenario = options.scenario ?? 'happy';
     this.#direction = options.direction ?? 'COUNTER_TO_BCH';
     this.#bchTipHeight = options.bchTipHeight ?? 329_315;
+    this.#linkIdFactory = options.linkIdFactory ?? createLinkId;
+    this.#seedLinks();
+  }
+
+  #seedLinks(): void {
+    const now = Math.floor(Date.now() / 1000);
+    const base = {
+      recipientCashaddr: userBch.address,
+      recipientLockingBytecode: userBch.lockingBytecode,
+      token: 'PUSD' as const,
+      verified: true,
+      createdAt: now,
+    };
+    this.#links.set(MOCK_PAY_LINK_ID, {
+      ...base,
+      id: MOCK_PAY_LINK_ID,
+      kind: 'open',
+      minAmountOut: 100n,
+      memo: 'Coffee and a tip',
+      status: 'open',
+    });
+    this.#links.set(MOCK_RESERVED_LINK_ID, {
+      ...base,
+      id: MOCK_RESERVED_LINK_ID,
+      kind: 'invoice',
+      amountOut: 4_000n,
+      memo: 'Kitchen order #1042',
+      status: 'reserved',
+      expiresAt: now + 86_400,
+    });
+    this.#links.set(MOCK_EXPIRED_LINK_ID, {
+      ...base,
+      id: MOCK_EXPIRED_LINK_ID,
+      kind: 'invoice',
+      amountOut: 2_000n,
+      memo: 'Expired invoice',
+      status: 'open',
+      expiresAt: now - 60,
+    });
+  }
+
+  #expire(link: MutablePayLink): void {
+    if (
+      link.expiresAt !== undefined &&
+      link.expiresAt <= Math.floor(Date.now() / 1000) &&
+      (link.status === 'open' || link.status === 'reserved')
+    ) {
+      link.status = 'expired';
+    }
+  }
+
+  #link(id: string): MutablePayLink {
+    const link = this.#links.get(id);
+    if (!link) throw new Error('LINK_NOT_FOUND: Pay link not found');
+    this.#expire(link);
+    return link;
+  }
+
+  #cloneLink(link: MutablePayLink): PayLink {
+    return { ...link };
+  }
+
+  #syncLink(order: MockOrder): void {
+    const linkId = this.#linkOrders.get(order.quote.orderId);
+    if (!linkId) return;
+    const link = this.#links.get(linkId);
+    if (!link) return;
+    if (order.status === 'DONE') {
+      link.status = 'paid';
+      return;
+    }
+    if (order.status === 'REJECTED' || order.status === 'EXPIRED') {
+      if (link.status === 'reserved') {
+        link.status = 'open';
+        delete link.orderId;
+      }
+    }
   }
 
   async quote(input: QuoteRequest): Promise<SignedQuote> {
@@ -257,6 +363,207 @@ export class MockSolverClient implements SolverClient {
     return quote;
   }
 
+  async createPayLink(input: CreatePayLinkRequest): Promise<PayLink> {
+    const request = CreatePayLinkRequestSchema.parse(input);
+    const now = Math.floor(Date.now() / 1000);
+    if (request.expiresAt !== undefined && request.expiresAt <= now) {
+      throw new Error('LINK_EXPIRED: Expiry must be in the future');
+    }
+    let id = this.#linkIdFactory();
+    while (this.#links.has(id)) id = this.#linkIdFactory();
+    const verified = request.verification
+      ? verifyPayLinkSignature(
+          request.verification.challenge,
+          request.verification.signature,
+          request.recipientLockingBytecode,
+        )
+      : false;
+    const link: MutablePayLink = {
+      id,
+      kind: request.kind,
+      recipientCashaddr: request.recipientCashaddr,
+      recipientLockingBytecode: request.recipientLockingBytecode,
+      token: request.token,
+      ...(request.amountOut !== undefined
+        ? { amountOut: request.amountOut }
+        : {}),
+      ...(request.minAmountOut !== undefined
+        ? { minAmountOut: request.minAmountOut }
+        : {}),
+      ...(request.memo !== undefined ? { memo: request.memo } : {}),
+      ...(request.reference !== undefined
+        ? { reference: request.reference }
+        : {}),
+      ...(request.expiresAt !== undefined
+        ? { expiresAt: request.expiresAt }
+        : {}),
+      verified,
+      status: 'open',
+      createdAt: now,
+    };
+    this.#links.set(id, link);
+    return this.#cloneLink(link);
+  }
+
+  async getPayLink(id: string): Promise<PayLink> {
+    return this.#cloneLink(this.#link(id));
+  }
+
+  async quotePayLink(
+    id: string,
+    input: PayLinkQuoteRequest,
+  ): Promise<SignedQuote> {
+    const request = PayLinkQuoteRequestSchema.parse(input);
+    const link = this.#link(id);
+    if (link.status === 'reserved') {
+      throw new Error('LINK_RESERVED: This invoice is being paid');
+    }
+    if (link.status === 'paid') {
+      throw new Error('LINK_CLOSED: This pay link is already paid');
+    }
+    if (link.status === 'expired') {
+      throw new Error('LINK_EXPIRED: This pay link has expired');
+    }
+    if (link.status === 'cancelled') {
+      throw new Error('LINK_CLOSED: This pay link was cancelled');
+    }
+    if (link.token !== 'PUSD') throw new Error('Only tPUSD is enabled');
+    if (request.counterChain !== 'base' || request.counterSymbol !== 'USDC') {
+      throw new Error('Only Base USDC is enabled');
+    }
+    if (request.lane === 'fast' && request.fastOptIn !== true) {
+      throw new Error('Fast lane requires explicit opt-in');
+    }
+    const amountOut =
+      link.kind === 'invoice' ? link.amountOut : request.amountOut;
+    if (amountOut === undefined || amountOut <= 0n) {
+      throw new Error('Enter an amount above zero');
+    }
+    if (link.minAmountOut !== undefined && amountOut < link.minAmountOut) {
+      throw new Error('Amount is below this link minimum');
+    }
+    const pricingPolicy = {
+      spreadBps: SPREAD_BPS,
+      fixedFeeUsdMicros: FIXED_FEE_USD_MICROS,
+    };
+    const amountIn = quoteExactOut(
+      amountOut,
+      USDC_DECIMALS,
+      PUSD_DECIMALS,
+      pricingPolicy,
+    );
+    if (
+      !checkLimits(amountIn, USDC_DECIMALS, {
+        minUsdMicros: MIN_SWAP_USD_MICROS,
+        maxUsdMicros: MAX_SWAP_USD_MICROS,
+      })
+    ) {
+      throw new Error('Amount is outside the swap limits');
+    }
+    if (request.lane === 'fast' && amountIn > 25_000_000n) {
+      throw new Error('Fast lane is limited to $25');
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const quoteExpiry =
+      link.expiresAt === undefined
+        ? now + QUOTE_TTL_S
+        : Math.min(now + QUOTE_TTL_S, link.expiresAt);
+    if (quoteExpiry <= now) {
+      throw new Error('LINK_EXPIRED: This pay link has expired');
+    }
+    const terms: OrderTerms = parseOrderTerms({
+      version: 1,
+      direction: 'COUNTER_TO_BCH',
+      bchToken: link.token,
+      bchTokenCategory: PUSD_CATEGORY,
+      bchTokenAmount: amountOut,
+      counterAmount: amountIn,
+      counterChain: 'base',
+      counterNetworkId: 84_532,
+      counterAsset: {
+        symbol: 'USDC',
+        decimals: USDC_DECIMALS,
+        address: USDC_ADDRESS,
+      },
+      counterHtlc: FERRY_HTLC_ADDRESS,
+      userCounterAddress: request.userCounterAddress,
+      solverCounterAddress: solverAccount.address,
+      userBchLockingBytecode: link.recipientLockingBytecode,
+      solverBchLockingBytecode: solverBch.lockingBytecode,
+      hashLock: request.hashLock,
+      counterDeadline: now + FWD_EVM_DEADLINE_S,
+      bchRefundHeight: this.#bchTipHeight + FWD_BCH_REFUND_BLOCKS,
+      bchCarrySats: BCH_CARRY_SATS,
+      bchMaxFee: BCH_MAX_FEE_SATS,
+      quoteId: `mock-link-quote-${now}`,
+      quoteExpiry,
+    });
+    const orderId = computeOrderId(terms);
+    const signature = await solverAccount.signMessage({
+      message: { raw: orderId },
+    });
+    const quote: SignedQuote = {
+      ...QuoteResponseSchema.parse({
+        orderId,
+        terms,
+        lane: request.lane,
+        signature,
+        signerAddress: solverAccount.address,
+      }),
+      bchTipHeight: this.#bchTipHeight,
+    };
+    this.#orders.set(orderId, {
+      quote,
+      createdAt: now,
+      scenario: this.#scenario,
+      direction: 'COUNTER_TO_BCH',
+      tipHeight: this.#bchTipHeight,
+      status: 'QUOTED',
+      polls: 0,
+      transactions: [],
+    });
+    link.orderId = orderId;
+    this.#linkOrders.set(orderId, link.id);
+    if (link.kind === 'invoice') link.status = 'reserved';
+    return quote;
+  }
+
+  async listPayLinks(input: ListPayLinksQuery): Promise<readonly PayLink[]> {
+    const query = ListPayLinksQuerySchema.parse(input);
+    if (!verifyPayLinksSignature(query.owner, query.challenge, query.sig)) {
+      throw new Error('INVALID_SIGNATURE: Link list challenge is invalid');
+    }
+    return [...this.#links.values()]
+      .filter((link) => {
+        this.#expire(link);
+        return link.recipientCashaddr === query.owner;
+      })
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .map((link) => this.#cloneLink(link));
+  }
+
+  async cancelPayLink(
+    id: string,
+    input: CancelPayLinkRequest,
+  ): Promise<PayLink> {
+    const request = CancelPayLinkRequestSchema.parse(input);
+    if (
+      !verifyPayLinksSignature(request.owner, request.challenge, request.sig)
+    ) {
+      throw new Error('INVALID_SIGNATURE: Cancel challenge is invalid');
+    }
+    const link = this.#link(id);
+    if (link.recipientCashaddr !== request.owner) {
+      throw new Error('UNAUTHORIZED: Only the recipient can cancel');
+    }
+    if (link.status !== 'open') {
+      throw new Error('LINK_CLOSED: Only open links can be cancelled');
+    }
+    link.status = 'cancelled';
+    return this.#cloneLink(link);
+  }
+
   async relayLock(request: RelayLockRequest): Promise<{ txHash: string }> {
     const order = this.#orders.get(request.orderId);
     if (!order) throw new Error('Unknown order');
@@ -334,6 +641,7 @@ export class MockSolverClient implements SolverClient {
     const index = Math.min(order.polls - 1, path.length - 1);
     const next = path[index];
     if (next) order.status = next;
+    this.#syncLink(order);
 
     if (next === 'USER_LOCK_SEEN' && order.transactions.length === 0) {
       order.transactions.push(

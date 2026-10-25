@@ -64,6 +64,7 @@ export interface BchWallet {
   connect(): void;
   disconnect(): Promise<void>;
   setAddress(address: BchAddressInfo): void;
+  signMessage?(message: string): Promise<string>;
   listUtxos(): Promise<readonly BchUtxo[]>;
   signTransaction(
     request: BchSignTransactionRequest,

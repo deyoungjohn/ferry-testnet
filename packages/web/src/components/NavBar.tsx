@@ -25,6 +25,12 @@ export function NavBar() {
               How it works
             </a>
             <Link
+              to="/pay"
+              className="text-sm text-text-muted transition-colors hover:text-text"
+            >
+              Pay links
+            </Link>
+            <Link
               to="/recover"
               className="text-sm text-text-muted transition-colors hover:text-text"
             >

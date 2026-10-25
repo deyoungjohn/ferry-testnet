@@ -1,8 +1,13 @@
 import type {
+  CancelPayLinkRequest,
+  CreatePayLinkRequest,
   Hex32,
   Lane,
+  ListPayLinksQuery,
   OrderStatus,
   OrderTerms,
+  PayLink,
+  PayLinkQuoteRequest,
   QuoteRequest,
   QuoteResponse,
 } from '@ferry/core';
@@ -50,6 +55,11 @@ export interface OrderView {
 
 export interface SolverClient {
   quote(request: QuoteRequest): Promise<SignedQuote>;
+  createPayLink(request: CreatePayLinkRequest): Promise<PayLink>;
+  getPayLink(id: string): Promise<PayLink>;
+  quotePayLink(id: string, request: PayLinkQuoteRequest): Promise<SignedQuote>;
+  listPayLinks(query: ListPayLinksQuery): Promise<readonly PayLink[]>;
+  cancelPayLink(id: string, request: CancelPayLinkRequest): Promise<PayLink>;
   relayLock(request: RelayLockRequest): Promise<{ readonly txHash: string }>;
   getOrder(orderId: Hex32): Promise<OrderView>;
   submitSecret(orderId: Hex32, secret: Hex32): Promise<void>;
