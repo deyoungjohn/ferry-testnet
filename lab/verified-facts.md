@@ -112,3 +112,5 @@ Versions, addresses, chain IDs, decimals, endpoints. Never guess: every row need
 | FACT-A2-037 · fastify | 5.12.7 | npm view fastify version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json for HTTP quote and order API server |
 | FACT-A2-038 · @fastify/cors | 11.3.1 | npm view @fastify/cors version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json for CORS header support |
 | FACT-A2-039 · pino | 10.4.0 | npm view pino version; pnpm install | 2026-10-24 | A2 | Pinned in packages/solver/package.json with secret redaction logging |
+| FACT-A2-040 · cashscript | 0.14.0 | npm view cashscript@0.14.0 version; pnpm install | 2026-10-25 | A2 | Pinned in packages/solver/package.json for real BCH lock assembly with CashTokens |
+
