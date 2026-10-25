@@ -158,8 +158,17 @@ describe('recovery helpers', () => {
         category: file.terms.bchTokenCategory,
         amount: file.terms.bchTokenAmount,
       },
+      {
+        txid: 'cc'.repeat(32),
+        vout: 2,
+        satoshis: 1_000n,
+        height: 1,
+        category: file.terms.bchTokenCategory.replace(/^0x/, ''),
+        amount: file.terms.bchTokenAmount,
+      },
     ];
     expect(findHtlcUtxo(utxos, file)?.txid).toBe('bb'.repeat(32));
+    expect(findHtlcUtxo([utxos[2]!], file)?.txid).toBe('cc'.repeat(32));
     expect(findHtlcUtxo([utxos[0]!], file)).toBeNull();
   });
 

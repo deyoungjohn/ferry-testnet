@@ -10,10 +10,13 @@ import {
   FIXED_FEE_USD_MICROS,
   FWD_BCH_REFUND_BLOCKS,
   FWD_EVM_DEADLINE_S,
+  MOCK_BCH_SOLVER_ADDRESS,
   MOCK_BCH_USER_ADDRESS,
   MOCK_SOLVER_SIGNING_ADDRESS,
   PUSD_CATEGORY,
   QUOTE_TTL_S,
+  REV_BCH_REFUND_BLOCKS,
+  REV_EVM_DEADLINE_S,
   SOLVER_COUNTER_ADDRESS,
   SPREAD_BPS,
   USDC_ADDRESS,
@@ -24,13 +27,19 @@ import { buildRecoveryFile, parseRecoveryFileJson } from '../lib/recovery';
 import { createMockSolverClient } from '../lib/solver/mock';
 import {
   assertTermsMatchRequest,
+  assertTimingInvariant,
   verifySignedQuote,
   type TermsCheckConfig,
 } from '../lib/solver/verify';
 import { buildOrderViewModel } from '../lib/solver/view';
 import {
+  assertReverseFundingTarget,
+  reverseFundingTarget,
+} from '../lib/bch/lock';
+import {
   generateSecret,
   hashLockForSecret,
+  parsePusdAmount,
   parseUsdcAmount,
   quoteRate,
   buildPermitTypedData,
@@ -40,6 +49,9 @@ import { serializeApiJson } from '@ferry/core';
 const bchResult = parseBchAddress(MOCK_BCH_USER_ADDRESS);
 if (!bchResult.ok) throw new Error(bchResult.error);
 const bchAddress = bchResult.value;
+const solverBchResult = parseBchAddress(MOCK_BCH_SOLVER_ADDRESS);
+if (!solverBchResult.ok) throw new Error(solverBchResult.error);
+const solverBchAddress = solverBchResult.value;
 
 function request(amountIn = 10_000_000n) {
   return {
@@ -118,11 +130,22 @@ describe('signed quote verification', () => {
   });
 });
 
+function reverseRequest(amountIn = 1_000n) {
+  return {
+    ...request(),
+    direction: 'BCH_TO_COUNTER' as const,
+    amountIn,
+  };
+}
+
 function termsConfig(
   quote: Awaited<
     ReturnType<ReturnType<typeof createMockSolverClient>['quote']>
   >,
 ): TermsCheckConfig {
+  const reverse = quote.terms.direction === 'BCH_TO_COUNTER';
+  const refundBlocks = reverse ? REV_BCH_REFUND_BLOCKS : FWD_BCH_REFUND_BLOCKS;
+  const deadline = reverse ? REV_EVM_DEADLINE_S : FWD_EVM_DEADLINE_S;
   return {
     counterChain: 'base',
     counterNetworkId: 84_532,
@@ -133,6 +156,7 @@ function termsConfig(
     bchToken: 'PUSD',
     bchTokenCategory: PUSD_CATEGORY,
     solverCounterAddress: SOLVER_COUNTER_ADDRESS,
+    solverBchLockingBytecode: solverBchAddress.lockingBytecode,
     bchTipHeight: quote.bchTipHeight,
     bchCarrySats: BCH_CARRY_SATS,
     bchMaxFee: BCH_MAX_FEE_SATS,
@@ -142,9 +166,9 @@ function termsConfig(
     },
     nowSeconds: Math.floor(Date.now() / 1000),
     maxQuoteFutureSeconds: QUOTE_TTL_S * 2,
-    maxCounterDeadlineSeconds: FWD_EVM_DEADLINE_S + 300,
-    minBchRefundBlocks: FWD_BCH_REFUND_BLOCKS,
-    maxBchRefundBlocks: FWD_BCH_REFUND_BLOCKS + 6,
+    maxCounterDeadlineSeconds: deadline + 300,
+    minBchRefundBlocks: refundBlocks,
+    maxBchRefundBlocks: refundBlocks + 6,
   };
 }
 
@@ -366,7 +390,11 @@ describe('recovery file', () => {
 describe('order timeline', () => {
   it('offers a claim after the solver lock and hides it after the reveal', async () => {
     const solver = createMockSolverClient();
-    const quote = await solver.quote(request());
+    const secret = generateSecret();
+    const quote = await solver.quote({
+      ...request(),
+      hashLock: hashLockForSecret(secret),
+    });
     await solver.relayLock({
       orderId: quote.orderId,
       terms: quote.terms,
@@ -383,7 +411,7 @@ describe('order timeline', () => {
     expect(order.status).toBe('SOLVER_LOCK_SEEN');
     expect(buildOrderViewModel(order).claimAvailable).toBe(true);
 
-    await solver.submitSecret(quote.orderId, generateSecret());
+    await solver.submitSecret(quote.orderId, secret);
     order = await solver.getOrder(quote.orderId);
     expect(order.status).toBe('USER_CLAIM_SEEN');
     expect(buildOrderViewModel(order).claimAvailable).toBe(false);
@@ -452,5 +480,128 @@ describe('solver signer configuration', () => {
     expect(config.requireSolverSigner()).toBe(
       '0x00000000000000000000000000000000000000aa',
     );
+  });
+});
+
+describe('reverse swap', () => {
+  it('parses tPUSD amounts with two decimals and the same USD limits', () => {
+    expect(parsePusdAmount('10.00')).toBe(1_000n);
+    expect(parsePusdAmount('1')).toBe(100n);
+    expect(parsePusdAmount('50.00')).toBe(5_000n);
+    expect(() => parsePusdAmount('50.01')).toThrow(
+      'Swap amounts are $1 to $50',
+    );
+    expect(() => parsePusdAmount('10.001')).toThrow('at most 2 decimals');
+  });
+
+  it('allows both directions from one mock so the toggle can quote', async () => {
+    const solver = createMockSolverClient();
+    const reverseQuote = await solver.quote(reverseRequest());
+    const forwardQuote = await solver.quote(request());
+
+    expect(reverseQuote.terms.direction).toBe('BCH_TO_COUNTER');
+    expect(forwardQuote.terms.direction).toBe('COUNTER_TO_BCH');
+  });
+
+  it('quotes tPUSD in and USDC out with reverse terms', async () => {
+    const solver = createMockSolverClient({ direction: 'BCH_TO_COUNTER' });
+    const quote = await solver.quote(reverseRequest(1_000n));
+
+    expect(quote.terms.direction).toBe('BCH_TO_COUNTER');
+    expect(quote.terms.bchTokenAmount).toBe(1_000n);
+    expect(quote.terms.counterAmount).toBeGreaterThan(0n);
+    expect(quote.terms.bchRefundHeight - quote.bchTipHeight).toBe(
+      REV_BCH_REFUND_BLOCKS,
+    );
+    expect(quoteRate(quote.terms)).toMatch(/^\d+\.\d{4}$/);
+  });
+
+  it('binds reverse terms to the request and passes invariant R', async () => {
+    const solver = createMockSolverClient({ direction: 'BCH_TO_COUNTER' });
+    const quoteRequest = reverseRequest();
+    const quote = await solver.quote(quoteRequest);
+    const config = termsConfig(quote);
+
+    expect(() =>
+      assertTermsMatchRequest(quote.terms, quoteRequest, config),
+    ).not.toThrow();
+    expect(() => assertTimingInvariant(quote.terms, config)).not.toThrow();
+
+    expect(() =>
+      assertTermsMatchRequest(
+        {
+          ...quote.terms,
+          solverBchLockingBytecode: `0x${'77'.repeat(32)}`,
+        },
+        quoteRequest,
+        config,
+      ),
+    ).toThrow('solver BCH locking bytecode does not match');
+    expect(() =>
+      assertTermsMatchRequest(
+        { ...quote.terms, counterAmount: quote.terms.counterAmount - 1n },
+        quoteRequest,
+        config,
+      ),
+    ).toThrow('payout is worse');
+  });
+
+  it('recomputes the token-aware funding target and refuses a mismatched wallet', async () => {
+    const solver = createMockSolverClient({ direction: 'BCH_TO_COUNTER' });
+    const quote = await solver.quote(reverseRequest());
+    const target = reverseFundingTarget(quote.terms);
+
+    expect(target.tokenAmount).toBe(quote.terms.bchTokenAmount);
+    expect(target.htlcTokenAddress).toMatch(/^bchtest:/);
+    expect(() =>
+      assertReverseFundingTarget(
+        quote.terms,
+        bchAddress.lockingBytecode,
+        solverBchAddress.lockingBytecode,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertReverseFundingTarget(
+        quote.terms,
+        `0x76a914${'00'.repeat(20)}88ac`,
+        solverBchAddress.lockingBytecode,
+      ),
+    ).toThrow('refund address does not match');
+  });
+
+  it('advances a reverse order through the relayed USDC claim', async () => {
+    const solver = createMockSolverClient({ direction: 'BCH_TO_COUNTER' });
+    const secret = generateSecret();
+    const quote = await solver.quote({
+      ...reverseRequest(),
+      hashLock: hashLockForSecret(secret),
+    });
+    let order = await solver.getOrder(quote.orderId);
+    for (let index = 0; index < 3; index += 1) {
+      order = await solver.getOrder(quote.orderId);
+    }
+    expect(order.status).toBe('SOLVER_LOCK_SEEN');
+    expect(buildOrderViewModel(order).claimAvailable).toBe(true);
+
+    await solver.relayClaim(quote.orderId, secret);
+    order = await solver.getOrder(quote.orderId);
+    expect(order.status).toBe('USER_CLAIM_SEEN');
+    expect(buildOrderViewModel(order).claimAvailable).toBe(false);
+    expect(buildOrderViewModel(order).statusLabel).toBe('Your USDC claim seen');
+  });
+
+  it('offers a BCH refund after the reverse refund height', async () => {
+    const solver = createMockSolverClient({
+      scenario: 'refund',
+      direction: 'BCH_TO_COUNTER',
+    });
+    const order = await solver.getOrder(`0x${'66'.repeat(32)}`);
+    const view = buildOrderViewModel(order);
+
+    expect(order.status).toBe('REJECTED');
+    expect(view.bchRefundAvailable).toBe(true);
+    expect(view.refundAvailable).toBe(false);
+    expect(view.blocksRemaining).toBe(0);
+    expect(view.statusLabel).toBe('Swap rejected');
   });
 });

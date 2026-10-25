@@ -92,3 +92,83 @@ test('UI-01 refund path screenshot', async ({ page }) => {
     fullPage: true,
   });
 });
+
+test('UI-03 reverse BCH to USDC happy path through DONE', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/?mock=1&direction=reverse');
+
+  await expect(
+    page.getByRole('button', { name: 'Switch swap direction' }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Connect BCH' }).click();
+  await page.getByRole('button', { name: 'Connect Base' }).click();
+  await page.getByRole('button', { name: 'Get quote' }).click();
+
+  await expect(
+    page.getByRole('button', { name: /download recovery file/i }),
+  ).toBeVisible({ timeout: 15_000 });
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: /download recovery file/i }).click();
+  await download;
+
+  await page.getByRole('button', { name: 'Sign with BCH wallet' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Claim USDC (gasless)' }),
+  ).toBeVisible({ timeout: 20_000 });
+  await page.getByRole('button', { name: 'Claim USDC (gasless)' }).click();
+
+  await expect(
+    page.getByRole('heading', { level: 1, name: /done/i }),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/both sides settled/i)).toBeVisible();
+
+  await page.screenshot({
+    path: 'test-results/ui-03-reverse-happy.png',
+    fullPage: true,
+  });
+});
+
+test('UI-03 direction toggle quotes reverse without a query', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/?mock=1');
+
+  const toggle = page.getByRole('button', { name: 'Switch swap direction' });
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+
+  await page.getByRole('button', { name: 'Connect BCH' }).click();
+  await page.getByRole('button', { name: 'Connect Base' }).click();
+  await page.getByRole('button', { name: 'Get quote' }).click();
+
+  await expect(
+    page.getByRole('button', { name: /download recovery file/i }),
+  ).toBeVisible({ timeout: 15_000 });
+});
+
+test('UI-03 reverse BCH refund path screenshot', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const orderId = `0x${'66'.repeat(32)}`;
+  await page.goto(`/swap/${orderId}?mock=1&scenario=refund&direction=reverse`);
+
+  await expect(
+    page.getByRole('heading', { level: 1, name: /rejected/i }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Refund tPUSD' }),
+  ).toBeVisible();
+
+  await page.getByRole('button', { name: 'Connect BCH wallet' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Refund tPUSD' }),
+  ).toBeEnabled();
+  await page.getByRole('button', { name: 'Refund tPUSD' }).click();
+  await expect(page.getByText(/BCH refund broadcast/i)).toBeVisible();
+
+  await page.screenshot({
+    path: 'test-results/ui-03-reverse-refund.png',
+    fullPage: true,
+  });
+});
