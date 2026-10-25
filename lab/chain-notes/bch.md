@@ -77,3 +77,22 @@ Measured using 10 sequential P2PKH self-spends on `wss://chipnet.imaginary.cash:
 - **Median Latency:** 1021.1 ms (acceptance threshold: < 2000 ms → PASS)
 - **Maximum Latency:** 1372.1 ms
 - **Tip subscription:** `blockchain.headers.subscribe` delivered current tip height (329336 on Chipnet, 974345 on Mainnet) instantaneously upon subscription.
+
+
+## 2026-10-25 · BCH Lock Builder & Live Chipnet Verification (a team member)
+
+- **Lock/Funding Transaction Builder (`buildLockTransaction`):**
+  - Designed and added to `@ferry/htlc-bch`.
+  - Supports deterministic coin selection via `selectLockInputs`: prioritises largest token UTXOs first, filters out any NFT-bearing UTXO or foreign category UTXO, and chooses the smallest sufficient single pure BCH UTXO (or smallest ascending subset) for miner fee and carry satoshis.
+  - Automatically calculates exact token change (carrying 1000 satoshis dust limit) and BCH change.
+  - Respects standard dust limits (546 satoshis): if remaining BCH change is less than 546 satoshis, it is absorbed into the miner fee rather than creating an unspendable dust output.
+  - Dual output model:
+    - Unsigned transaction formatted as Libauth `Transaction`, raw hex, and `WcSignTransactionRequest` (matching `@wizardconnect/*` / `@bch-wc2/interfaces` specifications for frontend wallet integrations).
+    - Signed transaction generated with CashScript `SignatureTemplate` for solver and automated scripts when a private key or WIF is supplied.
+- **Real Chipnet Run Verification:**
+  - Funded user key (`USER_BCH_WIF`) from solver wallet with 500 tPUSD.
+  - User locked 100 tPUSD into Ferry HTLC instance using `buildLockTransaction`.
+  - Transaction broadcast and confirmed on Chipnet: `f52d67c794048bb56b24bf18d695683bea7916fc326f83714a67479057e81e73`.
+  - HTLC token address: `bchtest:rvjn7gs3tmfkl2zng4xwlnmw6tjhg5eey782wx6qm9um0n30v7lgseahsw9u9`.
+  - Recipient claimed the locked 100 tPUSD using `buildClaimTransaction` with 32-byte secret preimage.
+  - Claim broadcast and confirmed on Chipnet: `fae826f20ef3717f7bcdb504beb1f5ddd9bed2537b9017f73189c5a8924bcd29`.

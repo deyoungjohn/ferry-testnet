@@ -1,9 +1,4 @@
 import * as libauth from '@bitauth/libauth';
-import {
-  SignatureTemplate,
-  TransactionBuilder,
-  MockNetworkProvider,
-} from 'cashscript';
 import fs from 'node:fs';
 import path from 'node:path';
 import { FulcrumClient } from './electrum.js';
@@ -12,6 +7,7 @@ import {
   deriveHtlcAddresses,
   buildClaimTransaction,
   buildRefundTransaction,
+  buildLockTransaction,
 } from './index.js';
 
 function getEnvPath(): string {
@@ -128,72 +124,30 @@ export async function runProbeS07(
     throw new Error('Solver has no pure BCH UTXO for gas');
   }
 
-  const solverTemplate = new SignatureTemplate(decodedSolver.privateKey);
-  const mockProvider = new MockNetworkProvider();
+  const solverStandardAddr = (
+    libauth.lockingBytecodeToCashAddress({
+      bytecode: solverP2pkhBytecode,
+      prefix: 'bchtest',
+    }) as { address: string }
+  ).address;
 
-  // Helper to fund an HTLC with tokens
+  // Helper to fund an HTLC with tokens using standard buildLockTransaction
   async function fundHtlc(
-    htlcAddress: string,
+    params: Parameters<typeof buildLockTransaction>[0]['params'],
     tokenAmount: bigint,
     carrySats: bigint,
   ): Promise<{ txid: string; vout: number; satoshis: bigint }> {
-    const b = new TransactionBuilder({ provider: mockProvider });
-    b.addInput(
-      {
-        txid: tokenUtxo!.tx_hash,
-        vout: tokenUtxo!.tx_pos,
-        satoshis: BigInt(tokenUtxo!.value),
-        lockingBytecode: libauth.binToHex(solverP2pkhBytecode),
-        token: {
-          category: tPusdCategory,
-          amount: BigInt(tokenUtxo!.token_data!.amount),
-        },
-      },
-      solverTemplate.unlockP2PKH(),
-    );
-
-    b.addInput(
-      {
-        txid: gasUtxo!.tx_hash,
-        vout: gasUtxo!.tx_pos,
-        satoshis: BigInt(gasUtxo!.value),
-        lockingBytecode: libauth.binToHex(solverP2pkhBytecode),
-      },
-      solverTemplate.unlockP2PKH(),
-    );
-
-    // Output 0: HTLC output
-    b.addOutput({
-      to: htlcAddress,
-      amount: carrySats,
-      token: {
-        category: tPusdCategory,
-        amount: tokenAmount,
-      },
+    const lockResult = buildLockTransaction({
+      params,
+      utxos: [tokenUtxo!, gasUtxo!],
+      changeAddress: solverStandardAddr,
+      bchCarrySats: carrySats,
+      tokenChangeCarrySats: 3000n,
+      feeSats: 800n,
+      wif: solverWif,
     });
 
-    // Output 1: Token change
-    const tokenChange = BigInt(tokenUtxo!.token_data!.amount) - tokenAmount;
-    b.addOutput({
-      to: solverP2pkhBytecode,
-      amount: 3000n,
-      token: {
-        category: tPusdCategory,
-        amount: tokenChange,
-      },
-    });
-
-    // Output 2: BCH change
-    const fee = 800n;
-    const totalIn = BigInt(tokenUtxo!.value) + BigInt(gasUtxo!.value);
-    const bchChange = totalIn - carrySats - 3000n - fee;
-    b.addOutput({
-      to: solverP2pkhBytecode,
-      amount: bchChange,
-    });
-
-    const fundHex = b.build();
-    const fundTxid = await fulcrum.broadcast(fundHex);
+    const fundTxid = await fulcrum.broadcast(lockResult.signed!.txHex);
 
     // Update state of solver UTXOs for next operation
     tokenUtxo = {
@@ -203,14 +157,14 @@ export async function runProbeS07(
       value: 3000,
       token_data: {
         category: tPusdCategory,
-        amount: tokenChange.toString(),
+        amount: lockResult.tokenChangeAmount.toString(),
       },
     };
     gasUtxo = {
       height: 0,
       tx_hash: fundTxid,
       tx_pos: 2,
-      value: Number(bchChange),
+      value: Number(lockResult.bchChangeSats),
     };
 
     return { txid: fundTxid, vout: 0, satoshis: carrySats };
@@ -238,7 +192,7 @@ export async function runProbeS07(
   );
 
   console.log('[S-07] Funding Instance A...');
-  const fundA = await fundHtlc(displayAddresses.tokenAddress, 100n, 3000n);
+  const fundA = await fundHtlc(displayParams, 100n, 3000n);
   console.log(`[S-07] Instance A funded: ${fundA.txid}`);
   await new Promise((r) => setTimeout(r, 2000));
 
@@ -283,7 +237,7 @@ export async function runProbeS07(
   );
 
   console.log('[S-07] Funding Instance B...');
-  const fundB = await fundHtlc(internalAddresses.tokenAddress, 100n, 3000n);
+  const fundB = await fundHtlc(internalParams, 100n, 3000n);
   console.log(`[S-07] Instance B funded: ${fundB.txid}`);
   await new Promise((r) => setTimeout(r, 2000));
 
@@ -325,7 +279,7 @@ export async function runProbeS07(
   );
 
   console.log('[S-07] Funding Instance C for refund...');
-  const fundC = await fundHtlc(refundAddresses.tokenAddress, 100n, 3000n);
+  const fundC = await fundHtlc(refundParams, 100n, 3000n);
   console.log(`[S-07] Instance C funded: ${fundC.txid}`);
   await new Promise((r) => setTimeout(r, 2000));
 
