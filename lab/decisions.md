@@ -420,3 +420,12 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 
 ### Correction to D-A1-018 · post-rebase test count
 - After rebasing onto the merged Solana/Tron work, the final web unit count is 93/93 rather than 90/90. Browser and recovery counts remain 22/22 and 4/4. FACT-A1-042 records the final clean-clone gates.
+
+---
+
+### D-A3-008 · Spike S-10: TRON Nile HTLC Deployment, TVM SafeTRC20 Return Handling, and Solidified Finality → PASS
+- **Evidence:** Deployed `FerryHTLC` to TRON Nile testnet at `TN2gn3GTuTHkZ3dmgitZr78VpSiwr4Epxs` (tx `fe2d423b83b05e8de7a48127c3e7b6d5fa5d592d5e1b3792705996e83595f2d7`). Executed full on-chain lock + claim swap (lock tx `968818afa97dd6aff90055bc932f50be052351b273f2c3b012bd2813684441e8`, claim tx `5e641269d721f30570883145c8b854c745865c90a499abc84e8d0e1fc55bab67`) and lock + refund swap (lock tx `a741fc047b03d7e536e1079fc5b324545abf8d5b54639daf439f081714c85fb4`, refund tx `fe55b68c57c9356c40a0aaab2372d00e8c63d05e253fbbc3fd367fb486b9ec84`).
+- **TVM SafeTRC20:** Discovered that TRON TVM allocates 32 zero bytes for void returns (like official Nile USDT), causing OpenZeppelin `SafeERC20` to decode as boolean `false` and revert. Replaced with `SafeTRC20` accepting both 32 zero bytes and boolean true.
+- **Consequence for rebuild:** Standard TRON HTLC swaps use `approve` + `lock` with `SafeTRC20`. Fast lane requires 1 confirmation (~3s); safe lane requires solidified block (~19 blocks, ~48-50s) per Blueprint §24.2.
+- **Revisit if:** TRON introduces native EIP-2612 permit or alters TVM void return behavior.
+

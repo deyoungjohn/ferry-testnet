@@ -45,3 +45,38 @@ Per-chain quirks: RPC behaviour, confirmation times, fees, faucets, explorers, m
 - Local test suite: 7/7 tests passing in packages/htlc-tron/test/ferry-htlc.test.ts (lock, claim, refund, bad secret, premature refund, double claim, double refund, USDT void return quirk, parameter validation).
 - Nile testnet round-trip script prepared at packages/htlc-tron/scripts/roundtrip-nile.ts.
 - Deployment and on-chain round trip currently blocked on human faucet captcha solving; once funded, running pnpm --filter @ferry/htlc-tron roundtrip:nile will execute deployment and swap on Nile.
+
+---
+
+## 2026-10-25 · Nile Testnet On-Chain Round-Trip Execution & ChainAdapter (S-10 PASS)
+
+### On-Chain Deployment & Round-Trip Transactions
+- **Deployer:** `TLT5BuAG9Re3noRGbDGwfXjM1GV4wNW3Et`
+- **Solver:** `TEKLDZgXwyzDKpMQi3f43C2GFnZU3yhvQs`
+- **User:** `TVDjrmj2T6gwLhFZvvCgeJBzVKAfe2vDXP`
+- **FerryHTLC Contract Address (Base58):** `TN2gn3GTuTHkZ3dmgitZr78VpSiwr4Epxs`
+- **FerryHTLC Contract Address (Hex):** `0x8387ea307e5b57f89bfa88147be1a2c3858eb5b6`
+- **Deploy Transaction:**
+  - TxID: `fe2d423b83b05e8de7a48127c3e7b6d5fa5d592d5e1b3792705996e83595f2d7`
+  - Block: 72138780
+  - Energy used: 139,325 (58.51 TRX fee)
+- **Lock + Claim Round Trip (5 USDT):**
+  - User Approve Tx: `18f35c5c0d2eb054ca6a89c92fa344d5a71df542c231ff635e806c9b33a598aa` (Block 72138792)
+  - User Lock Tx: `968818afa97dd6aff90055bc932f50be052351b273f2c3b012bd2813684441e8` (Block 72138804, lockId: `0x0a471cacfde5b29bb4d602f99b3cfc2774d955879f096af9eae9d5fe2fea81ca`, Energy: 67,235, Fee: 28.23 TRX, Confirmation: 4s, Solidification: 48s)
+  - Solver Claim Tx: `5e641269d721f30570883145c8b854c745865c90a499abc84e8d0e1fc55bab67` (Block 72138830, Energy: 48,825, Fee: 20.5 TRX, Confirmation: 3s, Solidification: 49s, State: Claimed = 2)
+  - Balance Delta: User -5 USDT, Solver +5 USDT.
+- **Lock + Refund Round Trip (5 USDT):**
+  - User Lock Tx: `a741fc047b03d7e536e1079fc5b324545abf8d5b54639daf439f081714c85fb4` (Block 72138918, lockId: `0x9fc17478133ad499b94e584a0843ac539930a38c40e36ed0f08ae22e1a780e45`, Energy: 67,235, Fee: 28.23 TRX, Confirmation: 4s)
+  - User Refund Tx: `fe55b68c57c9356c40a0aaab2372d00e8c63d05e253fbbc3fd367fb486b9ec84` (Block 72138951, Energy: 34,705, Fee: 14.5 TRX, Confirmation: 3s, Solidification: 49s, State: Refunded = 3)
+  - Balance Delta: User 0 USDT net change after refund.
+
+### Tron TVM SafeTRC20 Finding
+- During initial claim execution, OpenZeppelin's `SafeERC20` reverted with `SafeERC20FailedOperation`.
+- Analysis: On TRON TVM, when a contract function returns void (such as Tether USDT `transfer`), TVM pads the return data with 32 zero bytes (`returndatasize() == 32`, value `0x00...00`). OpenZeppelin 5.6 decodes this non-empty buffer as a boolean `false` and reverts.
+- Fix: Authored custom `SafeTRC20` library in `FerryHTLC.sol` that inspects low-level call success and accepts 32-byte 0 (void return in TVM) or 32-byte 1 (`true`), perfectly handling TRON USDT.
+
+### Solidified Finality & Confirmation Timing
+- Block production on TRON Nile is strictly 3 seconds per block.
+- Mined transaction confirmation occurs in ~3–4 seconds (1 block).
+- Solidified block finality (irreversible consensus across 19+ super-representatives) takes 48–50 seconds (~16–19 blocks), conforming to Blueprint §24.2.
+- Implemented `TronChainAdapter` in `@ferry/chain-tron` supporting fast lane (1 confirmation) and safe lane (solidified block check / depth >= 19).

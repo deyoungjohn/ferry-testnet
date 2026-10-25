@@ -2,18 +2,51 @@
 pragma solidity ^0.8.20;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+/**
+ * @dev TVM-safe token transfer library for TRC-20 tokens on TRON.
+ * Handles both EVM void return (0 bytes) and TVM void return (32 zero bytes),
+ * as well as standard tokens returning boolean true.
+ */
+library SafeTRC20 {
+    error SafeTRC20FailedOperation(address token);
+
+    function safeTransfer(address token, address to, uint256 value) internal {
+        (bool success, bytes memory retData) = token.call(
+            abi.encodeWithSelector(IERC20.transfer.selector, to, value)
+        );
+        if (!success) revert SafeTRC20FailedOperation(token);
+        if (retData.length > 0) {
+            if (retData.length == 32) {
+                uint256 retVal = abi.decode(retData, (uint256));
+                if (retVal != 1 && retVal != 0) revert SafeTRC20FailedOperation(token);
+            }
+        }
+    }
+
+    function safeTransferFrom(address token, address from, address to, uint256 value) internal {
+        (bool success, bytes memory retData) = token.call(
+            abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, value)
+        );
+        if (!success) revert SafeTRC20FailedOperation(token);
+        if (retData.length > 0) {
+            if (retData.length == 32) {
+                uint256 retVal = abi.decode(retData, (uint256));
+                if (retVal != 1 && retVal != 0) revert SafeTRC20FailedOperation(token);
+            }
+        }
+    }
+}
 
 /**
  * @title FerryHTLC (Tron Port)
  * @notice Port of Ferry HTLC for TRON TVM.
  * Dropped lockWithIntent (per D-A3-006) as TRC-20 tokens (e.g. USDT) lack EIP-2612 permit;
  * standard approve + lock is used instead.
- * Uses SafeERC20 to natively handle non-standard return values (e.g. USDT returning void).
+ * Uses SafeTRC20 to natively handle TVM return value quirks (e.g. USDT returning void/zeroes).
  */
 contract FerryHTLC is ReentrancyGuard {
-    using SafeERC20 for IERC20;
 
     enum State {
         None,
@@ -73,7 +106,7 @@ contract FerryHTLC is ReentrancyGuard {
         if (sha256(abi.encodePacked(secret)) != lockData.hashLock) revert BadSecret();
 
         lockData.state = State.Claimed;
-        IERC20(lockData.token).safeTransfer(lockData.recipient, lockData.amount);
+        SafeTRC20.safeTransfer(lockData.token, lockData.recipient, lockData.amount);
         emit Claimed(id, secret);
     }
 
@@ -83,7 +116,7 @@ contract FerryHTLC is ReentrancyGuard {
         if (block.timestamp < lockData.deadline) revert TooEarly();
 
         lockData.state = State.Refunded;
-        IERC20(lockData.token).safeTransfer(lockData.sender, lockData.amount);
+        SafeTRC20.safeTransfer(lockData.token, lockData.sender, lockData.amount);
         emit Refunded(id);
     }
 
@@ -96,7 +129,7 @@ contract FerryHTLC is ReentrancyGuard {
         uint64 deadline
     ) internal returns (bytes32) {
         bytes32 id = _createLock(owner, token, recipient, amount, hashLock, deadline);
-        IERC20(token).safeTransferFrom(owner, address(this), amount);
+        SafeTRC20.safeTransferFrom(token, owner, address(this), amount);
         return id;
     }
 
