@@ -6,6 +6,7 @@ import { parseBchAddress } from '../lib/bch/address';
 import { createMockSolverClient } from '../lib/solver/mock';
 import { HttpSolverClient } from '../lib/solver/http';
 import type { BchTipReader } from '../lib/bch/tip';
+import { rejectionMessage } from './rejection';
 
 const bchResult = parseBchAddress(MOCK_BCH_USER_ADDRESS);
 if (!bchResult.ok) throw new Error(bchResult.error);
@@ -65,8 +66,8 @@ describe('HttpSolverClient independent BCH tip', () => {
     };
     const client = new HttpSolverClient('http://solver.test', reader);
 
-    await expect(client.quote(quoteRequest())).rejects.toThrow(
-      'BCH tip unavailable; refusing to quote without an independent height',
+    expect(await rejectionMessage(client.quote(quoteRequest()))).toBe(
+      'BCH tip unavailable; refusing to quote without an independent height: connection refused',
     );
   });
 

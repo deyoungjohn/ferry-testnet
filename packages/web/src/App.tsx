@@ -23,11 +23,11 @@ const PayLinksPage = lazy(async () => {
 
 function RouteLoading() {
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 py-16 sm:px-6">
+    <div className="mx-auto w-full max-w-2xl px-4 py-16 sm:px-6">
       <p className="text-sm text-text-muted" role="status">
         Loading page…
       </p>
-    </main>
+    </div>
   );
 }
 

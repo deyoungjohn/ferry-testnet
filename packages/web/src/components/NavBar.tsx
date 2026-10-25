@@ -34,6 +34,12 @@ export function NavBar() {
             >
               How it works
             </a>
+            <a
+              href="/#faq"
+              className="text-sm text-text-muted transition-colors hover:text-text"
+            >
+              FAQ
+            </a>
             <Link
               to="/pay"
               className="text-sm text-text-muted transition-colors hover:text-text"

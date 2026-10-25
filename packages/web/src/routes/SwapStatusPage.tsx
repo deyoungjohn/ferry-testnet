@@ -299,7 +299,7 @@ export function SwapStatusPage() {
 
   if (!id) {
     return (
-      <main className="mx-auto w-full max-w-2xl px-4 py-16 sm:px-6">
+      <div className="mx-auto w-full max-w-2xl px-4 py-16 sm:px-6">
         <p className="text-xs font-medium tracking-[0.16em] text-text-muted uppercase">
           Swap status
         </p>
@@ -315,12 +315,12 @@ export function SwapStatusPage() {
         >
           Start a swap
         </Link>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 py-10 sm:px-6 sm:py-16">
+    <div className="mx-auto w-full max-w-2xl px-4 py-10 sm:px-6 sm:py-16">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs font-medium tracking-[0.16em] text-text-muted uppercase">
@@ -733,6 +733,6 @@ export function SwapStatusPage() {
           ) : null}
         </>
       ) : null}
-    </main>
+    </div>
   );
 }

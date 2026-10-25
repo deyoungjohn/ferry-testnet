@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from '../App';
 import { SolverProvider } from '../lib/solver/SolverProvider';
+import { StatsProvider } from '../lib/stats/StatsProvider';
 import { MockWalletProvider } from '../lib/wallet/mock';
 import { listVaultOrderIds } from '../lib/vault';
 
@@ -21,7 +22,9 @@ describe('secret exposure', () => {
       <MemoryRouter>
         <MockWalletProvider>
           <SolverProvider>
-            <App />
+            <StatsProvider>
+              <App />
+            </StatsProvider>
           </SolverProvider>
         </MockWalletProvider>
       </MemoryRouter>,

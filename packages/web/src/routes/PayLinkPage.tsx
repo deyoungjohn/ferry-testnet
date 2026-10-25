@@ -29,6 +29,7 @@ import {
   truncateAddress,
 } from '../lib/swap';
 import { bchElectrumUrls, bchQuoteConfigError } from '../lib/bch/tip';
+import { formatUsdMicros } from '../lib/format';
 import { useSolver } from '../lib/solver/context';
 import { useWallets } from '../lib/wallet/context';
 import {
@@ -135,7 +136,7 @@ export function PayLinkPage() {
     if (!quote) return null;
     return {
       rate: `1 USDC = ${quoteRate(quote.terms)} ${PUSD_SYMBOL}`,
-      fee: '$0.05',
+      fee: formatUsdMicros(FIXED_FEE_USD_MICROS),
       arrival:
         quote.lane === 'fast'
           ? 'Fast lane · under a minute'
@@ -268,17 +269,17 @@ export function PayLinkPage() {
 
   if (loading) {
     return (
-      <main className="mx-auto w-full max-w-2xl px-4 py-16 sm:px-6">
+      <div className="mx-auto w-full max-w-2xl px-4 py-16 sm:px-6">
         <p className="text-sm text-text-muted" role="status">
           Loading pay link…
         </p>
-      </main>
+      </div>
     );
   }
 
   if (loadError || !link) {
     return (
-      <main className="mx-auto w-full max-w-2xl px-4 py-16 sm:px-6">
+      <div className="mx-auto w-full max-w-2xl px-4 py-16 sm:px-6">
         <p className="text-[10px] font-semibold tracking-[0.2em] text-lime uppercase">
           Pay link
         </p>
@@ -292,12 +293,12 @@ export function PayLinkPage() {
         >
           Create a pay link
         </Link>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 pt-12 pb-20 sm:px-6">
+    <div className="mx-auto w-full max-w-2xl px-4 pt-12 pb-20 sm:px-6">
       <div className="flex items-center gap-2">
         <p className="text-[10px] font-semibold tracking-[0.2em] text-lime uppercase">
           Pay link
@@ -554,6 +555,6 @@ export function PayLinkPage() {
             : `The solver fronts the tPUSD, then claims your USDC with the same secret. ${usingMocks ? 'Mock mode: no real funds move.' : ''}`}
         </p>
       </section>
-    </main>
+    </div>
   );
 }

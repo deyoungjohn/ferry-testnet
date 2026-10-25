@@ -191,7 +191,7 @@ export function RecoverPage() {
   const calldata = recovery ? evmRefundCalldata(recovery) : '';
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-16">
+    <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-16">
       <p className="text-xs font-medium tracking-[0.16em] text-text-muted uppercase">
         Recovery
       </p>
@@ -210,11 +210,18 @@ export function RecoverPage() {
           The secret stays in this tab. It is only revealed inside a BCH claim
           transaction you approve.
         </p>
+        <label
+          htmlFor="recovery-file"
+          className="mt-4 block text-[10px] font-medium tracking-[0.14em] text-text-muted uppercase"
+        >
+          Recovery JSON file
+        </label>
         <input
+          id="recovery-file"
           type="file"
           accept="application/json,.json"
           onChange={(event) => void handleFile(event.target.files?.[0])}
-          className="mt-4 w-full rounded-xl border border-hairline bg-surface-2 px-3 py-2 text-xs text-text file:mr-3 file:rounded-pill file:border-0 file:bg-olive file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-text"
+          className="mt-1.5 w-full rounded-xl border border-hairline bg-surface-2 px-3 py-2 text-xs text-text file:mr-3 file:rounded-pill file:border-0 file:bg-olive file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-text"
         />
         {fileNotice ? (
           <p
@@ -431,6 +438,6 @@ export function RecoverPage() {
           Back to Ferry
         </Link>
       </p>
-    </main>
+    </div>
   );
 }

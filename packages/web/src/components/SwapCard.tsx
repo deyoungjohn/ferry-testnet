@@ -23,6 +23,7 @@ import {
   USDC_ADDRESS,
   USDC_DECIMALS,
 } from '../lib/config';
+import { formatBasisPoints, formatUsdMicros } from '../lib/format';
 import {
   buildRecoveryFile,
   downloadRecoveryFile,
@@ -128,8 +129,8 @@ export function SwapCard() {
       rate: reverse
         ? `1 ${PUSD_SYMBOL} = ${quoteRate(quote.terms)} USDC`
         : `1 USDC = ${quoteRate(quote.terms)} ${PUSD_SYMBOL}`,
-      spread: '0.40%',
-      fee: '$0.05',
+      spread: formatBasisPoints(SPREAD_BPS),
+      fee: formatUsdMicros(FIXED_FEE_USD_MICROS),
       arrival:
         quote.lane === 'fast'
           ? 'Fast lane · under a minute'
@@ -425,7 +426,7 @@ export function SwapCard() {
           <dd className="font-medium tabular-nums text-text">
             {quoteRows
               ? `${quoteRows.spread} / ${quoteRows.fee}`
-              : '0.40% / $0.05'}
+              : `${formatBasisPoints(SPREAD_BPS)} / ${formatUsdMicros(FIXED_FEE_USD_MICROS)}`}
           </dd>
         </div>
         <div className="flex items-baseline justify-between gap-4 py-2.5">

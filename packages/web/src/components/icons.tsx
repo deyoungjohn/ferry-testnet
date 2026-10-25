@@ -79,3 +79,20 @@ export function InfoIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function ArrowRightIcon(props: IconProps) {
+  return (
+    <svg {...baseProps} {...props}>
+      <path d="M5 12h14M14 7l5 5-5 5" />
+    </svg>
+  );
+}
+
+export function KeyIcon(props: IconProps) {
+  return (
+    <svg {...baseProps} {...props}>
+      <circle cx="8" cy="15" r="4" />
+      <path d="m11 12 8-8M16 7l2 2M14 9l2 2" />
+    </svg>
+  );
+}

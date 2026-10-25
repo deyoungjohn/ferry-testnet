@@ -402,3 +402,21 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Revisit if:** Double-spend notification protocol is updated or zero-conf insurance protocols are adopted.
 
 
+### D-A1-017 · live page data has an explicit empty state
+- **Decision:** The web owns a temporary `StatsClient` boundary with three independently loaded resources: aggregate stats and active quote policy, recent settled swaps, and peg observations. The HTTP adapter validates strict local schemas until a team member’s core schemas land. The default mock reports the real configured spread/fixed fee but returns `null` metrics, no swaps and no peg observations; it never invents judge-facing numbers.
+- **Failure isolation:** The home controller uses independent settled results, so a missing peg endpoint does not hide settlement stats or recent swaps. A real zero is displayable; `null` means “No data yet”, keeping zero and absence distinct.
+- **Dataviz:** A peg sparkline is rendered only with a reported latest price and at least two observations. It includes a one-dollar reference line, visible range/source text, an accessible title and numeric description, theme colours and no animation. Empty feeds render no SVG or synthetic line.
+- **Policy copy:** The feature-card spread and every quote-policy display are formatted from policy/config basis points and microdollars, not string literals.
+- **Consequence for rebuild:** Put future core schemas at this one adapter boundary, preserve null-vs-zero semantics, and never seed production mocks with decorative metrics or price history.
+- **Revisit if:** the solver endpoint fields differ from the local contract, or recent swaps expand beyond the current Base/BCH route and require per-chain explorer configuration.
+
+### D-A1-018 · accessibility is a route-level release gate
+- **Decision:** The default UI suite now scans `/`, `/swap/:id`, `/p/:id` and `/recover` with axe; runs the complete forward swap with Tab, typing and Enter only; exercises reduced-motion and reduced-transparency media; and captures every new section at 375 px and 768 px with overflow assertions.
+- **Landmarks:** `AppShell` owns the document’s only main landmark. Route loading and route pages use neutral containers, and the recovery-file input has a visible programmatic label.
+- **Test isolation:** Playwright starts its own strict Vite server on port 5180. Reusing a listener is an explicit opt-in because a process on the right port can still serve the wrong checkout.
+- **Evidence:** Web unit tests 90/90, default UI Playwright 22/22 and standalone recovery Playwright 4/4. Entry JS is 306.45 kB raw, still below 400 kB.
+- **Consequence for rebuild:** Run semantic automation on all judge paths, but retain the keyboard and responsive flows because axe alone cannot validate interaction order, media preferences or layout.
+- **Revisit if:** New routes, wallet surfaces or supported browsers require additional axe states or non-Chromium media-emulation coverage.
+
+### Correction to D-A1-018 · post-rebase test count
+- After rebasing onto the merged Solana/Tron work, the final web unit count is 93/93 rather than 90/90. Browser and recovery counts remain 22/22 and 4/4. FACT-A1-042 records the final clean-clone gates.
