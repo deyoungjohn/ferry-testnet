@@ -356,3 +356,15 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 
 ### Correction to D-A1-016 · endpoint identity
 - “Distinct” now means different normalized hostnames, not merely different URL strings. Case, trailing slashes, schemes or ports on the same host cannot satisfy the two-endpoint mainnet rule. This still cannot prove different operators; deployment review must choose independently run servers.
+
+### D-A3-005 · Solana ChainAdapter Architecture, Browser Safety & Finality Policy
+- **Decision:** Implement `@ferry/chain-solana` as a modular `ChainAdapter` conformant with `@ferry/core`. `buildUserLock` and `getLock` are strictly browser-safe and operate without requiring relayer secret keys: the transaction designates the relayer as `feePayer`, the user signs only as `owner`, and the relayer in `relayLock` attaches the fee-payer signature and broadcasts. For `isFinal`, `fast` lane maps to commitment `confirmed` and `safe` lane maps to `finalized` (~13s) per blueprint §24.2.
+- **Evidence:** Integration test suite in `packages/chain-solana/test/adapter.test.ts` (7/7 passed against local `solana-test-validator`):
+  - Browser-safe read-only adapter instantiated without private key successfully generated unsigned user locks and queried PDA lock states.
+  - Relayed lock verified: user SOL balance delta was strictly 0 lamports.
+  - Idempotent retries tested and confirmed for `relayLock`, `lock`, `claim`, and `refund`.
+  - Premature refund rejection verified client-side and on-chain; expired refund verified after timeout.
+  - `isFinal` accurately evaluates commitment states and fails closed on unknown or invalid transaction references.
+- **Consequence for rebuild:** Web UI and solver can consume `@ferry/chain-solana` directly via `@ferry/core`'s interface. Manual checklist for Phantom partial signing is added in the wallet test notes.
+- **Revisit if:** Alternative Solana wallet standards or transaction envelope versions (e.g. VersionedTransaction v0 with address lookup tables) are introduced.
+
