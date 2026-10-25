@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it } from 'vitest';
 import { App } from '../App';
@@ -47,6 +47,29 @@ describe('home page', () => {
     expect(
       screen.getByRole('button', { name: /get quote/i }),
     ).toBeInTheDocument();
+  });
+
+  it('renders the complete page map and opens the honest-risk FAQ', () => {
+    renderAt('/');
+
+    expect(
+      screen.getByRole('heading', { name: /what ferry has settled/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: /recent swaps/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: /a dollar target/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: /two locks. one secret/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: /the honest version/i }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(/what is the fast, or 0-conf, lane/i));
+    expect(screen.getByText(/double-spend and reorg risk/i)).toBeVisible();
   });
 });
 

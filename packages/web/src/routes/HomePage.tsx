@@ -1,4 +1,5 @@
 import { FeatureCards } from '../components/FeatureCards';
+import { Faq } from '../components/Faq';
 import { Hero } from '../components/Hero';
 import { HowItWorks } from '../components/HowItWorks';
 import { PegCards } from '../components/PegCards';
@@ -24,6 +25,7 @@ export function HomePage() {
       <RecentSwaps resource={data.recentSwaps} />
       <PegCards resource={data.pegs} />
       <HowItWorks />
+      <Faq />
     </div>
   );
 }
