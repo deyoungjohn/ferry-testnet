@@ -34,8 +34,11 @@ export const RecoveryFileSchema = z.strictObject({
   createdAt: z.number().int().nonnegative(),
   contracts: z.strictObject({
     evm: z.strictObject({
-      chainId: z.literal(BASE_SEPOLIA_CHAIN_ID),
-      address: z.literal(FERRY_HTLC_ADDRESS),
+      chainId: z.number().int().positive(),
+      address: z
+        .string()
+        .regex(/^0x[0-9a-fA-F]{40}$/)
+        .transform((value) => value.toLowerCase()),
       codeHash: z.literal(FERRY_HTLC_CODE_HASH),
       bytecode: z
         .string()
@@ -46,7 +49,7 @@ export const RecoveryFileSchema = z.strictObject({
       abi: z.array(z.unknown()),
     }),
     bch: z.strictObject({
-      network: z.literal(BCH_NETWORK),
+      network: z.enum(['chipnet', 'mainnet']),
       htlcAddress: z.string().min(1),
       tokenAddress: z.string().min(1),
       redeemScript: hex,
@@ -58,15 +61,7 @@ export const RecoveryFileSchema = z.strictObject({
 export type RecoveryFile = z.infer<typeof RecoveryFileSchema>;
 
 export function bchParametersFromTerms(terms: OrderTerms) {
-  return encodeHtlcParameters({
-    hashLock: terms.hashLock,
-    recipientLockingBytecode: terms.userBchLockingBytecode,
-    refundLockingBytecode: terms.solverBchLockingBytecode,
-    tokenCategory: terms.bchTokenCategory,
-    tokenAmount: terms.bchTokenAmount,
-    refundHeight: terms.bchRefundHeight,
-    maxFee: terms.bchMaxFee,
-  });
+  return encodeHtlcParameters(terms);
 }
 
 export function buildRecoveryFile(

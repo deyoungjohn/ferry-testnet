@@ -1,0 +1,245 @@
+:root {
+  color-scheme: dark;
+  --bg: #0a0b09;
+  --surface: #141512;
+  --surface-2: #1c1e19;
+  --hairline: #2c2f28;
+  --text: #f2f4ec;
+  --muted: #9aa093;
+  --lime: #c6f219;
+  --danger: #ff8d7a;
+  --ok: #8ee6a8;
+  --serif: ui-serif, Georgia, 'Times New Roman', serif;
+  --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      70rem 35rem at 20% -10%,
+      rgba(198, 242, 25, 0.08),
+      transparent 60%
+    ),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  line-height: 1.5;
+}
+
+.shell {
+  width: min(56rem, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 2.5rem 0 4rem;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--lime);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0.4rem 0 0;
+  font-family: var(--serif);
+  font-size: clamp(2.2rem, 6vw, 4rem);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.lede {
+  max-width: 42rem;
+  margin: 0.8rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.card {
+  margin-top: 1.5rem;
+  border: 1px solid var(--hairline);
+  border-radius: 1.25rem;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  padding: 1.25rem;
+  box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.25);
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.card p {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  margin-top: 1rem;
+}
+
+label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+input[type='file'],
+input[type='url'] {
+  width: 100%;
+  margin-top: 0.4rem;
+  border: 1px solid var(--hairline);
+  border-radius: 0.75rem;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.65rem 0.75rem;
+}
+
+input[type='file'] {
+  cursor: pointer;
+}
+input:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 650;
+  padding: 0.7rem 1rem;
+}
+
+button.primary {
+  background: var(--lime);
+  color: #171a0d;
+}
+button.secondary {
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+  color: var(--text);
+}
+button.ghost {
+  background: transparent;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.status {
+  margin-top: 0.9rem;
+  border-radius: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.status.info {
+  background: rgba(198, 242, 25, 0.08);
+  color: var(--text);
+}
+.status.error {
+  background: rgba(255, 141, 122, 0.1);
+  color: var(--danger);
+}
+.status.ok {
+  background: rgba(142, 230, 168, 0.1);
+  color: var(--ok);
+}
+.status:empty {
+  display: none;
+}
+
+.facts {
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  margin-top: 1rem;
+}
+
+.fact {
+  border: 1px solid var(--hairline);
+  border-radius: 0.9rem;
+  background: var(--surface-2);
+  padding: 0.8rem;
+}
+
+.fact dt {
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.fact dd {
+  margin: 0.3rem 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+}
+
+.notice {
+  margin-top: 1rem;
+  border-top: 1px solid var(--hairline);
+  padding-top: 1rem;
+}
+.notice strong {
+  color: var(--text);
+}
+.notice p {
+  margin-top: 0.35rem;
+}
+textarea {
+  width: 100%;
+  min-height: 5.5rem;
+  margin-top: 0.5rem;
+  border: 1px solid var(--hairline);
+  border-radius: 0.75rem;
+  background: #0d0e0b;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  padding: 0.7rem;
+  resize: vertical;
+}
+.hidden {
+  display: none;
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

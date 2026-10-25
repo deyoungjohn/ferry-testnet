@@ -2,7 +2,7 @@ export const NETWORK_LABEL = 'Testnet';
 
 export const BASE_SEPOLIA_CHAIN_ID = 84532;
 export const BASE_SEPOLIA_RPC_URL =
-  import.meta.env.VITE_BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org';
+  import.meta.env?.VITE_BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org';
 export const BASE_EXPLORER_URL = 'https://sepolia.basescan.org';
 export const BCH_EXPLORER_URL = 'https://blockexplorer.cash/chipnet';
 
@@ -43,13 +43,13 @@ export const FAST_LANE_MAX_USD_MICROS = 25_000_000n;
 export const MOCK_SOLVER_SIGNING_ADDRESS =
   '0x1Ec1DB9462247d5A2F48C224472591e222A20aF2' as const;
 export const SOLVER_SIGNING_ADDRESS = (
-  import.meta.env.VITE_SOLVER_SIGNING_ADDRESS ?? ''
+  import.meta.env?.VITE_SOLVER_SIGNING_ADDRESS ?? ''
 ).trim();
 export const SOLVER_COUNTER_ADDRESS = (SOLVER_SIGNING_ADDRESS ||
   MOCK_SOLVER_SIGNING_ADDRESS) as `0x${string}`;
 
 export function requireSolverSigner(): `0x${string}` {
-  if (import.meta.env.VITE_SOLVER_URL && !SOLVER_SIGNING_ADDRESS) {
+  if (import.meta.env?.VITE_SOLVER_URL && !SOLVER_SIGNING_ADDRESS) {
     throw new Error(
       'Set VITE_SOLVER_SIGNING_ADDRESS to the solver signer address when using VITE_SOLVER_URL',
     );
@@ -65,7 +65,7 @@ export const MOCK_BCH_USER_ADDRESS =
 export const MOCK_BCH_SOLVER_ADDRESS =
   'bchtest:zz3r8kfgl8qs94pyswepj6dylqf5avuf9ygs8308u4' as const;
 
-export const REOWN_PROJECT_ID = import.meta.env.VITE_REOWN_PROJECT_ID ?? '';
+export const REOWN_PROJECT_ID = import.meta.env?.VITE_REOWN_PROJECT_ID ?? '';
 
 export function explorerTxUrl(chain: 'base' | 'bch', txid: string): string {
   return chain === 'base'
