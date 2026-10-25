@@ -29,6 +29,7 @@ import {
   type RecoveryFile,
 } from '../lib/recovery';
 import { useSolver } from '../lib/solver/context';
+import { solverIsLive } from '../lib/solver/kind';
 import type { QuoteRequest, SignedQuote } from '../lib/solver/types';
 import {
   assertTermsMatchRequest,
