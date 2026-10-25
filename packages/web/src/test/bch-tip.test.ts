@@ -5,6 +5,7 @@ import {
   fetchBchTip,
   type ElectrumTipFactory,
 } from '../lib/bch/tip';
+import { rejectionMessage } from './rejection';
 
 const factory: ElectrumTipFactory = (url) => ({
   connect: async () => {
@@ -25,8 +26,8 @@ describe('independent BCH tip', () => {
   });
 
   it('fails closed when every endpoint is unreachable', async () => {
-    await expect(fetchBchTip(['wss://down'], factory)).rejects.toThrow(
-      'BCH tip unavailable from every Electrum endpoint',
+    expect(await rejectionMessage(fetchBchTip(['wss://down'], factory))).toBe(
+      'BCH tip unavailable from every Electrum endpoint: connection refused',
     );
   });
 

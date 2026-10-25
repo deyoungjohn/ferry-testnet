@@ -25,6 +25,7 @@ import { createMockSolverClient } from '../lib/solver/mock';
 import { SolverProvider } from '../lib/solver/SolverProvider';
 import { generateSecret, hashLockForSecret } from '../lib/swap';
 import { MockWalletProvider } from '../lib/wallet/mock';
+import { rejectionMessage } from './rejection';
 
 afterEach(cleanup);
 
@@ -77,9 +78,9 @@ describe('pay link quotes', () => {
 
     const reserved = await solver.getPayLink(link.id);
     expect(reserved.status).toBe('reserved');
-    await expect(solver.quotePayLink(link.id, quoteRequest())).rejects.toThrow(
-      /LINK_RESERVED/,
-    );
+    expect(
+      await rejectionMessage(solver.quotePayLink(link.id, quoteRequest())),
+    ).toMatch(/LINK_RESERVED/);
   });
 
   it('accepts an open-link amount', async () => {
