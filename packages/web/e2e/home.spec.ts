@@ -19,7 +19,9 @@ for (const viewport of VIEWPORTS) {
       page.getByRole('heading', { level: 1, name: /without a bridge/i }),
     ).toBeVisible();
     await expect(page.getByRole('region', { name: 'Swap' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /ferry it/i })).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: /get quote/i }),
+    ).toBeVisible();
 
     const horizontalOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth - window.innerWidth,
@@ -32,3 +34,61 @@ for (const viewport of VIEWPORTS) {
     });
   });
 }
+
+test('UI-01 happy path through DONE', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/?mock=1');
+
+  await page.getByRole('button', { name: 'Connect BCH' }).click();
+  await page.getByRole('button', { name: 'Connect Base' }).click();
+  await page.getByRole('button', { name: 'Get quote' }).click();
+
+  await expect(
+    page.getByRole('button', { name: /download recovery file/i }),
+  ).toBeVisible({ timeout: 15_000 });
+
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: /download recovery file/i }).click();
+  await download;
+
+  await page.getByRole('button', { name: /ferry it/i }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(
+    /lock|quote|seen/i,
+  );
+
+  await expect(page.getByRole('button', { name: 'Claim tPUSD' })).toBeVisible({
+    timeout: 20_000,
+  });
+  await page.getByRole('button', { name: 'Claim tPUSD' }).click();
+
+  await expect(
+    page.getByRole('heading', { level: 1, name: /done/i }),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/both sides settled/i)).toBeVisible();
+
+  await page.screenshot({
+    path: 'test-results/ui-01-happy.png',
+    fullPage: true,
+  });
+});
+
+test('UI-01 refund path screenshot', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const orderId = `0x${'55'.repeat(32)}`;
+  await page.goto(`/swap/${orderId}?mock=1&scenario=refund`);
+
+  await expect(
+    page.getByRole('heading', { level: 1, name: /rejected/i }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Refund USDC' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Connect Base wallet' }).click();
+  await expect(page.getByRole('button', { name: 'Refund USDC' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Refund USDC' }).click();
+  await expect(page.getByText(/refund submitted/i)).toBeVisible();
+
+  await page.screenshot({
+    path: 'test-results/ui-01-refund.png',
+    fullPage: true,
+  });
+});

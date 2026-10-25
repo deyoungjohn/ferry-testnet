@@ -4,14 +4,19 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it } from 'vitest';
 import { App } from '../App';
-import { MOCK_SWAP } from '../lib/mock/swap';
+import { SolverProvider } from '../lib/solver/SolverProvider';
+import { MockWalletProvider } from '../lib/wallet/mock';
 
 afterEach(cleanup);
 
 function renderAt(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <App />
+      <MockWalletProvider>
+        <SolverProvider>
+          <App />
+        </SolverProvider>
+      </MockWalletProvider>
     </MemoryRouter>,
   );
 }
@@ -28,17 +33,16 @@ describe('home page', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders the static swap card with mock values', () => {
+  it('renders the swap card with an editable amount', () => {
     renderAt('/');
 
     expect(screen.getByRole('region', { name: 'Swap' })).toBeInTheDocument();
     expect(screen.getByText('You send')).toBeInTheDocument();
     expect(screen.getByText('You receive')).toBeInTheDocument();
-    expect(screen.getByText(MOCK_SWAP.send.amount)).toBeInTheDocument();
-    expect(screen.getByText(MOCK_SWAP.receive.amount)).toBeInTheDocument();
-    expect(screen.getByText('Mock quote')).toBeInTheDocument();
+    expect(screen.getByLabelText('You send amount')).toHaveValue('10.00');
+    expect(screen.getByText('Mock solver')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: /ferry it/i }),
+      screen.getByRole('button', { name: /get quote/i }),
     ).toBeInTheDocument();
   });
 });
