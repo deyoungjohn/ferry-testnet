@@ -3,6 +3,7 @@ import {
   OrderStatusResponseSchema,
   QuoteRequestSchema,
   QuoteResponseSchema,
+  RelayClaimResponseSchema,
   RelayLockResponseSchema,
   RevealSecretResponseSchema,
   serializeApiJson,
@@ -11,7 +12,7 @@ import {
   type QuoteRequest,
 } from '@ferry/core';
 import type { z } from 'zod';
-import { FWD_BCH_REFUND_BLOCKS } from '../config';
+import { FWD_BCH_REFUND_BLOCKS, REV_BCH_REFUND_BLOCKS } from '../config';
 import type {
   OrderTransaction,
   OrderView,
@@ -118,7 +119,11 @@ export class HttpSolverClient implements SolverClient {
     });
     return {
       ...response,
-      bchTipHeight: response.terms.bchRefundHeight - FWD_BCH_REFUND_BLOCKS,
+      bchTipHeight:
+        response.terms.bchRefundHeight -
+        (response.terms.direction === 'BCH_TO_COUNTER'
+          ? REV_BCH_REFUND_BLOCKS
+          : FWD_BCH_REFUND_BLOCKS),
     };
   }
 
@@ -156,13 +161,31 @@ export class HttpSolverClient implements SolverClient {
       status: response.status,
       terms: response.terms,
       lane: response.lane,
-      bchTipHeight: response.terms.bchRefundHeight - FWD_BCH_REFUND_BLOCKS,
+      bchTipHeight:
+        response.terms.bchRefundHeight -
+        (response.terms.direction === 'BCH_TO_COUNTER'
+          ? REV_BCH_REFUND_BLOCKS
+          : FWD_BCH_REFUND_BLOCKS),
       updatedAt: response.updatedAt,
       transactions: txList(response.txIds),
       bchLockUtxo: null,
       claimAvailable: claimAvailable(response.status),
-      refundAvailable: refundAvailable(response.status),
+      refundAvailable:
+        response.terms.direction === 'COUNTER_TO_BCH' &&
+        refundAvailable(response.status),
+      bchRefundAvailable: false,
     };
+  }
+
+  async relayClaim(orderId: Hex32, secret: Hex32): Promise<void> {
+    await this.#json(
+      RelayClaimResponseSchema,
+      `/v1/orders/${orderId}/relay-claim`,
+      {
+        method: 'POST',
+        body: serializeApiJson({ secret }),
+      },
+    );
   }
 
   async submitSecret(orderId: Hex32, secret: Hex32): Promise<void> {

@@ -17,6 +17,7 @@ import {
   SOLVER_COUNTER_ADDRESS,
   MAX_SWAP_USD_MICROS,
   MIN_SWAP_USD_MICROS,
+  PUSD_DECIMALS,
   USDC_ADDRESS,
   USDC_DECIMALS,
   USDC_DOMAIN,
@@ -44,6 +45,28 @@ export function parseUsdcAmount(input: string): bigint {
   return amount;
 }
 
+export function parsePusdAmount(input: string): bigint {
+  const trimmed = input.trim();
+  if (
+    !/^\d*(?:\.\d{0,2})?$/.test(trimmed) ||
+    trimmed === '' ||
+    trimmed === '.'
+  ) {
+    throw new Error('Enter a tPUSD amount with at most 2 decimals');
+  }
+  const amount = parseUnits(trimmed, PUSD_DECIMALS);
+  if (amount <= 0n) throw new Error('Enter an amount above zero');
+  if (
+    !checkLimits(amount, PUSD_DECIMALS, {
+      minUsdMicros: MIN_SWAP_USD_MICROS,
+      maxUsdMicros: MAX_SWAP_USD_MICROS,
+    })
+  ) {
+    throw new Error('Swap amounts are $1 to $50');
+  }
+  return amount;
+}
+
 export function generateSecret(): Hex32 {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return bytesToHex(bytes) as Hex32;
@@ -62,8 +85,14 @@ export function formatPusd(amount: bigint): string {
 }
 
 export function quoteRate(terms: OrderTerms): string {
-  const input = Number(terms.counterAmount) / 10 ** USDC_DECIMALS;
-  const output = Number(terms.bchTokenAmount) / 10 ** 2;
+  const input =
+    terms.direction === 'COUNTER_TO_BCH'
+      ? Number(terms.counterAmount) / 10 ** USDC_DECIMALS
+      : Number(terms.bchTokenAmount) / 10 ** PUSD_DECIMALS;
+  const output =
+    terms.direction === 'COUNTER_TO_BCH'
+      ? Number(terms.bchTokenAmount) / 10 ** PUSD_DECIMALS
+      : Number(terms.counterAmount) / 10 ** USDC_DECIMALS;
   return (output / input).toFixed(4);
 }
 
