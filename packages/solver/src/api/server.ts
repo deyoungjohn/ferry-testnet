@@ -22,6 +22,7 @@ import {
   invariantF,
   invariantR,
   revealPolicy,
+  DEFAULT_REVEAL_CONFIG,
 } from '@ferry/core';
 import type { OrderTerms } from '@ferry/core';
 import type { EvmChainAdapter } from '@ferry/chain-evm';
@@ -98,6 +99,23 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
         code: 'AMOUNT_OUT_OF_BOUNDS',
         message: 'Requested swap amount exceeds bounds',
       });
+    }
+
+    // Fast lane validations (opt-in and cap)
+    if (request.lane === 'fast') {
+      if (!request.fastOptIn) {
+        return reply.status(400).send({
+          code: 'FAST_LANE_OPT_IN_REQUIRED',
+          message: 'Fast lane requires explicit fastOptIn=true',
+        });
+      }
+      const amountUsdMicros = isReverse ? amountIn * 10_000n : amountIn;
+      if (amountUsdMicros > DEFAULT_REVEAL_CONFIG.zeroConfMaxUsdMicros) {
+        return reply.status(400).send({
+          code: 'FAST_LANE_CAP_EXCEEDED',
+          message: `Fast lane amount exceeds maximum zero-conf limit of ${Number(DEFAULT_REVEAL_CONFIG.zeroConfMaxUsdMicros) / 1e6} USD`,
+        });
+      }
     }
 
     // Peg guard check via PriceSource
@@ -247,6 +265,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       direction: terms.direction,
       status: 'QUOTED',
       lane: request.lane ?? 'safe',
+      fastOptIn: request.fastOptIn ?? false,
       terms,
       hashLock: terms.hashLock,
       createdAt: Date.now(),

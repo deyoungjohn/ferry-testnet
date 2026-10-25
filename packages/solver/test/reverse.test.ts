@@ -512,4 +512,747 @@ describe('Reverse Swap Engine (BCH_TO_COUNTER)', () => {
     const finalOrder = db.getOrder(orderId)!;
     expect(finalOrder.status).toBe('DONE');
   });
+
+  it(': Lock carry under-funded: engine rejects order with INVALID_TERMS', async () => {
+    const terms = getDummyReverseTerms({ bchCarrySats: 3000n });
+    const orderId = computeOrderId(terms);
+
+    const fakeEvm = {
+      address: solverAddress,
+      lockId: (s: string, h: string) => sha256(`0x${s.slice(2)}${h.slice(2)}`),
+      getLock: async () => ({ status: 'absent' as const }),
+      isFinal: async () => true,
+      lock: async () => {
+        throw new Error(
+          'EVM lock must not be called when carry is under-funded',
+        );
+      },
+      watch: () => () => {},
+    } as unknown as EvmChainAdapter;
+
+    const fakeBch = {
+      getQuorumStatus: () => ({
+        quorumTip: 330000,
+        tips: {},
+        isQuorumHealthy: true,
+        ageSeconds: 5,
+      }),
+      listUnspent: async () => [
+        {
+          height: 330001,
+          tx_hash: '33'.repeat(32),
+          tx_pos: 0,
+          value: 1000, // Only 1,000 sats < 3,000 required bchCarrySats!
+          token_data: {
+            category: 'aa'.repeat(32),
+            amount: '2500',
+          },
+        },
+      ],
+      getHistory: async () => [],
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: () => {},
+    } as unknown as BchQuorumClient;
+
+    const engine = new SolverEngine(
+      db,
+      fakeEvm,
+      fakeBch,
+      solverEvmKey,
+      sampleWif,
+      'testnet',
+    );
+
+    db.saveOrder({
+      id: orderId,
+      direction: 'BCH_TO_COUNTER',
+      status: 'QUOTED',
+      terms,
+      hashLock: terms.hashLock,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    await engine.step();
+
+    const order = db.getOrder(orderId)!;
+    expect(order.status).toBe('REJECTED');
+    expect(order.rejectionReason).toContain(
+      'Lock carry 1000 sats is below required 3000 sats',
+    );
+  });
+
+  it(': Token amount over-funded: engine rejects order with INVALID_TERMS', async () => {
+    const terms = getDummyReverseTerms({ bchTokenAmount: 2500n });
+    const orderId = computeOrderId(terms);
+
+    const fakeEvm = {
+      address: solverAddress,
+      lockId: (s: string, h: string) => sha256(`0x${s.slice(2)}${h.slice(2)}`),
+      getLock: async () => ({ status: 'absent' as const }),
+      isFinal: async () => true,
+      lock: async () => {
+        throw new Error(
+          'EVM lock must not be called when token amount is mismatched',
+        );
+      },
+      watch: () => () => {},
+    } as unknown as EvmChainAdapter;
+
+    const fakeBch = {
+      getQuorumStatus: () => ({
+        quorumTip: 330000,
+        tips: {},
+        isQuorumHealthy: true,
+        ageSeconds: 5,
+      }),
+      listUnspent: async () => [
+        {
+          height: 330001,
+          tx_hash: '44'.repeat(32),
+          tx_pos: 0,
+          value: 3000,
+          token_data: {
+            category: 'aa'.repeat(32),
+            amount: '3000', // Over-funded: 3000 !== 2500!
+          },
+        },
+      ],
+      getHistory: async () => [],
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: () => {},
+    } as unknown as BchQuorumClient;
+
+    const engine = new SolverEngine(
+      db,
+      fakeEvm,
+      fakeBch,
+      solverEvmKey,
+      sampleWif,
+      'testnet',
+    );
+
+    db.saveOrder({
+      id: orderId,
+      direction: 'BCH_TO_COUNTER',
+      status: 'QUOTED',
+      terms,
+      hashLock: terms.hashLock,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    await engine.step();
+
+    const order = db.getOrder(orderId)!;
+    expect(order.status).toBe('REJECTED');
+    expect(order.rejectionReason).toContain(
+      'Token amount 3000 does not match exact quoted amount 2500',
+    );
+  });
+
+  it(': Fast-lane double-spend proof detected: engine rejects order without counter-locking', async () => {
+    const terms = getDummyReverseTerms({ bchTokenAmount: 2000n }); // $20.00 <= $25
+    const orderId = computeOrderId(terms);
+    const unconfirmedTxId = '55'.repeat(32);
+
+    const fakeEvm = {
+      address: solverAddress,
+      lockId: (s: string, h: string) => sha256(`0x${s.slice(2)}${h.slice(2)}`),
+      getLock: async () => ({ status: 'absent' as const }),
+      isFinal: async () => true,
+      lock: async () => {
+        throw new Error(
+          'Counter-lock must never be called when DSProof is detected',
+        );
+      },
+      watch: () => () => {},
+    } as unknown as EvmChainAdapter;
+
+    const fakeBch = {
+      getQuorumStatus: () => ({
+        quorumTip: 330000,
+        tips: {},
+        isQuorumHealthy: true,
+        ageSeconds: 5,
+      }),
+      listUnspent: async () => [
+        {
+          height: 0, // Unconfirmed 0-conf lock
+          tx_hash: unconfirmedTxId,
+          tx_pos: 0,
+          value: 3000,
+          token_data: {
+            category: 'aa'.repeat(32),
+            amount: '2000',
+          },
+        },
+      ],
+      getDSProof: async (txid: string) => {
+        // Return a detected double-spend proof object!
+        return { txid, proof: '0xmock-dsproof-data' };
+      },
+      getHistory: async () => [],
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: () => {},
+    } as unknown as BchQuorumClient;
+
+    const engine = new SolverEngine(
+      db,
+      fakeEvm,
+      fakeBch,
+      solverEvmKey,
+      sampleWif,
+      'testnet',
+    );
+
+    db.saveOrder({
+      id: orderId,
+      direction: 'BCH_TO_COUNTER',
+      status: 'QUOTED',
+      lane: 'fast',
+      fastOptIn: true,
+      terms,
+      hashLock: terms.hashLock,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    await engine.step();
+
+    const order = db.getOrder(orderId)!;
+    expect(order.status).toBe('REJECTED');
+    expect(order.rejectionReason).toContain(
+      'Double-spend proof detected on user lock',
+    );
+  });
+
+  it(': Fast-lane uncontested lock waits for 5000ms window before finalization', async () => {
+    const terms = getDummyReverseTerms({ bchTokenAmount: 2000n });
+    const orderId = computeOrderId(terms);
+    const unconfirmedTxId = '66'.repeat(32);
+
+    let evmLockCalled = false;
+    const fakeEvm = {
+      address: solverAddress,
+      lockId: (s: string, h: string) => sha256(`0x${s.slice(2)}${h.slice(2)}`),
+      getLock: async () =>
+        evmLockCalled
+          ? {
+              status: 'locked' as const,
+              lockTx: {
+                chain: 'base' as const,
+                txId: '0xmock-evm-counter-lock',
+              },
+              owner: solverAddress,
+              recipient: terms.userCounterAddress,
+              asset: terms.counterAsset,
+              amount: terms.counterAmount,
+              hashLock: terms.hashLock,
+              deadline: terms.counterDeadline,
+            }
+          : { status: 'absent' as const },
+      isFinal: async () => true,
+      lock: async () => {
+        evmLockCalled = true;
+        return { chain: 'base' as const, txId: '0xmock-evm-counter-lock' };
+      },
+      watch: () => () => {},
+    } as unknown as EvmChainAdapter;
+
+    const fakeBch = {
+      getQuorumStatus: () => ({
+        quorumTip: 330000,
+        tips: {},
+        isQuorumHealthy: true,
+        ageSeconds: 5,
+      }),
+      listUnspent: async () => [
+        {
+          height: 0, // Unconfirmed
+          tx_hash: unconfirmedTxId,
+          tx_pos: 0,
+          value: 3000,
+          token_data: {
+            category: 'aa'.repeat(32),
+            amount: '2000',
+          },
+        },
+      ],
+      getDSProof: async () => null, // Clear of proofs
+      getHistory: async () => [],
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: () => {},
+    } as unknown as BchQuorumClient;
+
+    const engine = new SolverEngine(
+      db,
+      fakeEvm,
+      fakeBch,
+      solverEvmKey,
+      sampleWif,
+      'testnet',
+    );
+
+    // Initial order: first seen right now (elapsed 0 ms < 5000 ms window)
+    db.saveOrder({
+      id: orderId,
+      direction: 'BCH_TO_COUNTER',
+      status: 'QUOTED',
+      lane: 'fast',
+      fastOptIn: true,
+      firstSeenAt: Date.now(),
+      terms,
+      hashLock: terms.hashLock,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    // Step 1: should see user lock, but NOT finalize it because elapsed < 5000ms
+    await engine.step();
+    let order = db.getOrder(orderId)!;
+    expect(order.status).toBe('USER_LOCK_SEEN');
+    expect(evmLockCalled).toBe(false);
+
+    // Step 2: simulate time passing beyond the 5000 ms window (e.g. 6000 ms ago)
+    order.firstSeenAt = Date.now() - 6000;
+    db.saveOrder(order);
+
+    await engine.step();
+    order = db.getOrder(orderId)!;
+    expect(order.status).toBe('SOLVER_LOCK_SEEN');
+    expect(evmLockCalled).toBe(true);
+  });
+
+  describe('Reverse Chaos & Fault Injection (CH-01, CH-02, CH-03, CH-04)', () => {
+    it('CH-01-rev: Fault before EVM lock: restart locks EVM without duplication', async () => {
+      const terms = getDummyReverseTerms();
+      const orderId = computeOrderId(terms);
+      let evmLockCount = 0;
+
+      const fakeEvm = {
+        address: solverAddress,
+        lockId: (s: string, h: string) =>
+          sha256(`0x${s.slice(2)}${h.slice(2)}`),
+        getLock: async () =>
+          evmLockCount === 0
+            ? { status: 'absent' as const }
+            : { status: 'locked' as const },
+        isFinal: async () => true,
+        lock: async () => {
+          evmLockCount++;
+          return { chain: 'base' as const, txId: '0xmock-evm-lock' };
+        },
+        watch: () => () => {},
+      } as unknown as EvmChainAdapter;
+
+      const fakeBch = {
+        getQuorumStatus: () => ({
+          quorumTip: 330000,
+          tips: {},
+          isQuorumHealthy: true,
+          ageSeconds: 5,
+        }),
+        listUnspent: async () => [
+          {
+            height: 330001,
+            tx_hash: '77'.repeat(32),
+            tx_pos: 0,
+            value: 3000,
+            token_data: { category: 'aa'.repeat(32), amount: '2500' },
+          },
+        ],
+        getHistory: async () => [],
+        subscribeScriptHash: async () => {},
+        unsubscribeScriptHash: () => {},
+      } as unknown as BchQuorumClient;
+
+      // Seed order as USER_LOCK_FINAL (as if killed right before EVM lock)
+      db.saveOrder({
+        id: orderId,
+        direction: 'BCH_TO_COUNTER',
+        status: 'USER_LOCK_FINAL',
+        terms,
+        hashLock: terms.hashLock,
+        userLockTxId: '77'.repeat(32),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      const engine = new SolverEngine(
+        db,
+        fakeEvm,
+        fakeBch,
+        solverEvmKey,
+        sampleWif,
+        'testnet',
+      );
+
+      await engine.step();
+      expect(evmLockCount).toBe(1);
+      const order = db.getOrder(orderId)!;
+      expect(order.status).toBe('SOLVER_LOCK_SEEN');
+    });
+
+    it('CH-01-rev: Fault after EVM lock: restart adopts locked state without duplicate lock', async () => {
+      const terms = getDummyReverseTerms();
+      const orderId = computeOrderId(terms);
+      let evmLockCount = 0;
+
+      const fakeEvm = {
+        address: solverAddress,
+        lockId: (s: string, h: string) =>
+          sha256(`0x${s.slice(2)}${h.slice(2)}`),
+        getLock: async () => ({
+          status: 'locked' as const,
+          lockTx: { chain: 'base' as const, txId: '0xexisting-evm-lock' },
+          owner: solverAddress,
+          recipient: terms.userCounterAddress,
+          asset: terms.counterAsset,
+          amount: terms.counterAmount,
+          hashLock: terms.hashLock,
+          deadline: terms.counterDeadline,
+        }),
+        isFinal: async () => true,
+        lock: async () => {
+          evmLockCount++;
+          return { chain: 'base' as const, txId: '0xduplicate-lock' };
+        },
+        watch: () => () => {},
+      } as unknown as EvmChainAdapter;
+
+      const fakeBch = {
+        getQuorumStatus: () => ({
+          quorumTip: 330000,
+          tips: {},
+          isQuorumHealthy: true,
+          ageSeconds: 5,
+        }),
+        listUnspent: async () => [],
+        getHistory: async () => [],
+        subscribeScriptHash: async () => {},
+        unsubscribeScriptHash: () => {},
+      } as unknown as BchQuorumClient;
+
+      db.saveOrder({
+        id: orderId,
+        direction: 'BCH_TO_COUNTER',
+        status: 'USER_LOCK_FINAL',
+        terms,
+        hashLock: terms.hashLock,
+        userLockTxId: '77'.repeat(32),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      const engine = new SolverEngine(
+        db,
+        fakeEvm,
+        fakeBch,
+        solverEvmKey,
+        sampleWif,
+        'testnet',
+      );
+
+      await engine.step();
+      expect(evmLockCount).toBe(0); // Zero duplicate calls!
+      const order = db.getOrder(orderId)!;
+      expect(order.status).toBe('SOLVER_LOCK_SEEN');
+    });
+
+    it('CH-01-rev: Fault before BCH claim broadcast: restart broadcasts saved hex exactly once', async () => {
+      const secret = `0x${'55'.repeat(32)}` as const;
+      const terms = getDummyReverseTerms({ hashLock: sha256(secret) });
+      const orderId = computeOrderId(terms);
+      const userLockTxId = '88'.repeat(32);
+      const bchBroadcasts: string[] = [];
+
+      const fakeEvm = {
+        address: solverAddress,
+        lockId: (s: string, h: string) =>
+          sha256(`0x${s.slice(2)}${h.slice(2)}`),
+        getLock: async () => ({
+          status: 'claimed' as const,
+          claimTx: { chain: 'base' as const, txId: '0xclaim-tx' },
+          secret,
+        }),
+        isFinal: async () => true,
+        watch: () => () => {},
+      } as unknown as EvmChainAdapter;
+
+      const fakeBch = {
+        getQuorumStatus: () => ({
+          quorumTip: 330000,
+          tips: {},
+          isQuorumHealthy: true,
+          ageSeconds: 5,
+        }),
+        listUnspent: async () => [
+          {
+            height: 330001,
+            tx_hash: userLockTxId,
+            tx_pos: 0,
+            value: 3000,
+            token_data: { category: 'aa'.repeat(32), amount: '2500' },
+          },
+        ],
+        getHistory: async () => [],
+        broadcast: async (txHex: string) => {
+          bchBroadcasts.push(txHex);
+          return '0xsolver-bch-claim';
+        },
+        subscribeScriptHash: async () => {},
+        unsubscribeScriptHash: () => {},
+      } as unknown as BchQuorumClient;
+
+      // Seed order in USER_CLAIM_SEEN with pre-persisted intent (as if killed right after writing intent)
+      db.saveOrder({
+        id: orderId,
+        direction: 'BCH_TO_COUNTER',
+        status: 'USER_CLAIM_SEEN',
+        terms,
+        hashLock: terms.hashLock,
+        userLockTxId,
+        secret,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      db.recordActionIntent(orderId, 'SOLVER_CLAIM', {
+        txid: '0xpre-computed-claim-txid',
+        txHex: '0100000001mockclaimhex',
+      });
+
+      const engine = new SolverEngine(
+        db,
+        fakeEvm,
+        fakeBch,
+        solverEvmKey,
+        sampleWif,
+        'testnet',
+      );
+
+      await engine.step();
+      expect(bchBroadcasts).toEqual(['0100000001mockclaimhex']);
+      const order = db.getOrder(orderId)!;
+      expect(order.status).toBe('SOLVER_CLAIM_BROADCAST');
+    });
+
+    it('CH-02-rev: Electrum drop mid-swap falls over and completes reverse swap', async () => {
+      const secret = `0x${'aa'.repeat(32)}` as const;
+      const terms = getDummyReverseTerms({ hashLock: sha256(secret) });
+      const orderId = computeOrderId(terms);
+      let electrumFails = true;
+
+      const fakeEvm = {
+        address: solverAddress,
+        lockId: (s: string, h: string) =>
+          sha256(`0x${s.slice(2)}${h.slice(2)}`),
+        getLock: async () => ({
+          status: 'claimed' as const,
+          claimTx: { chain: 'base' as const, txId: '0xclaim' },
+          secret,
+        }),
+        isFinal: async () => true,
+        watch: () => () => {},
+      } as unknown as EvmChainAdapter;
+
+      const fakeBch = {
+        getQuorumStatus: () => ({
+          quorumTip: 330000,
+          tips: {},
+          isQuorumHealthy: true,
+          ageSeconds: 5,
+        }),
+        listUnspent: async () => {
+          if (electrumFails) {
+            throw new Error('Electrum connection dropped');
+          }
+          return [
+            {
+              height: 330001,
+              tx_hash: '99'.repeat(32),
+              tx_pos: 0,
+              value: 3000,
+              token_data: { category: 'aa'.repeat(32), amount: '2500' },
+            },
+          ];
+        },
+        getHistory: async () => [],
+        broadcast: async () => '0xclaim-tx',
+        subscribeScriptHash: async () => {},
+        unsubscribeScriptHash: () => {},
+      } as unknown as BchQuorumClient;
+
+      db.saveOrder({
+        id: orderId,
+        direction: 'BCH_TO_COUNTER',
+        status: 'USER_CLAIM_SEEN',
+        terms,
+        hashLock: terms.hashLock,
+        userLockTxId: '99'.repeat(32),
+        secret,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      const engine = new SolverEngine(
+        db,
+        fakeEvm,
+        fakeBch,
+        solverEvmKey,
+        sampleWif,
+        'testnet',
+      );
+
+      // Step with Electrum dropped: engine catches and logs error, does not crash
+      await engine.step();
+      let order = db.getOrder(orderId)!;
+      expect(order.status).toBe('USER_CLAIM_SEEN');
+
+      // Electrum recovers
+      electrumFails = false;
+      await engine.step();
+      order = db.getOrder(orderId)!;
+      expect(order.status).toBe('SOLVER_CLAIM_BROADCAST');
+    });
+
+    it('CH-03-rev: User funds BCH HTLC after quote expiry -> solver refuses to counter-lock (REJECTED)', async () => {
+      const terms = getDummyReverseTerms({
+        quoteExpiry: Math.floor(Date.now() / 1000) - 10,
+      });
+      const orderId = computeOrderId(terms);
+      let evmLockCalled = false;
+
+      const fakeEvm = {
+        address: solverAddress,
+        lockId: (s: string, h: string) =>
+          sha256(`0x${s.slice(2)}${h.slice(2)}`),
+        getLock: async () => ({ status: 'absent' as const }),
+        isFinal: async () => true,
+        lock: async () => {
+          evmLockCalled = true;
+          return { chain: 'base' as const, txId: '0xlate-lock' };
+        },
+        watch: () => () => {},
+      } as unknown as EvmChainAdapter;
+
+      const fakeBch = {
+        getQuorumStatus: () => ({
+          quorumTip: 330000,
+          tips: {},
+          isQuorumHealthy: true,
+          ageSeconds: 5,
+        }),
+        listUnspent: async () => [
+          {
+            height: 330001,
+            tx_hash: '12'.repeat(32),
+            tx_pos: 0,
+            value: 3000,
+            token_data: { category: 'aa'.repeat(32), amount: '2500' },
+          },
+        ],
+        getHistory: async () => [],
+        subscribeScriptHash: async () => {},
+        unsubscribeScriptHash: () => {},
+      } as unknown as BchQuorumClient;
+
+      db.saveOrder({
+        id: orderId,
+        direction: 'BCH_TO_COUNTER',
+        status: 'QUOTED',
+        terms,
+        hashLock: terms.hashLock,
+        createdAt: Date.now() - 30000,
+        updatedAt: Date.now() - 30000,
+      });
+
+      const engine = new SolverEngine(
+        db,
+        fakeEvm,
+        fakeBch,
+        solverEvmKey,
+        sampleWif,
+        'testnet',
+      );
+
+      await engine.step();
+      expect(evmLockCalled).toBe(false);
+      const order = db.getOrder(orderId)!;
+      expect(order.status).toBe('REJECTED');
+      expect(order.rejectionReason).toContain(
+        'Quote expired before user lock finalized',
+      );
+    });
+
+    it('CH-04-rev: Invariant R violation injected -> solver refuses to counter-lock (REJECTED)', async () => {
+      // Invariant R requires: bchRefundHeight - currentTip >= 108
+      // Inject short refund height (only 50 blocks above tip)
+      const terms = getDummyReverseTerms({
+        bchRefundHeight: 330050,
+      });
+      const orderId = computeOrderId(terms);
+      let evmLockCalled = false;
+
+      const fakeEvm = {
+        address: solverAddress,
+        lockId: (s: string, h: string) =>
+          sha256(`0x${s.slice(2)}${h.slice(2)}`),
+        getLock: async () => ({ status: 'absent' as const }),
+        isFinal: async () => true,
+        lock: async () => {
+          evmLockCalled = true;
+          return { chain: 'base' as const, txId: '0xinvalid-lock' };
+        },
+        watch: () => () => {},
+      } as unknown as EvmChainAdapter;
+
+      const fakeBch = {
+        getQuorumStatus: () => ({
+          quorumTip: 330000,
+          tips: {},
+          isQuorumHealthy: true,
+          ageSeconds: 5,
+        }),
+        listUnspent: async () => [
+          {
+            height: 330001,
+            tx_hash: '34'.repeat(32),
+            tx_pos: 0,
+            value: 3000,
+            token_data: { category: 'aa'.repeat(32), amount: '2500' },
+          },
+        ],
+        getHistory: async () => [],
+        subscribeScriptHash: async () => {},
+        unsubscribeScriptHash: () => {},
+      } as unknown as BchQuorumClient;
+
+      db.saveOrder({
+        id: orderId,
+        direction: 'BCH_TO_COUNTER',
+        status: 'QUOTED',
+        terms,
+        hashLock: terms.hashLock,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      const engine = new SolverEngine(
+        db,
+        fakeEvm,
+        fakeBch,
+        solverEvmKey,
+        sampleWif,
+        'testnet',
+      );
+
+      await engine.step();
+      expect(evmLockCalled).toBe(false);
+      const order = db.getOrder(orderId)!;
+      expect(order.status).toBe('REJECTED');
+      expect(order.rejectionReason).toContain('Invariant R violation');
+    });
+  });
 });

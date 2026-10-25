@@ -373,3 +373,21 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Consequence for rebuild:** Differentiate UTXO-based chain raw-transaction write-ahead from account-based EVM contract check-then-act. Support gasless reverse claims via solver relay.
 - **Revisit if:** EVM gas spike exceeds spread buffer or fee abstraction ERC-4337 is integrated.
 
+---
+
+### D-A2-009 · Fast-lane zero-conf policy enforcement and reverse BCH lock parameter verification
+- **Decision:**
+  1. *Fast-lane protection (threat T2):*
+     - Quote requests for `lane: 'fast'` must provide an explicit opt-in (`fastOptIn: true`) and cannot exceed the zero-conf cap ($25.00 / 25,000,000 micros per `DEFAULT_REVEAL_CONFIG.zeroConfMaxUsdMicros`). We explicitly refuse quotes exceeding the cap with HTTP 400 `FAST_LANE_CAP_EXCEEDED` rather than silently downgrading to safe lane, ensuring user UX expectations regarding settlement latency are preserved.
+     - When detecting unconfirmed BCH locks (`confirmations === 0`), the engine queries Fulcrum for double-spend proofs via `blockchain.transaction.dsproof.get` (`BchQuorumClient.getDSProof`).
+     - The engine records the lock observation timestamp (`firstSeenAt`) in the SQLite database and requires the elapsed time to satisfy the 5,000 ms observation window per `D-A3-003` via core's `revealPolicy`.
+     - If a double-spend proof is detected (`dsproof === 'detected'`), the engine marks the order `INVALID_TERMS` and rejects it immediately, guaranteeing zero USDC counter-locks are ever issued against contested locks.
+  2. *Reverse lock parameter verification:*
+     - The reverse engine validates that candidate covenant UTXOs match the exact quoted token amount (`u.token_data.amount === terms.bchTokenAmount`) and provide adequate fee carry (`u.value >= terms.bchCarrySats`). Over-funded/under-funded token amounts and under-funded satoshi carries are rejected immediately (`INVALID_TERMS`), forcing the user to refund by height and protecting the solver from invalid claim transactions or dust outputs.
+- **Evidence:** Tested with unit and integration suites:
+  - `api.test.ts`: Fast lane quote requests without `fastOptIn` rejected with `FAST_LANE_OPT_IN_REQUIRED`; requests exceeding $25 cap rejected with `FAST_LANE_CAP_EXCEEDED`.
+  - `reverse.test.ts`: Fast lane unconfirmed lock with double-spend proof rejected without counter-locking; under-funded satoshi carry rejected; over-funded token amount rejected; unconfirmed fast lock respects DSProof observation window before finalization.
+- **Consequence for rebuild:** Never trust unconfirmed UTXOs without double-spend proof verification and observation time gates; validate both token and satoshi outputs before counter-locking.
+- **Revisit if:** Double-spend notification protocol is updated or zero-conf insurance protocols are adopted.
+
+

@@ -7,7 +7,12 @@ import {
   buildRefundTransaction,
   buildClaimTransaction,
 } from '@ferry/htlc-bch';
-import { invariantF, invariantR, type LockEvent } from '@ferry/core';
+import {
+  invariantF,
+  invariantR,
+  revealPolicy,
+  type LockEvent,
+} from '@ferry/core';
 import type { EvmChainAdapter } from '@ferry/chain-evm';
 import { decodeTransaction } from '@bitauth/libauth';
 import type { SolverDatabase } from '../db/database.js';
@@ -859,37 +864,121 @@ export class SolverEngine {
     );
     const expectedInternal = binToHex(internalBytes).toLowerCase();
 
-    const lockUtxo = utxos.find((u) => {
+    // 1. Filter UTXOs matching category
+    const categoryUtxos = utxos.filter((u) => {
       if (!u.token_data) return false;
       const cat = u.token_data.category.toLowerCase().replace(/^0x/, '');
-      const matchesCategory =
-        cat === expectedDisplay || cat === expectedInternal;
-      const matchesAmount =
-        BigInt(u.token_data.amount) >= order.terms.bchTokenAmount;
-      return matchesCategory && matchesAmount;
+      return cat === expectedDisplay || cat === expectedInternal;
     });
 
-    if (lockUtxo) {
-      if (order.status === 'QUOTED') {
-        this.applyEvent(order, {
-          type: 'USER_LOCK_SEEN',
-          txId: lockUtxo.tx_hash,
-        });
-      }
+    if (categoryUtxos.length === 0) {
+      return;
+    }
 
-      const isFast = order.lane === 'fast';
-      const isMined = lockUtxo.height !== undefined && lockUtxo.height > 0;
-      const isFinal = isFast ? true : isMined;
+    // 2. Validate exact token amount and sufficient BCH carry
+    const validLockUtxo = categoryUtxos.find((u) => {
+      const exactAmount =
+        BigInt(u.token_data!.amount) === order.terms.bchTokenAmount;
+      const sufficientCarry = BigInt(u.value) >= order.terms.bchCarrySats;
+      return exactAmount && sufficientCarry;
+    });
 
-      if (
-        isFinal &&
-        (order.status === 'QUOTED' || order.status === 'USER_LOCK_SEEN')
-      ) {
-        this.applyEvent(order, {
-          type: 'USER_LOCK_FINAL',
-          txId: lockUtxo.tx_hash,
-        });
+    if (!validLockUtxo) {
+      // User funded address with matching category but invalid amount or carry
+      const candidate = categoryUtxos[0]!;
+      const actualAmount = BigInt(candidate.token_data!.amount);
+      const actualCarry = BigInt(candidate.value);
+      let reason: string;
+      if (actualAmount !== order.terms.bchTokenAmount) {
+        reason = `Token amount ${actualAmount} does not match exact quoted amount ${order.terms.bchTokenAmount}`;
+      } else {
+        reason = `Lock carry ${actualCarry} sats is below required ${order.terms.bchCarrySats} sats`;
       }
+      this.logger.warn(
+        { orderId: order.id, actualAmount, actualCarry, reason },
+        'User BCH lock has invalid terms; rejecting',
+      );
+      this.applyEvent(order, {
+        type: 'INVALID_TERMS',
+        reason,
+      });
+      return;
+    }
+
+    // 3. Valid lock seen
+    if (order.status === 'QUOTED') {
+      this.applyEvent(order, {
+        type: 'USER_LOCK_SEEN',
+        txId: validLockUtxo.tx_hash,
+      });
+    }
+
+    // 4. Reveal policy evaluation
+    const quorum = this.bchClient.getQuorumStatus();
+    const confirmations =
+      validLockUtxo.height !== undefined &&
+      validLockUtxo.height > 0 &&
+      quorum.quorumTip > 0
+        ? Math.max(1, quorum.quorumTip - validLockUtxo.height + 1)
+        : 0;
+
+    let dsproof: 'clear' | 'detected' | 'unavailable' | undefined;
+    let dsproofElapsedMs: number | undefined;
+
+    if (confirmations === 0) {
+      if (!order.firstSeenAt) {
+        order.firstSeenAt = Date.now();
+        this.db.saveOrder(order);
+      }
+      dsproofElapsedMs = Date.now() - order.firstSeenAt;
+
+      // Query Fulcrum DSProof status if client provides getDSProof
+      if (typeof this.bchClient.getDSProof === 'function') {
+        try {
+          const proof = await this.bchClient.getDSProof(validLockUtxo.tx_hash);
+          dsproof = proof ? 'detected' : 'clear';
+        } catch {
+          dsproof = 'unavailable';
+        }
+      } else {
+        dsproof = 'unavailable';
+      }
+    }
+
+    const amountUsdMicros = order.terms.bchTokenAmount * 10_000n; // 2 decimals -> 6 decimals ($)
+    const decision = revealPolicy({
+      chain: 'bch',
+      amountUsdMicros,
+      lane: order.lane ?? 'safe',
+      fastOptIn: order.fastOptIn ?? false,
+      evidence: {
+        exists: true,
+        confirmations,
+        ...(dsproof ? { dsproof } : {}),
+        ...(dsproofElapsedMs !== undefined ? { dsproofElapsedMs } : {}),
+      },
+    });
+
+    if (decision.reason === 'dsproof') {
+      this.logger.warn(
+        { orderId: order.id, txId: validLockUtxo.tx_hash },
+        'Double-spend proof detected on user BCH lock; rejecting order',
+      );
+      this.applyEvent(order, {
+        type: 'INVALID_TERMS',
+        reason: 'Double-spend proof detected on user lock',
+      });
+      return;
+    }
+
+    if (
+      decision.allowed &&
+      (order.status === 'QUOTED' || order.status === 'USER_LOCK_SEEN')
+    ) {
+      this.applyEvent(order, {
+        type: 'USER_LOCK_FINAL',
+        txId: validLockUtxo.tx_hash,
+      });
     }
   }
 
@@ -973,6 +1062,10 @@ export class SolverEngine {
         );
         this.applyEvent(order, {
           type: 'SOLVER_LOCK_BROADCAST',
+          txId: currentLock.lockTx.txId,
+        });
+        this.applyEvent(order, {
+          type: 'SOLVER_LOCK_SEEN',
           txId: currentLock.lockTx.txId,
         });
         return;

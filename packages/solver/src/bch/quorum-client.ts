@@ -359,6 +359,16 @@ export class BchQuorumClient implements DSProofWatcher {
     );
   }
 
+  async getDSProof(txid: string): Promise<unknown | null> {
+    try {
+      return await this.executeWithFailover((client) =>
+        client.request('blockchain.transaction.dsproof.get', [txid]),
+      );
+    } catch {
+      return null;
+    }
+  }
+
   async subscribeScriptHash(
     scriptHash: string,
     callback: (status: string | null) => void,

@@ -46,6 +46,9 @@ export class SolverDatabase {
         user_claim_txid TEXT,
         solver_claim_txid TEXT,
         solver_refund_txid TEXT,
+        lane TEXT DEFAULT 'safe',
+        fast_opt_in INTEGER DEFAULT 0,
+        first_seen_at INTEGER,
         needs_attention INTEGER NOT NULL DEFAULT 0,
         rejection_reason TEXT,
         created_at INTEGER NOT NULL,
@@ -82,11 +85,11 @@ export class SolverDatabase {
       INSERT INTO orders (
         id, direction, status, user_counter_address, lock_id, terms_json, hash_lock, secret, secret_source,
         user_lock_txid, solver_lock_txid, user_claim_txid, solver_claim_txid,
-        solver_refund_txid, needs_attention, rejection_reason, created_at, updated_at
+        solver_refund_txid, lane, fast_opt_in, first_seen_at, needs_attention, rejection_reason, created_at, updated_at
       ) VALUES (
         @id, @direction, @status, @user_counter_address, @lock_id, @terms_json, @hash_lock, @secret, @secret_source,
         @user_lock_txid, @solver_lock_txid, @user_claim_txid, @solver_claim_txid,
-        @solver_refund_txid, @needs_attention, @rejection_reason, @created_at, @updated_at
+        @solver_refund_txid, @lane, @fast_opt_in, @first_seen_at, @needs_attention, @rejection_reason, @created_at, @updated_at
       )
       ON CONFLICT(id) DO UPDATE SET
         status = excluded.status,
@@ -97,6 +100,9 @@ export class SolverDatabase {
         user_claim_txid = excluded.user_claim_txid,
         solver_claim_txid = excluded.solver_claim_txid,
         solver_refund_txid = excluded.solver_refund_txid,
+        lane = excluded.lane,
+        fast_opt_in = excluded.fast_opt_in,
+        first_seen_at = COALESCE(excluded.first_seen_at, orders.first_seen_at),
         needs_attention = excluded.needs_attention,
         rejection_reason = excluded.rejection_reason,
         updated_at = excluded.updated_at
@@ -119,6 +125,9 @@ export class SolverDatabase {
       user_claim_txid: order.userClaimTxId ?? null,
       solver_claim_txid: order.solverClaimTxId ?? null,
       solver_refund_txid: order.solverRefundTxId ?? null,
+      lane: order.lane ?? 'safe',
+      fast_opt_in: order.fastOptIn ? 1 : 0,
+      first_seen_at: order.firstSeenAt ?? null,
       needs_attention: order.needsAttention ? 1 : 0,
       rejection_reason: order.rejectionReason ?? null,
       created_at: order.createdAt,
@@ -276,6 +285,9 @@ export class SolverDatabase {
       id: row.id as string,
       direction: row.direction as 'BCH_TO_COUNTER' | 'COUNTER_TO_BCH',
       status: row.status as ForwardOrderStatus,
+      lane: (row.lane as 'safe' | 'fast') || 'safe',
+      fastOptIn: row.fast_opt_in === 1,
+      firstSeenAt: (row.first_seen_at as number) || undefined,
       terms: parsedTerms,
       hashLock: row.hash_lock as `0x${string}`,
       secret: (row.secret as `0x${string}`) || undefined,

@@ -22,6 +22,8 @@ export interface SolverOrderRecord {
   direction: 'BCH_TO_COUNTER' | 'COUNTER_TO_BCH';
   status: ForwardOrderStatus;
   lane?: 'safe' | 'fast' | undefined;
+  fastOptIn?: boolean | undefined;
+  firstSeenAt?: number | undefined;
   terms: OrderTerms;
   hashLock: `0x${string}`;
   secret?: `0x${string}` | undefined;

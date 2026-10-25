@@ -372,4 +372,75 @@ describe('Solver API contracts & Secret Privacy Rule', () => {
     expect(relayBody.status).toBe('USER_CLAIM_SEEN');
     expect(relayBody.tx.txId).toBe('0xmock-claim-tx');
   });
+
+  it('POST /v1/quotes enforces fast-lane explicit opt-in and zero-conf cap ($25)', async () => {
+    const hashLock = sha256(`0x${'77'.repeat(32)}` as const);
+
+    // 1. Missing fastOptIn
+    const noOptInRes = await app.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: {
+        direction: 'BCH_TO_COUNTER',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '1000', // $10.00
+        userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+        userBchLockingBytecode:
+          '0x76a914444444444444444444444444444444444444444488ac',
+        hashLock,
+        lane: 'fast',
+      },
+    });
+    expect(noOptInRes.statusCode).toBe(400);
+    expect(JSON.parse(noOptInRes.payload).code).toBe(
+      'FAST_LANE_OPT_IN_REQUIRED',
+    );
+
+    // 2. Exceeds $25 zero-conf cap ($30.00 = 3000 PUSD)
+    const capExceededRes = await app.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: {
+        direction: 'BCH_TO_COUNTER',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '3000', // $30.00 > $25.00
+        userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+        userBchLockingBytecode:
+          '0x76a914444444444444444444444444444444444444444488ac',
+        hashLock,
+        lane: 'fast',
+        fastOptIn: true,
+      },
+    });
+    expect(capExceededRes.statusCode).toBe(400);
+    expect(JSON.parse(capExceededRes.payload).code).toBe(
+      'FAST_LANE_CAP_EXCEEDED',
+    );
+
+    // 3. Valid fast lane ($20.00 = 2000 PUSD, with opt-in)
+    const validFastRes = await app.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: {
+        direction: 'BCH_TO_COUNTER',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '2000', // $20.00 <= $25.00
+        userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+        userBchLockingBytecode:
+          '0x76a914444444444444444444444444444444444444444488ac',
+        hashLock,
+        lane: 'fast',
+        fastOptIn: true,
+      },
+    });
+    expect(validFastRes.statusCode).toBe(200);
+    const validFastBody = JSON.parse(validFastRes.payload);
+    expect(validFastBody.lane).toBe('fast');
+  });
 });
