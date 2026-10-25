@@ -59,12 +59,15 @@ describe('placeholder routes', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders the pay link page with the link id', async () => {
+  it('renders the pay link page for an unknown link', async () => {
     renderAt('/p/link_123');
 
     expect(
-      await screen.findByRole('heading', { level: 1 }),
+      await screen.findByRole('heading', {
+        level: 1,
+        name: /link unavailable/i,
+      }),
     ).toBeInTheDocument();
-    expect(await screen.findByText('Link link_123')).toBeInTheDocument();
+    expect(await screen.findByText(/pay link not found/i)).toBeInTheDocument();
   });
 });
