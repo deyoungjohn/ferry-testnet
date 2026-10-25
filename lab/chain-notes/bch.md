@@ -96,3 +96,22 @@ Measured using 10 sequential P2PKH self-spends on `wss://chipnet.imaginary.cash:
   - HTLC token address: `bchtest:rvjn7gs3tmfkl2zng4xwlnmw6tjhg5eey782wx6qm9um0n30v7lgseahsw9u9`.
   - Recipient claimed the locked 100 tPUSD using `buildClaimTransaction` with 32-byte secret preimage.
   - Claim broadcast and confirmed on Chipnet: `fae826f20ef3717f7bcdb504beb1f5ddd9bed2537b9017f73189c5a8924bcd29`.
+---
+
+## 2026-10-25 · XO Hybrid Lock & Claim Verification
+
+Live round-trip probe on Chipnet combining XO Engine template evaluation with CashScript spend execution (`packages/htlc-bch/src/probe-xo-hybrid.ts`).
+
+### Lock Invitation & Bytecode Parity
+- XO Engine imported `ferryHtlcTemplate` and created a lock invitation (`6172320baf1453e4951a2aa5b4dafa37`).
+- Output locking bytecode was resolved via `engine.resolveInvitationOutputLockingBytecode` as `aa207253bf163d4bae2fff62603ec1f90c824cff68e6b4d37ca36ca8539eae858dfa87`.
+- Byte-for-byte comparison with CashScript contract derivation (`deriveHtlcAddresses`) matched identically (S-02 Parity PASS).
+
+### On-Chain Transactions
+- **Lock Transaction:** Broadcast to Chipnet with transaction ID `f1d537078e1ebd0d218190a5b854c32c14114faa9b7518293c5d8bcde867afaf` (439 bytes). Funded 100 tPUSD (`ec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac`) and 2000 satoshis carry into the XO-derived covenant P2SH32 output.
+- **UTXO Confirmation:** Confirmed on Chipnet at output index 0 with exact token category, 100 base units, and 2000 satoshis carry.
+- **Claim Transaction:** Built using CashScript `buildClaimTransaction` with secret preimage and broadcast to Chipnet with transaction ID `0a4e6ddbf0371e0dd8396d7c1cf49bd3a8c69e22b5711a763e74811e5482d2a3` (376 bytes). Confirmed on Chipnet with recipient receiving 100 tPUSD.
+
+### XO Engine Workaround Assessment
+- Testing `engine.buildInvitationTransactionFromMergedCommit` demonstrated that XO Engine can construct the unsigned wire transaction skeleton for the claim action (120 bytes, transaction hash `126922521cfe2e869137963d7efa2b0d3c4c635756dafebd603581b2fb5f8f41`).
+- However, generating unlocking bytecode via `engine.generateUnlockingBytecode` fails with `InputUnspentOutputUnavailableError` because the public `Engine` class exposes no API to import external UTXOs into its internal tracking store, and `compileInputUnlockingScript` mandates local HD derivation key references.
