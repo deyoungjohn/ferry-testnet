@@ -20,6 +20,7 @@ import { loadSecret } from '../lib/vault';
 import { bchParametersFromTerms } from '../lib/recovery';
 import { ElectrumClient } from '../recover/core';
 import { useSolver } from '../lib/solver/context';
+import { solverIsLive } from '../lib/solver/kind';
 import type { OrderView } from '../lib/solver/types';
 import { buildOrderViewModel, formatDuration } from '../lib/solver/view';
 import { formatPusd, formatUsdc, truncateAddress } from '../lib/swap';
@@ -36,7 +37,7 @@ const ORDER_ID_PATTERN = /^0x[0-9a-fA-F]{64}$/;
 export function SwapStatusPage() {
   const { orderId } = useParams<{ orderId: string }>();
   const solver = useSolver();
-  const { bch, evm, usingMocks } = useWallets();
+  const { bch, evm } = useWallets();
   const [order, setOrder] = useState<OrderView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -426,8 +427,8 @@ export function SwapStatusPage() {
               <h2 className="text-sm font-semibold text-text">Timeline</h2>
               <div className="flex items-center gap-3">
                 <span className="text-[10px] text-text-muted">
-                  {usingMocks ? 'Mock solver' : 'Live solver'} · updates every
-                  2s
+                  {solverIsLive() ? 'Live solver' : 'Mock solver'} · updates
+                  every 2s
                 </span>
                 <button
                   type="button"
@@ -484,7 +485,15 @@ export function SwapStatusPage() {
                     >
                       {step.label}
                     </p>
-                    {step.transaction ? (
+                    {step.transaction && !solverIsLive() ? (
+                      <span
+                        title="Mock transaction: it does not exist on any chain"
+                        className="mt-0.5 inline-block truncate font-mono text-[10px] text-text-muted"
+                      >
+                        {truncateAddress(step.transaction.hash, 12, 8)} (mock,
+                        not on chain)
+                      </span>
+                    ) : step.transaction ? (
                       <a
                         href={explorerTxUrl(
                           step.transaction.chain,

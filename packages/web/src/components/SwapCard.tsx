@@ -106,9 +106,7 @@ export function SwapCard() {
   const expired = quote ? isQuoteExpired(quote.terms, now) : false;
   const reverse = direction === 'BCH_TO_COUNTER';
   const fastDisabled = Number(amount) > 25;
-  const solverLabel = import.meta.env.VITE_SOLVER_URL
-    ? 'Live solver'
-    : 'Mock solver';
+  const solverLabel = solverIsLive() ? 'Live solver' : 'Mock solver';
   const busy = phase === 'quoting' || phase === 'locking';
   const walletsReady = Boolean(evm.address && bch.address);
   const quoteConfigError = bchQuoteConfigError(BCH_NETWORK, bchElectrumUrls());
