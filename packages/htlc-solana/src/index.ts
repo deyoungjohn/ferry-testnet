@@ -31,6 +31,12 @@ export interface LockStateAccount {
   bump: number;
 }
 
+interface MethodBuilder {
+  accountsStrict(accounts: Record<string, PublicKey>): {
+    instruction(): Promise<TransactionInstruction>;
+  };
+}
+
 export function getFerryProgram(provider: AnchorProviderType): ProgramType {
   return new Program(FERRY_HTLC_IDL, provider);
 }
@@ -87,10 +93,9 @@ export async function buildLockInstruction(
 
   const hashLockArray = Array.from(hashLock);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const methods = program.methods as Record<
     string,
-    (...args: unknown[]) => any
+    (...args: unknown[]) => MethodBuilder
   >;
 
   const instruction = (await methods['lock']!(
@@ -146,10 +151,9 @@ export async function buildClaimInstruction(
 
   const secretBuffer = Buffer.from(secret);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const methods = program.methods as Record<
     string,
-    (...args: unknown[]) => any
+    (...args: unknown[]) => MethodBuilder
   >;
 
   const instruction = (await methods['claim']!(secretBuffer)
@@ -197,10 +201,9 @@ export async function buildRefundInstruction(
 
   const payerRentDest = params.payerRentDest ?? payer;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const methods = program.methods as Record<
     string,
-    (...args: unknown[]) => any
+    (...args: unknown[]) => MethodBuilder
   >;
 
   const instruction = (await methods['refund']!()
