@@ -27,7 +27,7 @@ export class FulcrumClient {
   constructor(private url: string = 'wss://chipnet.imaginary.cash:50004') {}
 
   /** Latest tip height seen from header subscriptions (0 until the first header). */
-  getTipHeight(): number {
+  lastKnownTipHeight(): number {
     return this.tipHeight;
   }
 
