@@ -4,13 +4,14 @@ export const SolverConfigSchema = z.object({
   port: z.coerce.number().default(8787),
   host: z.string().default('127.0.0.1'),
   dbPath: z.string().default(':memory:'),
+  network: z.enum(['testnet', 'mainnet']).default('testnet'),
   bchElectrumUrls: z
     .string()
     .default(
       'wss://chipnet.imaginary.cash:50004,wss://blackie.c3-soft.com:50004',
     ),
-  baseRpcUrl: z.string().default('http://127.0.0.1:8546'),
-  baseChainId: z.coerce.number().default(31337),
+  baseRpcUrl: z.string().default('https://sepolia.base.org'),
+  baseChainId: z.coerce.number().default(84532),
   baseHtlcAddress: z
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)
@@ -26,21 +27,39 @@ export const SolverConfigSchema = z.object({
       '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
     ),
   solverBchWif: z.string().optional(),
+  userBchWif: z.string().optional(),
+  userEvmPrivateKey: z.string().optional(),
   tpusdCategory: z
     .string()
     .default(
-      '0xec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac',
+      'ec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac',
     ),
   tmusdCategory: z
     .string()
     .default(
-      '0xc99627aec3e041f281068704c2609699d234586d5097301eff995f3bd00ac04d',
+      'c99627aec3e041f281068704c2609699d234586d5097301eff995f3bd00ac04d',
     ),
-  spreadBps: z.coerce.number().default(50),
-  fixedFeeUsdMicros: z.coerce.bigint().default(100000n), // $0.10
-  minSwapUsdMicros: z.coerce.bigint().default(5000000n), // $5.00
-  maxSwapUsdMicros: z.coerce.bigint().default(250000000n), // $250.00
-  maxExposureUsdMicros: z.coerce.bigint().default(1000000000n), // $1000.00
+  pusdCategory: z.string().optional(),
+  musdCategory: z.string().optional(),
+  quotingEnabled: z.coerce.boolean().default(true),
+  spreadBps: z.coerce.number().default(40),
+  fixedFeeUsdMicros: z.coerce.bigint().default(50000n), // $0.05
+  minSwapUsdMicros: z.coerce.bigint().default(1000000n), // $1.00
+  maxSwapUsdMicros: z.coerce.bigint().default(50000000n), // $50.00
+  maxExposureUsdMicros: z.coerce.bigint().default(250000000n), // $250.00
+  zeroConfMaxUsdMicros: z.coerce.bigint().default(25000000n), // $25.00
+  quoteTtlSeconds: z.coerce.number().default(60),
+  pegTolerance: z.coerce.number().default(0.01),
+  evmConfs: z.coerce.number().default(10),
+  dsproofWindowMs: z.coerce.number().default(5000),
+  fwdBchRefundBlocks: z.coerce.number().default(36),
+  fwdEvmDeadlineSeconds: z.coerce.number().default(86400),
+  revBchRefundBlocks: z.coerce.number().default(144),
+  revEvmDeadlineSeconds: z.coerce.number().default(21600),
+  revMinRemainingBlocks: z.coerce.number().default(108),
+  bchCarrySats: z.coerce.bigint().default(3000n),
+  bchMaxFeeSats: z.coerce.bigint().default(1500n),
+  skewMaxBps: z.coerce.number().default(50),
   tipMaxAgeBchSeconds: z.coerce.number().default(7200),
   tipMaxAgeBaseSeconds: z.coerce.number().default(60),
 });
@@ -50,19 +69,62 @@ export type SolverConfig = z.infer<typeof SolverConfigSchema>;
 export function loadConfigFromEnv(
   env: Record<string, string | undefined>,
 ): SolverConfig {
+  const network = (env.NETWORK || 'testnet').toLowerCase() as
+    'testnet' | 'mainnet';
+  const isMainnet = network === 'mainnet';
+
+  const bchElectrumUrls = isMainnet
+    ? env.BCH_ELECTRUM_URLS
+    : env.BCH_CHIPNET_ELECTRUM_URLS || env.BCH_ELECTRUM_URLS;
+
+  const baseRpcUrl = isMainnet
+    ? env.BASE_RPC_URL
+    : env.BASE_SEPOLIA_RPC_URL || env.BASE_RPC_URL;
+
+  const baseChainId = isMainnet
+    ? env.BASE_CHAIN_ID
+      ? Number(env.BASE_CHAIN_ID)
+      : 8453
+    : env.BASE_SEPOLIA_CHAIN_ID
+      ? Number(env.BASE_SEPOLIA_CHAIN_ID)
+      : env.BASE_CHAIN_ID
+        ? Number(env.BASE_CHAIN_ID)
+        : 84532;
+
+  const baseHtlcAddress = isMainnet
+    ? env.FERRY_HTLC_ADDRESS || env.BASE_FERRY_HTLC_ADDRESS
+    : env.BASE_SEPOLIA_FERRY_HTLC_ADDRESS ||
+      env.FERRY_HTLC_ADDRESS ||
+      env.BASE_FERRY_HTLC_ADDRESS;
+
+  const baseUsdcAddress = isMainnet
+    ? env.USDC_ADDRESS || env.BASE_USDC_ADDRESS
+    : env.BASE_SEPOLIA_USDC_ADDRESS ||
+      env.USDC_ADDRESS ||
+      env.BASE_USDC_ADDRESS;
+
   return SolverConfigSchema.parse({
     port: env.PORT,
     host: env.HOST,
     dbPath: env.DATABASE_PATH || env.DATABASE_URL,
-    bchElectrumUrls: env.BCH_ELECTRUM_URLS,
-    baseRpcUrl: env.BASE_RPC_URL,
-    baseChainId: env.BASE_CHAIN_ID,
-    baseHtlcAddress: env.BASE_FERRY_HTLC_ADDRESS,
-    baseUsdcAddress: env.BASE_USDC_ADDRESS,
-    solverEvmPrivateKey: env.SOLVER_EVM_PRIVATE_KEY,
-    solverBchWif: env.SOLVER_BCH_WIF,
-    tpusdCategory: env.TPUSD_CATEGORY,
-    tmusdCategory: env.TMUSD_CATEGORY,
+    network,
+    bchElectrumUrls: bchElectrumUrls || undefined,
+    baseRpcUrl: baseRpcUrl || undefined,
+    baseChainId: baseChainId || undefined,
+    baseHtlcAddress: baseHtlcAddress || undefined,
+    baseUsdcAddress: baseUsdcAddress || undefined,
+    solverEvmPrivateKey: env.SOLVER_EVM_PRIVATE_KEY || undefined,
+    solverBchWif: env.SOLVER_BCH_WIF || undefined,
+    userBchWif: env.USER_BCH_WIF || undefined,
+    userEvmPrivateKey: env.USER_EVM_PRIVATE_KEY || undefined,
+    tpusdCategory: env.TPUSD_CATEGORY || undefined,
+    tmusdCategory: env.TMUSD_CATEGORY || undefined,
+    pusdCategory: env.PUSD_CATEGORY || undefined,
+    musdCategory: env.MUSD_CATEGORY || undefined,
+    quotingEnabled:
+      env.QUOTING_ENABLED !== undefined
+        ? env.QUOTING_ENABLED === 'true'
+        : undefined,
     spreadBps: env.SPREAD_BPS,
     fixedFeeUsdMicros: env.FIXED_FEE_USD
       ? BigInt(Math.round(parseFloat(env.FIXED_FEE_USD) * 1e6))
@@ -76,6 +138,23 @@ export function loadConfigFromEnv(
     maxExposureUsdMicros: env.MAX_OPEN_EXPOSURE_USD
       ? BigInt(Math.round(parseFloat(env.MAX_OPEN_EXPOSURE_USD) * 1e6))
       : undefined,
+    zeroConfMaxUsdMicros: env.ZERO_CONF_MAX_USD
+      ? BigInt(Math.round(parseFloat(env.ZERO_CONF_MAX_USD) * 1e6))
+      : undefined,
+    quoteTtlSeconds: env.QUOTE_TTL_S,
+    pegTolerance: env.PEG_TOLERANCE ? parseFloat(env.PEG_TOLERANCE) : undefined,
+    evmConfs: env.EVM_CONFS,
+    dsproofWindowMs: env.DSPROOF_WINDOW_MS,
+    fwdBchRefundBlocks: env.FWD_BCH_REFUND_BLOCKS,
+    fwdEvmDeadlineSeconds: env.FWD_EVM_DEADLINE_S,
+    revBchRefundBlocks: env.REV_BCH_REFUND_BLOCKS,
+    revEvmDeadlineSeconds: env.REV_EVM_DEADLINE_S,
+    revMinRemainingBlocks: env.REV_MIN_REMAINING_BLOCKS,
+    bchCarrySats: env.BCH_CARRY_SATS ? BigInt(env.BCH_CARRY_SATS) : undefined,
+    bchMaxFeeSats: env.BCH_MAX_FEE_SATS
+      ? BigInt(env.BCH_MAX_FEE_SATS)
+      : undefined,
+    skewMaxBps: env.SKEW_MAX_BPS,
     tipMaxAgeBchSeconds: env.TIP_MAX_AGE_BCH_SECONDS,
     tipMaxAgeBaseSeconds: env.TIP_MAX_AGE_BASE_SECONDS,
   });
