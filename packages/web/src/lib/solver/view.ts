@@ -1,7 +1,7 @@
 import { isTerminalOrderStatus } from '@ferry/core';
 import { BCH_BLOCK_SECONDS } from '../config';
 import type { OrderStatus, OrderTransaction, OrderView } from './types';
-import { STATUS_LABELS } from './types';
+import { REVERSE_STATUS_LABELS, STATUS_LABELS } from './types';
 
 export type StepState = 'done' | 'current' | 'pending' | 'error';
 
@@ -21,46 +21,41 @@ export interface OrderViewModel {
   readonly counterTimeRemainingSeconds: number;
   readonly claimAvailable: boolean;
   readonly refundAvailable: boolean;
+  readonly bchRefundAvailable: boolean;
   readonly bchLockUtxo: OrderView['bchLockUtxo'];
 }
 
-const STEP_STATUS: readonly {
+interface StepDefinition {
   readonly key: string;
   readonly label: string;
   readonly reached: readonly OrderStatus[];
   readonly txLabel: string | null;
-}[] = [
+}
+
+const ALL_ORDER_STATUSES: readonly OrderStatus[] = [
+  'QUOTED',
+  'USER_LOCK_SEEN',
+  'USER_LOCK_FINAL',
+  'SOLVER_LOCK_BROADCAST',
+  'SOLVER_LOCK_SEEN',
+  'SECRET_KNOWN',
+  'USER_CLAIM_SEEN',
+  'SOLVER_CLAIM_BROADCAST',
+  'SOLVER_CLAIM_FINAL',
+  'DONE',
+];
+
+const FORWARD_STEPS: readonly StepDefinition[] = [
   {
     key: 'quote',
     label: 'Quote signed',
-    reached: [
-      'QUOTED',
-      'USER_LOCK_SEEN',
-      'USER_LOCK_FINAL',
-      'SOLVER_LOCK_BROADCAST',
-      'SOLVER_LOCK_SEEN',
-      'SECRET_KNOWN',
-      'USER_CLAIM_SEEN',
-      'SOLVER_CLAIM_BROADCAST',
-      'SOLVER_CLAIM_FINAL',
-      'DONE',
-    ],
+    reached: ALL_ORDER_STATUSES,
     txLabel: null,
   },
   {
     key: 'user-lock',
     label: 'USDC locked on Base',
-    reached: [
-      'USER_LOCK_SEEN',
-      'USER_LOCK_FINAL',
-      'SOLVER_LOCK_BROADCAST',
-      'SOLVER_LOCK_SEEN',
-      'SECRET_KNOWN',
-      'USER_CLAIM_SEEN',
-      'SOLVER_CLAIM_BROADCAST',
-      'SOLVER_CLAIM_FINAL',
-      'DONE',
-    ],
+    reached: ALL_ORDER_STATUSES.filter((status) => status !== 'QUOTED'),
     txLabel: 'Base lock',
   },
   {
@@ -97,9 +92,59 @@ const STEP_STATUS: readonly {
   },
 ];
 
-function statusIndex(status: OrderStatus): number {
-  for (let index = STEP_STATUS.length - 1; index >= 0; index -= 1) {
-    if (STEP_STATUS[index]?.reached.includes(status)) return index;
+const REVERSE_STEPS: readonly StepDefinition[] = [
+  {
+    key: 'quote',
+    label: 'Quote signed',
+    reached: ALL_ORDER_STATUSES,
+    txLabel: null,
+  },
+  {
+    key: 'user-lock',
+    label: 'tPUSD locked on BCH',
+    reached: ALL_ORDER_STATUSES.filter((status) => status !== 'QUOTED'),
+    txLabel: 'BCH lock',
+  },
+  {
+    key: 'solver-lock',
+    label: 'USDC locked on Base',
+    reached: [
+      'SOLVER_LOCK_BROADCAST',
+      'SOLVER_LOCK_SEEN',
+      'SECRET_KNOWN',
+      'USER_CLAIM_SEEN',
+      'SOLVER_CLAIM_BROADCAST',
+      'SOLVER_CLAIM_FINAL',
+      'DONE',
+    ],
+    txLabel: 'Base lock',
+  },
+  {
+    key: 'secret',
+    label: 'Secret revealed',
+    reached: [
+      'SECRET_KNOWN',
+      'USER_CLAIM_SEEN',
+      'SOLVER_CLAIM_BROADCAST',
+      'SOLVER_CLAIM_FINAL',
+      'DONE',
+    ],
+    txLabel: null,
+  },
+  {
+    key: 'settled',
+    label: 'Both sides settled',
+    reached: ['DONE'],
+    txLabel: 'BCH claim',
+  },
+];
+
+function statusIndex(
+  status: OrderStatus,
+  steps: readonly StepDefinition[],
+): number {
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    if (steps[index]?.reached.includes(status)) return index;
   }
   return -1;
 }
@@ -115,7 +160,9 @@ export function buildOrderViewModel(
   order: OrderView,
   nowSeconds = Math.floor(Date.now() / 1000),
 ): OrderViewModel {
-  const index = statusIndex(order.status);
+  const reverse = order.terms.direction === 'BCH_TO_COUNTER';
+  const stepsForOrder = reverse ? REVERSE_STEPS : FORWARD_STEPS;
+  const index = statusIndex(order.status, stepsForOrder);
   const terminal = isTerminalOrderStatus(order.status);
   const failedAt =
     order.status === 'REJECTED'
@@ -127,7 +174,7 @@ export function buildOrderViewModel(
           ? 2
           : -1;
 
-  const steps = STEP_STATUS.map<TimelineStep>((step, position) => ({
+  const steps = stepsForOrder.map<TimelineStep>((step, position) => ({
     key: step.key,
     label: step.label,
     state:
@@ -154,7 +201,9 @@ export function buildOrderViewModel(
   );
 
   return {
-    statusLabel: STATUS_LABELS[order.status],
+    statusLabel: reverse
+      ? REVERSE_STATUS_LABELS[order.status]
+      : STATUS_LABELS[order.status],
     terminal,
     steps,
     blocksRemaining,
@@ -164,7 +213,11 @@ export function buildOrderViewModel(
       order.terms.counterDeadline - nowSeconds,
     ),
     claimAvailable: order.claimAvailable && !terminal && failedAt < 0,
-    refundAvailable: order.refundAvailable,
+    refundAvailable: !reverse && order.refundAvailable,
+    bchRefundAvailable:
+      reverse &&
+      order.bchRefundAvailable &&
+      order.bchTipHeight >= order.terms.bchRefundHeight,
     bchLockUtxo: order.bchLockUtxo,
   };
 }
