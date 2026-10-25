@@ -274,7 +274,7 @@ export function selectLockInputs(
     );
   }
 
-  const bchCarrySats = BigInt(options.bchCarrySats ?? 2000n);
+  const bchCarrySats = BigInt(options.bchCarrySats ?? 3000n);
   const tokenChangeCarrySats = BigInt(options.tokenChangeCarrySats ?? 1000n);
   const feeRate = options.feeRateSatPerByte ?? 1.2;
 
@@ -451,7 +451,12 @@ export function buildLockTransaction(
   const canonicalParams = encodeHtlcParameters(options.params);
   const htlcDerivation = deriveHtlcAddresses(canonicalParams, network);
 
-  const bchCarrySats = BigInt(options.bchCarrySats ?? 2000n);
+  const rawCarry =
+    options.bchCarrySats ??
+    (options.params && 'bchCarrySats' in options.params
+      ? (options.params as { bchCarrySats?: bigint | number }).bchCarrySats
+      : undefined);
+  const bchCarrySats = BigInt(rawCarry ?? 3000n);
   const tokenChangeCarrySats = BigInt(options.tokenChangeCarrySats ?? 1000n);
   const dustLimitSats = BigInt(options.dustLimitSats ?? 546n);
 

@@ -10,7 +10,10 @@ import {
   displayHexToInternalHex,
 } from '../src/index.js';
 
-describe('XO Hybrid Lock Check & Workaround Analysis', () => {
+// Gated for offline/clean clone safety: run with FERRY_LIVE_TESTS=1
+describe.skipIf(!process.env.FERRY_LIVE_TESTS)(
+  'XO Hybrid Lock Check & Workaround Analysis',
+  () => {
   it('creates lock invitation, resolves locking bytecode byte-identical to CashScript, and identifies engine boundaries', async () => {
     const mnemonic =
       'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
