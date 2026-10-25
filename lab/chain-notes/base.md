@@ -45,3 +45,51 @@ Per-chain quirks: RPC behaviour, confirmation times, fees, faucets, explorers, m
   - User ETH unchanged at `0.1 ETH`; user USDC `40.000000 → 40.000000`; solver paid `0.000001920822 ETH` total. Contract balance returned to zero.
 - No metrics row: this was a contract-level lock/claim, not a quoted swap route; gas and fees are recorded here instead.
 - BaseScan verification is still blocked: no explorer API key in `.env.local`. The deployment and round-trip used testnet funds only.
+
+
+---
+
+## 2026-10-30 · Live Testnet Swaps On-Chain Evidence (E2E-01, E2E-03, E2E-04, E2E-03-safe)
+
+All transactions verified on-chain via Base Sepolia RPC (`https://sepolia.base.org`) and BaseScan explorer (`https://sepolia.basescan.org/tx/<txid>`). Contract deployed at `0x5A0C062f4B7b8fF2263530e12bc15De9C836a641`.
+
+### E2E-01 Forward Swap (USDC → tPUSD, Safe Lane, 2026-10-25)
+- **User EVM Lock (`lockWithIntent`):**
+  - TXID: `0xda6ce785affe7116c6e14442a0debf0d54d078491d9d430968b66884bbb929bc`
+  - Block: `49818446`, Gas used: `212455`, Status: `1 (success)`
+  - Explorer: `https://sepolia.basescan.org/tx/0xda6ce785affe7116c6e14442a0debf0d54d078491d9d430968b66884bbb929bc`
+- **Solver EVM Claim (`claim`):**
+  - TXID: `0x605e9866639e7dceb290037967969aeb3aa2844d6819d9e6474cbce5dbfd076c`
+  - Block: `49818483`, Gas used: `61708`, Status: `1 (success)`
+  - Explorer: `https://sepolia.basescan.org/tx/0x605e9866639e7dceb290037967969aeb3aa2844d6819d9e6474cbce5dbfd076c`
+
+### E2E-03 Reverse Swap (tPUSD → USDC, Fast Lane, Wallet-Signed Lock, 2026-10-25)
+- **Solver EVM Counter-Lock (`lock`):**
+  - TXID: `0x3cb821834f7d301646f8dfe96c1a87418382b629100f51a4b24e6853fe1b03f7`
+  - Block: `50105734`, Gas used: `198321`, Status: `1 (success)`
+  - Explorer: `https://sepolia.basescan.org/tx/0x3cb821834f7d301646f8dfe96c1a87418382b629100f51a4b24e6853fe1b03f7`
+- **User EVM Claim (`claim` via `POST /v1/orders/:id/relay-claim`):**
+  - TXID: `0x6324d9b1131d242fe59e0da638abc97365c8a77723085d872eb635c20c5c49f0`
+  - Block: `50105754`, Gas used: `61708`, Status: `1 (success)`
+  - Explorer: `https://sepolia.basescan.org/tx/0x6324d9b1131d242fe59e0da638abc97365c8a77723085d872eb635c20c5c49f0`
+
+### E2E-04 Reverse Swap (tPUSD → USDC, Fast Lane, Manual Send, 2026-10-25)
+- **Solver EVM Counter-Lock (`lock`):**
+  - TXID: `0xf8c4d651013900c6189c187c9587dc8fd467b6e468ad193bfafa7f2e3d7de18d`
+  - Block: `50105818`, Gas used: `198321`, Status: `1 (success)`
+  - Explorer: `https://sepolia.basescan.org/tx/0xf8c4d651013900c6189c187c9587dc8fd467b6e468ad193bfafa7f2e3d7de18d`
+- **User EVM Claim (`claim` via `POST /v1/orders/:id/relay-claim`):**
+  - TXID: `0xb15635d997da60fa087a0ae1fbbcfe5049e43c3d0329da9e747f1f36411086b8`
+  - Block: `50105833`, Gas used: `61708`, Status: `1 (success)`
+  - Explorer: `https://sepolia.basescan.org/tx/0xb15635d997da60fa087a0ae1fbbcfe5049e43c3d0329da9e747f1f36411086b8`
+
+### E2E-03-safe Reverse Swap (tPUSD → USDC, Safe Lane with 1 Block Confirmation, 2026-10-25)
+- **Solver EVM Counter-Lock (`lock`):**
+  - TXID: `0xf0e7f68decd5ebd05f1e43337e60eb2f66bf8379d211bcd3ec1df626e2082591`
+  - Block: `50156437`, Gas used: `198321`, Status: `1 (success)`
+  - Confirmation Policy: Broadcast only after user BCH lock reached 1 block confirmation on Chipnet (block `329463`).
+  - Explorer: `https://sepolia.basescan.org/tx/0xf0e7f68decd5ebd05f1e43337e60eb2f66bf8379d211bcd3ec1df626e2082591`
+- **User EVM Claim (`claim` via `POST /v1/orders/:id/relay-claim`):**
+  - TXID: `0x34428991c723d086d9465044453ed28cc5cbb39fe77f7a86412a32722c04f1d4`
+  - Block: `50156455`, Gas used: `61708`, Status: `1 (success)`
+  - Explorer: `https://sepolia.basescan.org/tx/0x34428991c723d086d9465044453ed28cc5cbb39fe77f7a86412a32722c04f1d4`

@@ -1001,11 +1001,14 @@ export class SolverEngine {
 
     // 2. USER_LOCK_FINAL -> SOLVER_LOCK_BROADCAST (Solver counter-locks on EVM)
     if (order.status === 'USER_LOCK_FINAL') {
-      // Check quote expiry
-      if (now > terms.quoteExpiry) {
+      // Check quote expiry against when the user lock was first deposited/seen
+      const lockSeenTime = order.firstSeenAt
+        ? Math.floor(order.firstSeenAt / 1000)
+        : now;
+      if (lockSeenTime > terms.quoteExpiry) {
         this.logger.warn(
-          { orderId: order.id, quoteExpiry: terms.quoteExpiry, now },
-          'Quote expired before user lock finalized in reverse swap; refusing to counter-lock',
+          { orderId: order.id, quoteExpiry: terms.quoteExpiry, lockSeenTime },
+          'Quote expired before user lock was deposited in reverse swap; refusing to counter-lock',
         );
         this.applyEvent(order, {
           type: 'INVALID_TERMS',

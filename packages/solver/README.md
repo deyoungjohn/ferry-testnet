@@ -89,8 +89,11 @@ Run live Chipnet/Base Sepolia scripts (requires `.env.local` keys and funded bal
 # Real 4-tx forward swap against live networks
 pnpm --filter @ferry/solver live:swap
 
-# Real 4-tx reverse swaps against live networks (E2E-03 & E2E-04)
+# Real 4-tx reverse swaps against live networks (E2E-03 & E2E-04 fast-lane)
 pnpm --filter @ferry/solver live:reverse
+
+# Real 4-tx reverse swap against live networks (safe-lane, 1 BCH block confirmation)
+pnpm --filter @ferry/solver live:reverse:safe
 
 # 10-swap reaction latency benchmark across live Fulcrum
 pnpm --filter @ferry/solver live:latency

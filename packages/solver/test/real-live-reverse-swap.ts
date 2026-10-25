@@ -28,7 +28,9 @@ import { SolverConfigSchema } from '../src/config.js';
 interface SwapRunResult {
   mode:
     | 'E2E-03 (wallet / buildLockTransaction)'
-    | 'E2E-04 (manual QR send to displayed address)';
+    | 'E2E-04 (manual QR send to displayed address)'
+    | 'E2E-03-safe (wallet / safe-lane 1-conf BCH lock)';
+  lane: 'fast' | 'safe';
   tx1UserBchLock: string;
   tx2SolverEvmLock: string;
   tx3UserEvmClaim: string;
@@ -45,7 +47,9 @@ interface SwapRunResult {
 async function executeReverseSwap(options: {
   mode:
     | 'E2E-03 (wallet / buildLockTransaction)'
-    | 'E2E-04 (manual QR send to displayed address)';
+    | 'E2E-04 (manual QR send to displayed address)'
+    | 'E2E-03-safe (wallet / safe-lane 1-conf BCH lock)';
+  lane?: 'fast' | 'safe';
   userBchWif: string;
   solverBchWif: string;
   userAccount: ReturnType<typeof privateKeyToAccount>;
@@ -59,8 +63,9 @@ async function executeReverseSwap(options: {
   app: ReturnType<typeof buildServer>;
   tokenAmount: bigint; // e.g. 100n (1.00 tPUSD)
 }): Promise<SwapRunResult> {
+  const lane = options.lane ?? 'fast';
   console.log(`\n======================================================`);
-  console.log(`Starting ${options.mode}`);
+  console.log(`Starting ${options.mode} [lane: ${lane}]`);
   console.log(`======================================================`);
 
   const publicClient = options.publicClient as PublicClient;
@@ -88,8 +93,8 @@ async function executeReverseSwap(options: {
       userCounterAddress: options.userAccount.address,
       userBchLockingBytecode: `0x${userKeyDetails.p2pkhBytecodeHex}`,
       hashLock,
-      lane: 'fast',
-      fastOptIn: true,
+      lane,
+      fastOptIn: lane === 'fast',
     },
   });
 
@@ -155,7 +160,7 @@ async function executeReverseSwap(options: {
 
   // STEP 3: Solver Engine detects User BCH Lock and counter-locks USDC on Base Sepolia (TX 2)
   console.log(
-    `\n--- Step 3: Solver Engine Detects BCH Lock & Counter-Locks USDC (TX 2) ---`,
+    `\n--- Step 3: Solver Engine Detects BCH Lock & Counter-Locks USDC (TX 2) [lane: ${lane}] ---`,
   );
   const tSolverLockStart = Date.now();
 
@@ -166,14 +171,20 @@ async function executeReverseSwap(options: {
   // Give Chipnet indexers a moment to register UTXO
   await new Promise((r) => setTimeout(r, 1500));
 
+  const maxAttempts = lane === 'safe' ? 400 : 40;
+  const pollIntervalMs = lane === 'safe' ? 3000 : 1000;
   let attempts = 0;
-  while (order.status !== 'SOLVER_LOCK_SEEN' && attempts < 40) {
+  while (order.status !== 'SOLVER_LOCK_SEEN' && attempts < maxAttempts) {
     attempts++;
     await options.engine.step();
     order = options.db.getOrder(quoteData.orderId)!;
-    console.log(`Poll attempt ${attempts}: status = ${order.status}`);
+    if (attempts % 10 === 0 || order.status !== 'QUOTED') {
+      console.log(
+        `Poll attempt ${attempts} (${((attempts * pollIntervalMs) / 1000).toFixed(0)}s elapsed): status = ${order.status}`,
+      );
+    }
     if (order.status === 'SOLVER_LOCK_SEEN') break;
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
 
   if (order.status !== 'SOLVER_LOCK_SEEN') {
@@ -252,6 +263,7 @@ async function executeReverseSwap(options: {
 
   return {
     mode: options.mode,
+    lane,
     tx1UserBchLock: userLockTxId,
     tx2SolverEvmLock: solverLockTxId,
     tx3UserEvmClaim: userClaimTxId,
@@ -266,7 +278,7 @@ async function executeReverseSwap(options: {
   };
 }
 
-async function runLiveReverseSwaps(): Promise<[SwapRunResult, SwapRunResult]> {
+async function runLiveReverseSwaps(): Promise<SwapRunResult[]> {
   console.log(
     '=== Ferry Lab: Live Base Sepolia + Chipnet Reverse Swaps (E2E-03 & E2E-04) ===\n',
   );
@@ -391,71 +403,102 @@ async function runLiveReverseSwaps(): Promise<[SwapRunResult, SwapRunResult]> {
 
   const today = new Date().toISOString().slice(0, 10);
   const swapMetricsPath = path.join(dir, 'lab/swap-metrics.csv');
+  const runSafeOnly =
+    process.argv.includes('--safe') || process.env.REVERSE_SAFE_LANE === '1';
 
-  // RUN 1: E2E-03 (Wallet / buildLockTransaction)
-  const resE2E03 = await executeReverseSwap({
-    mode: 'E2E-03 (wallet / buildLockTransaction)',
-    userBchWif,
-    solverBchWif,
-    userAccount,
-    solverAccount,
-    solverWallet,
-    publicClient,
-    solverEvmAdapter,
-    bchClient,
-    engine,
-    db,
-    app,
-    tokenAmount: 100n, // 1.00 tPUSD
-  });
+  const results: SwapRunResult[] = [];
 
-  const row1 = `${today},A2,base-sepolia+chipnet,tPUSD-USDC,reverse,fast,${resE2E03.timings.userLockS.toFixed(3)},${resE2E03.timings.solverLockS.toFixed(3)},${resE2E03.timings.userClaimS.toFixed(3)},${resE2E03.timings.solverClaimS.toFixed(3)},${resE2E03.timings.totalS.toFixed(3)},0.05\n`;
-  fs.appendFileSync(swapMetricsPath, row1);
-  console.log(`Appended E2E-03 row to lab/swap-metrics.csv`);
+  if (runSafeOnly) {
+    // RUN SAFE: E2E-03-safe (Safe lane, 1 confirmation required)
+    const resSafe = await executeReverseSwap({
+      mode: 'E2E-03-safe (wallet / safe-lane 1-conf BCH lock)',
+      lane: 'safe',
+      userBchWif,
+      solverBchWif,
+      userAccount,
+      solverAccount,
+      solverWallet,
+      publicClient,
+      solverEvmAdapter,
+      bchClient,
+      engine,
+      db,
+      app,
+      tokenAmount: 100n, // 1.00 tPUSD
+    });
 
-  // RUN 2: E2E-04 (Manual QR Send)
-  const resE2E04 = await executeReverseSwap({
-    mode: 'E2E-04 (manual QR send to displayed address)',
-    userBchWif,
-    solverBchWif,
-    userAccount,
-    solverAccount,
-    solverWallet,
-    publicClient,
-    solverEvmAdapter,
-    bchClient,
-    engine,
-    db,
-    app,
-    tokenAmount: 100n, // 1.00 tPUSD
-  });
+    const rowSafe = `${today},A2,base-sepolia+chipnet,tPUSD-USDC,reverse,safe,${resSafe.timings.userLockS.toFixed(3)},${resSafe.timings.solverLockS.toFixed(3)},${resSafe.timings.userClaimS.toFixed(3)},${resSafe.timings.solverClaimS.toFixed(3)},${resSafe.timings.totalS.toFixed(3)},0.05\n`;
+    fs.appendFileSync(swapMetricsPath, rowSafe);
+    console.log(`Appended E2E-03-safe row to lab/swap-metrics.csv`);
+    results.push(resSafe);
+  } else {
+    // RUN 1: E2E-03 (Wallet / buildLockTransaction, Fast lane)
+    const resE2E03 = await executeReverseSwap({
+      mode: 'E2E-03 (wallet / buildLockTransaction)',
+      lane: 'fast',
+      userBchWif,
+      solverBchWif,
+      userAccount,
+      solverAccount,
+      solverWallet,
+      publicClient,
+      solverEvmAdapter,
+      bchClient,
+      engine,
+      db,
+      app,
+      tokenAmount: 100n, // 1.00 tPUSD
+    });
 
-  const row2 = `${today},A2,base-sepolia+chipnet,tPUSD-USDC,reverse,fast,${resE2E04.timings.userLockS.toFixed(3)},${resE2E04.timings.solverLockS.toFixed(3)},${resE2E04.timings.userClaimS.toFixed(3)},${resE2E04.timings.solverClaimS.toFixed(3)},${resE2E04.timings.totalS.toFixed(3)},0.05\n`;
-  fs.appendFileSync(swapMetricsPath, row2);
-  console.log(`Appended E2E-04 row to lab/swap-metrics.csv`);
+    const row1 = `${today},A2,base-sepolia+chipnet,tPUSD-USDC,reverse,fast,${resE2E03.timings.userLockS.toFixed(3)},${resE2E03.timings.solverLockS.toFixed(3)},${resE2E03.timings.userClaimS.toFixed(3)},${resE2E03.timings.solverClaimS.toFixed(3)},${resE2E03.timings.totalS.toFixed(3)},0.05\n`;
+    fs.appendFileSync(swapMetricsPath, row1);
+    console.log(`Appended E2E-03 row to lab/swap-metrics.csv`);
+    results.push(resE2E03);
+
+    // RUN 2: E2E-04 (Manual QR Send, Fast lane)
+    const resE2E04 = await executeReverseSwap({
+      mode: 'E2E-04 (manual QR send to displayed address)',
+      lane: 'fast',
+      userBchWif,
+      solverBchWif,
+      userAccount,
+      solverAccount,
+      solverWallet,
+      publicClient,
+      solverEvmAdapter,
+      bchClient,
+      engine,
+      db,
+      app,
+      tokenAmount: 100n, // 1.00 tPUSD
+    });
+
+    const row2 = `${today},A2,base-sepolia+chipnet,tPUSD-USDC,reverse,fast,${resE2E04.timings.userLockS.toFixed(3)},${resE2E04.timings.solverLockS.toFixed(3)},${resE2E04.timings.userClaimS.toFixed(3)},${resE2E04.timings.solverClaimS.toFixed(3)},${resE2E04.timings.totalS.toFixed(3)},0.05\n`;
+    fs.appendFileSync(swapMetricsPath, row2);
+    console.log(`Appended E2E-04 row to lab/swap-metrics.csv`);
+    results.push(resE2E04);
+  }
 
   engine.stop();
   bchClient.close();
   db.close();
 
-  return [resE2E03, resE2E04];
+  return results;
 }
 
 runLiveReverseSwaps()
-  .then(([r1, r2]) => {
+  .then((results) => {
     console.log('\n======================================================');
-    console.log('ALL LIVE REVERSE SWAPS (E2E-03 & E2E-04) PASSED');
+    console.log('LIVE REVERSE SWAP EXECUTION FINISHED SUCCESSFULLY');
     console.log('======================================================');
-    console.log(`E2E-03 TXs:`);
-    console.log(`  TX 1 (User BCH Lock):    ${r1.tx1UserBchLock}`);
-    console.log(`  TX 2 (Solver EVM Lock):  ${r1.tx2SolverEvmLock}`);
-    console.log(`  TX 3 (User EVM Claim):   ${r1.tx3UserEvmClaim}`);
-    console.log(`  TX 4 (Solver BCH Claim): ${r1.tx4SolverBchClaim}`);
-    console.log(`E2E-04 TXs:`);
-    console.log(`  TX 1 (User BCH Lock):    ${r2.tx1UserBchLock}`);
-    console.log(`  TX 2 (Solver EVM Lock):  ${r2.tx2SolverEvmLock}`);
-    console.log(`  TX 3 (User EVM Claim):   ${r2.tx3UserEvmClaim}`);
-    console.log(`  TX 4 (Solver BCH Claim): ${r2.tx4SolverBchClaim}`);
+    for (const r of results) {
+      console.log(`\n${r.mode} [lane: ${r.lane}]:`);
+      console.log(`  TX 1 (User BCH Lock):    ${r.tx1UserBchLock}`);
+      console.log(`  TX 2 (Solver EVM Lock):  ${r.tx2SolverEvmLock}`);
+      console.log(`  TX 3 (User EVM Claim):   ${r.tx3UserEvmClaim}`);
+      console.log(`  TX 4 (Solver BCH Claim): ${r.tx4SolverBchClaim}`);
+      console.log(`  Total Duration:          ${r.timings.totalS.toFixed(2)}s`);
+    }
     process.exit(0);
   })
   .catch((err) => {
