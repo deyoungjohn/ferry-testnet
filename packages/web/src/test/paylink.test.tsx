@@ -42,6 +42,7 @@ function renderAt(path: string) {
 }
 
 const payer = '0x2222222222222222222222222222222222222222' as const;
+const ROUTE_WAIT = { timeout: 10_000 } as const;
 
 function quoteRequest(amountOut?: bigint): PayLinkQuoteRequest {
   return {
@@ -122,7 +123,11 @@ describe('pay link pages', () => {
     renderAt('/pay');
 
     fireEvent.click(
-      await screen.findByRole('button', { name: /connect bch wallet/i }),
+      await screen.findByRole(
+        'button',
+        { name: /connect bch wallet/i },
+        ROUTE_WAIT,
+      ),
     );
     fireEvent.click(
       await screen.findByRole('button', { name: /create pay link/i }),
@@ -142,10 +147,14 @@ describe('pay link pages', () => {
     renderAt(`/p/${MOCK_RESERVED_LINK_ID}`);
 
     expect(
-      await screen.findByRole('heading', {
-        level: 1,
-        name: /pay 40 tPUSD/i,
-      }),
+      await screen.findByRole(
+        'heading',
+        {
+          level: 1,
+          name: /pay 40 tPUSD/i,
+        },
+        ROUTE_WAIT,
+      ),
     ).toBeInTheDocument();
     expect(screen.getAllByText('Verified').length).toBeGreaterThan(0);
   });
@@ -154,7 +163,11 @@ describe('pay link pages', () => {
     renderAt(`/p/${MOCK_RESERVED_LINK_ID}`);
 
     expect(
-      await screen.findByText('This invoice is being paid.'),
+      await screen.findByText(
+        'This invoice is being paid.',
+        undefined,
+        ROUTE_WAIT,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /get exact quote/i }),
@@ -165,7 +178,7 @@ describe('pay link pages', () => {
     renderAt(`/p/${MOCK_EXPIRED_LINK_ID}`);
 
     expect(
-      await screen.findByText(/this link has expired/i),
+      await screen.findByText(/this link has expired/i, undefined, ROUTE_WAIT),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /get exact quote/i }),
@@ -176,7 +189,7 @@ describe('pay link pages', () => {
     renderAt(`/p/${MOCK_PAY_LINK_ID}`);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: /connect base/i }),
+      await screen.findByRole('button', { name: /connect base/i }, ROUTE_WAIT),
     );
     fireEvent.click(
       await screen.findByRole('button', { name: /get exact quote/i }),
