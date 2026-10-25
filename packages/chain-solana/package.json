@@ -1,0 +1,36 @@
+{
+  "name": "@ferry/chain-solana",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "ferry-source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test",
+    "test": "vitest run --config vitest.config.ts",
+    "test:validator": "vitest run --config vitest.validator.config.ts"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "0.32.1",
+    "@ferry/core": "workspace:*",
+    "@ferry/htlc-solana": "workspace:*",
+    "@solana/spl-token": "0.4.15",
+    "@solana/web3.js": "1.98.0",
+    "bs58": "6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  }
+}
