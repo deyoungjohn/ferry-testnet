@@ -86,6 +86,7 @@ export function MockWalletProvider({
       }),
       broadcastTransaction: async (txHex: string) =>
         sha256((txHex.startsWith('0x') ? txHex : `0x${txHex}`) as Hex),
+      signMessage: async (message: string) => sha256(toBytes(message)),
     }),
     [bchStatus],
   );

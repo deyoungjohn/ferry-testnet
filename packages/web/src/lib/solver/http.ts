@@ -1,14 +1,28 @@
 import {
   ApiErrorResponseSchema,
+  CancelPayLinkRequestSchema,
+  CancelPayLinkResponseSchema,
+  CreatePayLinkRequestSchema,
+  CreatePayLinkResponseSchema,
+  GetPayLinkResponseSchema,
+  ListPayLinksQuerySchema,
+  ListPayLinksResponseSchema,
   OrderStatusResponseSchema,
+  PayLinkQuoteRequestSchema,
+  PayLinkQuoteResponseSchema,
   QuoteRequestSchema,
   QuoteResponseSchema,
   RelayClaimResponseSchema,
   RelayLockResponseSchema,
   RevealSecretResponseSchema,
   serializeApiJson,
+  type CancelPayLinkRequest,
+  type CreatePayLinkRequest,
   type Hex32,
+  type ListPayLinksQuery,
   type OrderStatus,
+  type PayLink,
+  type PayLinkQuoteRequest,
   type QuoteRequest,
 } from '@ferry/core';
 import type { z } from 'zod';
@@ -117,20 +131,77 @@ export class HttpSolverClient implements SolverClient {
     return schema.parse(body);
   }
 
-  async quote(request: QuoteRequest): Promise<SignedQuote> {
-    const parsed = QuoteRequestSchema.parse(request);
-    const response = await this.#json(QuoteResponseSchema, '/v1/quotes', {
-      method: 'POST',
-      body: serializeApiJson(parsed),
-    });
-    const bchTipHeight = await this.#tipReader.read().catch((cause) => {
+  async #quoteTip(): Promise<number> {
+    return this.#tipReader.read().catch((cause) => {
       throw new Error(
         `BCH tip unavailable; refusing to quote without an independent height: ${
           cause instanceof Error ? cause.message : String(cause)
         }`,
       );
     });
-    return { ...response, bchTipHeight };
+  }
+
+  async quote(request: QuoteRequest): Promise<SignedQuote> {
+    const parsed = QuoteRequestSchema.parse(request);
+    const response = await this.#json(QuoteResponseSchema, '/v1/quotes', {
+      method: 'POST',
+      body: serializeApiJson(parsed),
+    });
+    return { ...response, bchTipHeight: await this.#quoteTip() };
+  }
+
+  async createPayLink(request: CreatePayLinkRequest): Promise<PayLink> {
+    const parsed = CreatePayLinkRequestSchema.parse(request);
+    return this.#json(CreatePayLinkResponseSchema, '/v1/links', {
+      method: 'POST',
+      body: serializeApiJson(parsed),
+    });
+  }
+
+  async getPayLink(id: string): Promise<PayLink> {
+    return this.#json(
+      GetPayLinkResponseSchema,
+      `/v1/links/${encodeURIComponent(id)}`,
+    );
+  }
+
+  async quotePayLink(
+    id: string,
+    request: PayLinkQuoteRequest,
+  ): Promise<SignedQuote> {
+    const parsed = PayLinkQuoteRequestSchema.parse(request);
+    const response = await this.#json(
+      PayLinkQuoteResponseSchema,
+      `/v1/links/${encodeURIComponent(id)}/quotes`,
+      { method: 'POST', body: serializeApiJson(parsed) },
+    );
+    return { ...response, bchTipHeight: await this.#quoteTip() };
+  }
+
+  async listPayLinks(query: ListPayLinksQuery): Promise<readonly PayLink[]> {
+    const parsed = ListPayLinksQuerySchema.parse(query);
+    const search = new URLSearchParams({
+      owner: parsed.owner,
+      challenge: parsed.challenge,
+      sig: parsed.sig,
+    });
+    const response = await this.#json(
+      ListPayLinksResponseSchema,
+      `/v1/links?${search.toString()}`,
+    );
+    return response.links;
+  }
+
+  async cancelPayLink(
+    id: string,
+    request: CancelPayLinkRequest,
+  ): Promise<PayLink> {
+    const parsed = CancelPayLinkRequestSchema.parse(request);
+    return this.#json(
+      CancelPayLinkResponseSchema,
+      `/v1/links/${encodeURIComponent(id)}/cancel`,
+      { method: 'POST', body: serializeApiJson(parsed) },
+    );
   }
 
   async relayLock(request: RelayLockRequest): Promise<{ txHash: string }> {

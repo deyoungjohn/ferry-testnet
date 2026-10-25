@@ -3,9 +3,12 @@ import {
   invariantR,
   orderId as computeOrderId,
   quoteExactIn,
+  quoteExactOut,
   verifyOrderSignature,
   type Hex,
   type OrderTerms,
+  type PayLink,
+  type PayLinkQuoteRequest,
   type PricingPolicy,
   type QuoteRequest,
 } from '@ferry/core';
@@ -205,4 +208,58 @@ export function isQuoteExpired(
   nowSeconds = Math.floor(Date.now() / 1000),
 ): boolean {
   return nowSeconds >= terms.quoteExpiry;
+}
+
+export function payLinkAmountOut(
+  link: PayLink,
+  request: PayLinkQuoteRequest,
+): bigint {
+  const amountOut =
+    link.kind === 'invoice' ? link.amountOut : request.amountOut;
+  if (amountOut === undefined || amountOut <= 0n) {
+    throw new Error('Pay link amount is missing');
+  }
+  return amountOut;
+}
+
+export function assertPayLinkQuote(
+  terms: OrderTerms,
+  link: PayLink,
+  request: PayLinkQuoteRequest,
+  config: TermsCheckConfig,
+): void {
+  const amountOut = payLinkAmountOut(link, request);
+  const amountIn = quoteExactOut(
+    amountOut,
+    config.counterAssetDecimals,
+    2,
+    config.pricingPolicy,
+  );
+  const quoteRequest: QuoteRequest = {
+    direction: 'COUNTER_TO_BCH',
+    bchToken: link.token,
+    counterChain: request.counterChain,
+    counterSymbol: request.counterSymbol,
+    amountIn,
+    userCounterAddress: request.userCounterAddress,
+    userBchLockingBytecode: link.recipientLockingBytecode,
+    hashLock: request.hashLock,
+    lane: request.lane,
+    ...(request.fastOptIn !== undefined
+      ? { fastOptIn: request.fastOptIn }
+      : {}),
+  };
+
+  assertTermsMatchRequest(terms, quoteRequest, config);
+  requireHex(
+    'BCH recipient',
+    terms.userBchLockingBytecode,
+    link.recipientLockingBytecode,
+  );
+  requireEqual('BCH token', terms.bchToken, link.token);
+  requireEqual('BCH output', terms.bchTokenAmount, amountOut);
+  requireEqual('counter amount', terms.counterAmount, amountIn);
+  if (link.expiresAt !== undefined && terms.quoteExpiry > link.expiresAt) {
+    throw new Error('Quote expires after the pay link');
+  }
 }

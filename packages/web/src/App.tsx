@@ -16,6 +16,10 @@ const PayLinkPage = lazy(async () => {
   const module = await import('./routes/PayLinkPage');
   return { default: module.PayLinkPage };
 });
+const PayLinksPage = lazy(async () => {
+  const module = await import('./routes/PayLinksPage');
+  return { default: module.PayLinksPage };
+});
 
 function RouteLoading() {
   return (
@@ -45,6 +49,14 @@ export function App() {
           element={
             <Suspense fallback={<RouteLoading />}>
               <RecoverPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="pay"
+          element={
+            <Suspense fallback={<RouteLoading />}>
+              <PayLinksPage />
             </Suspense>
           }
         />
