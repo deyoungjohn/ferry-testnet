@@ -751,8 +751,22 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
             txId: txRef.txId,
             secret,
           });
-        } catch {
-          // Claim already recorded in state
+        } catch (err: unknown) {
+          if (
+            order.status === 'DONE' ||
+            (err instanceof Error &&
+              err.message.includes('Unexpected USER_CLAIM_SEEN in state DONE'))
+          ) {
+            logger.debug(
+              { orderId: order.id },
+              'User claim already applied and order is DONE',
+            );
+          } else {
+            logger.warn(
+              { err, orderId: order.id },
+              'Failed to apply USER_CLAIM_SEEN for claimed lock',
+            );
+          }
         }
       } else if (currentLock.status === 'locked') {
         txRef = await evmAdapter.claim(expectedLockId, secret);
@@ -762,8 +776,22 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
             txId: txRef.txId,
             secret,
           });
-        } catch {
-          // Claim already recorded in state
+        } catch (err: unknown) {
+          if (
+            order.status === 'DONE' ||
+            (err instanceof Error &&
+              err.message.includes('Unexpected USER_CLAIM_SEEN in state DONE'))
+          ) {
+            logger.debug(
+              { orderId: order.id },
+              'User claim already applied and order is DONE',
+            );
+          } else {
+            logger.warn(
+              { err, orderId: order.id },
+              'Failed to apply USER_CLAIM_SEEN after EVM claim broadcast',
+            );
+          }
         }
         if (order.direction === 'BCH_TO_COUNTER') {
           void engine.processSolverBchClaim(order).catch((err) => {

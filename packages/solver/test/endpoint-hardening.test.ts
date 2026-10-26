@@ -8,6 +8,7 @@ import { SolverEngine } from '../src/engine/runner.js';
 import { BchQuorumClient } from '../src/bch/quorum-client.js';
 import type { EvmChainAdapter } from '@ferry/chain-evm';
 import { payLinksMessage, mockMessageSignature } from '../src/paylink/link.js';
+import type { LockState } from '@ferry/core';
 
 describe('Public Solver Endpoints Live Hardening & Input Fuzzing', () => {
   let app: FastifyInstance;
@@ -448,6 +449,61 @@ describe('Public Solver Endpoints Live Hardening & Input Fuzzing', () => {
       });
       expect(relayRes.statusCode).toBe(409);
       expect(JSON.parse(relayRes.payload).code).toBe('LOCK_NOT_ACTIVE');
+    });
+
+    it('idempotently handles relay-claim when EVM lock was already claimed and order is DONE', async () => {
+      const secret =
+        '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as const;
+      const hashLock = sha256(secret);
+      const quoteRes = await app.inject({
+        method: 'POST',
+        url: '/v1/quotes',
+        payload: {
+          direction: 'BCH_TO_COUNTER',
+          bchToken: 'PUSD',
+          counterChain: 'base',
+          counterSymbol: 'USDC',
+          amountIn: '1000',
+          userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+          userBchLockingBytecode:
+            '0x76a914999999999999999999999999999999999999999988ac',
+          hashLock,
+          lane: 'safe',
+        },
+      });
+      const orderId = JSON.parse(quoteRes.payload).orderId;
+      const order = db.getOrder(orderId)!;
+      order.status = 'DONE';
+      db.saveOrder(order);
+
+      // Mock EVM lock status as claimed
+      fakeEvmAdapter.getLock = async () =>
+        ({
+          status: 'claimed' as const,
+          lockTx: { chain: 'base' as const, txId: '0xevm-lock' },
+          claimTx: { chain: 'base' as const, txId: '0xprev-claim-tx' },
+          secret,
+          owner: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+          recipient: solverAddress,
+          asset: {
+            symbol: 'USDC',
+            decimals: 6,
+            address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+          },
+          amount: 25000000n,
+          hashLock,
+          deadline: Math.floor(Date.now() / 1000) + 86400,
+        }) as unknown as LockState;
+
+      const relayRes = await app.inject({
+        method: 'POST',
+        url: `/v1/orders/${orderId}/relay-claim`,
+        payload: { secret },
+      });
+      expect(relayRes.statusCode).toBe(200);
+      const body = JSON.parse(relayRes.payload);
+      expect(body.orderId).toBe(orderId);
+      expect(body.status).toBe('DONE');
     });
   });
 
