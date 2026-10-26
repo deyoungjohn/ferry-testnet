@@ -48,6 +48,24 @@ To enable gas-free recipient swaps on Solana:
 
 Hermetic test rule: Tests must be hermetic; any artifact required by tests must be compiled as part of the test script or checked in (the sequence `pnpm install` then `pnpm test` without an intermediate build step must always succeed).
 
+### Clean-Clone Build & Program ID Warning
+
+On a clean clone without `target/deploy/ferry_htlc-keypair.json`, `anchor build` generates a temporary ephemeral keypair in `target/deploy/` and outputs:
+
+```
+WARNING: Program ID mismatch: Program declared in src/lib.rs (DbFyFKCGHZ7Pb3rUsbGtNhYcrvmbGm3qx4mnF4fYnyqN) does not match keypair in target/deploy/ferry_htlc-keypair.json (...)
+```
+
+- **The build still succeeds with exit code 0.**
+- **DO NOT run `anchor keys sync`!** Running `anchor keys sync` modifies tracked repository files (`declare_id!` in `programs/ferry_htlc/src/lib.rs` and `Anchor.toml`), dirtying git and breaking compatibility with the deployed Devnet program.
+- For builds that do not deploy, **ignore this warning**.
+- The deployer keypair lives outside the repository in `.env.local` (`FERRY_SOL_KEY` / `DEPLOYER_SOL_KEY`). For deployments, pass the keypair path explicitly:
+  ```bash
+  anchor deploy --program-keypair <path-to-keypair.json>
+  # or via Solana CLI:
+  solana program deploy target/deploy/ferry_htlc.so --program-id <path-to-keypair.json>
+  ```
+
 Testing is split into fast offline verification (default) and local validator integration:
 
 - `pnpm test`: Fast offline unit and artifact tests (<1s). Validates IDL consistency, Anchor program ID alignment (`Anchor.toml` and Rust `declare_id!`), PDA derivations, and instruction builder structures with zero network access and no local services.

@@ -37,3 +37,11 @@ Per-chain quirks: RPC behaviour, confirmation times, fees, faucets, explorers, m
 
 ### 4. Real-Token Quirks & Token-2022 Boundary
 - Circle Devnet USDC mint: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` (decimals: 6). Automated requests from the CLI were blocked by Cloudflare turnstile protection on the Circle faucet. A mock 6-decimal SPL mint was deployed for automated verification.- Token-2022: Per blueprint section 24.4, Token-2022 transfer-hook and confidential transfer extensions are out of scope for Ferry L6. The contract binds to standard SPL Token Program (`TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`).
+
+### 5. Program Keypair, Clean-Clone Builds & Anchor Mismatch Warning
+- The deployed devnet program ID is `DbFyFKCGHZ7Pb3rUsbGtNhYcrvmbGm3qx4mnF4fYnyqN`. The deploy transaction was signed by the deployer keypair configured in `.env.local` (`FERRY_SOL_KEY` / `DEPLOYER_SOL_KEY`), kept outside git per §7.3. Its upgrade authority was permanently closed via `solana program set-upgrade-authority ... --final`.
+- On a fresh clone without `target/deploy/ferry_htlc-keypair.json`, `anchor build` automatically generates a random keypair in `target/deploy/` and emits:
+  `WARNING: Program ID mismatch: Program declared in src/lib.rs (DbFyFKCGHZ7Pb3rUsbGtNhYcrvmbGm3qx4mnF4fYnyqN) does not match keypair in target/deploy/ferry_htlc-keypair.json (...)`
+- **Rebuild Rule:** `anchor build` exits 0 despite this warning. Developers and CI builds that do not deploy must ignore this warning. **Never run `anchor keys sync`** on a clean clone, as doing so rewrites `declare_id!` in `programs/ferry_htlc/src/lib.rs` and `Anchor.toml`, mutating tracked git files and disconnecting from the devnet deployment.
+- Re-deployments to any target network must specify the explicit program keypair path:
+  `anchor deploy --program-keypair <path-to-keypair.json>` (or `solana program deploy <binary.so> --program-id <path-to-keypair.json>`).

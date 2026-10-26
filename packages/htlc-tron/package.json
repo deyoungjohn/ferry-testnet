@@ -4,8 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "forge build && tronbox compile",
-    "compile": "tronbox compile",
+    "build": "forge build && node scripts/compile.cjs",
+    "compile": "node scripts/compile.cjs",
     "test": "forge build && vitest run",
     "roundtrip:nile": "tsx scripts/roundtrip-nile.ts",
     "typecheck": "tsc --noEmit",
