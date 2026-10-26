@@ -42,3 +42,27 @@ Per-chain quirks: RPC behaviour, confirmation times, fees, faucets, explorers, m
 - Status: Successfully deployed to canonical address on BSC Testnet.
 - Round-Trip Status: Deployer and Solver hold 0.1 tBNB gas. Live round trip awaits testnet USDT minting/funding to `0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd` or `0xC9ec91859Bdb598dC2eeE715934D8231478f7A70` on BSC Testnet.
 
+
+---
+
+## 2026-10-26 · BSC Testnet Live Round-Trip Execution (S-12 PASS)
+
+### On-Chain Token & Contract Parameters
+- Official BSC Testnet BEP-20 USDT: `0x337610d27c682E347C9cD60BD4b3b107C9d34dDd` (18 decimals; symbol USDT).
+- Deployed `FerryHTLC`: `0x5A0C062f4B7b8fF2263530e12bc15De9C836a641`.
+- Gas funding tx (Deployer -> User, 0.02 tBNB): `0x29eb147e26f6f4f46743fae02388f7cdcd4f66ce735e069b069bbed0aa949a9c`.
+
+### Live Round-Trip Execution
+1. **Lock + Claim Round-Trip (1.0 USDT = 10^18 units):**
+   - User Approve tx: `0x037219c2e5460edf53e5e466f9bd26b9cbf38657202e53209ef1e0ea00c4a87c` (Block 139064597, gasUsed 46,194)
+   - User Lock tx: `0x86698de71940c1c1fdf3a0a7d98cfa26867a8b95f83cbf5a0d81e9659bc714e2` (Block 139064602, gasUsed 198,797)
+   - Lock ID: `0x3092e7c3084ff783cffa6d25dfabf02c036cc38cdfc23818ecec0edcb5e66d81`
+   - Solver Claim tx: `0x863f584a51a9c68e2a480dd1d590d6ee22edbc14b50123f71cbce9c5b8028d9e` (Block 139064609, gasUsed 68,228)
+   - Result: Verified on-chain state transition to `Claimed (2)`; Solver received 1.0 USDT.
+
+2. **Lock + Refund Round-Trip (1.0 USDT = 10^18 units):**
+   - User Approve tx: `0xdf67438a4403498548e5ca1ce312d5aa32dbd66f4b5708f982e27c9e6e02748c` (Block 139064616, gasUsed 46,194)
+   - User Lock tx: `0x82e32fb2b3682433217b3051e8ace62c130ee5f4b8469b7c298ac1fb365c88b0` (Block 139064621, gasUsed 198,797)
+   - Lock ID: `0x8da3921729a7a0898c2010ac5093035e17097156f212d3f63c5ad6a1cb182bcf`
+   - User Refund tx: `0x37244958c809a2e403b699c5cdd20b62b2ba75c3bf8a31239064046e9b2b15ab` (Block 139064724, gasUsed 47,790)
+   - Result: Verified on-chain state transition to `Refunded (3)` after 45s deadline expiry; User balance restored.
