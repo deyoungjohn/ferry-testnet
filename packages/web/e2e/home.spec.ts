@@ -59,14 +59,12 @@ test('UI-01 happy path through DONE', async ({ page }) => {
     /lock|quote|seen/i,
   );
 
-  await expect(page.getByRole('button', { name: 'Claim tPUSD' })).toBeVisible({
-    timeout: 20_000,
-  });
-  await page.getByRole('button', { name: 'Claim tPUSD' }).click();
-
   await expect(
     page.getByRole('heading', { level: 1, name: /done/i }),
-  ).toBeVisible({ timeout: 30_000 });
+  ).toBeVisible({ timeout: 40_000 });
+  await expect(page.getByRole('button', { name: 'Claim tPUSD' })).toHaveCount(
+    0,
+  );
   await expect(page.getByText(/both sides settled/i)).toBeVisible();
 
   await page.screenshot({
@@ -171,7 +169,6 @@ test('UI-03 reverse BCH refund path screenshot', async ({ page }) => {
     page.getByRole('button', { name: 'Refund tPUSD' }),
   ).toBeVisible();
 
-  await page.getByRole('button', { name: 'Connect BCH wallet' }).click();
   await expect(
     page.getByRole('button', { name: 'Refund tPUSD' }),
   ).toBeEnabled();

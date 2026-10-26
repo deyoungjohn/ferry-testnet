@@ -2,7 +2,7 @@ import type { Address, Hex, TypedDataDefinition } from 'viem';
 import type { BchAddressInfo } from '../bch/address';
 
 export type WalletStatus =
-  'disconnected' | 'connecting' | 'connected' | 'unavailable';
+  'disconnected' | 'connecting' | 'connected' | 'offline' | 'unavailable';
 
 export interface BchUtxo {
   readonly txid: string;
@@ -66,6 +66,7 @@ export interface BchWallet {
   connect(): void;
   disconnect(): Promise<void>;
   setAddress(address: BchAddressInfo): void;
+  forget?(): void;
   signMessage?(message: string): Promise<string>;
   listUtxos(): Promise<readonly BchUtxo[]>;
   signTransaction(

@@ -4,7 +4,7 @@ import {
   buildRefundTransaction,
   deriveHtlcAddresses,
 } from '@ferry/htlc-bch';
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import {
   BASE_EXPLORER_URL,
@@ -16,6 +16,7 @@ import {
   explorerTxUrl,
 } from '../lib/config';
 import { addressFromLockingBytecode } from '../lib/bch/address';
+import { broadcastClaimIdempotent } from '../lib/bch/claim-broadcast';
 import { loadSecret } from '../lib/vault';
 import {
   buildRecoveryFile,
@@ -53,6 +54,13 @@ export function SwapStatusPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [localFallback, setLocalFallback] = useState(false);
   const [localSolverLive, setLocalSolverLive] = useState(false);
+  const [claimPhase, setClaimPhase] = useState<
+    'idle' | 'claiming' | 'onchain' | 'stalled'
+  >('idle');
+  const [claimStartedAt, setClaimStartedAt] = useState<number | null>(null);
+  const claimInFlight = useRef(false);
+  const autoClaimFor = useRef<string | null>(null);
+  const claimActionRef = useRef<() => Promise<void>>(async () => undefined);
 
   const id =
     orderId && ORDER_ID_PATTERN.test(orderId) ? (orderId as Hex32) : null;
@@ -94,12 +102,22 @@ export function SwapStatusPage() {
     };
 
     void load();
-    timer = window.setInterval(() => void load(), 2000);
+    timer = window.setInterval(
+      () => void load(),
+      claimPhase === 'idle' ? 2_000 : 3_000,
+    );
     return () => {
       active = false;
       window.clearInterval(timer);
     };
-  }, [id, solver]);
+  }, [claimPhase, id, solver]);
+
+  useEffect(() => {
+    autoClaimFor.current = null;
+    claimInFlight.current = false;
+    setClaimPhase('idle');
+    setClaimStartedAt(null);
+  }, [id]);
 
   const view = useMemo(
     () => (order ? buildOrderViewModel(order, now) : null),
@@ -113,6 +131,28 @@ export function SwapStatusPage() {
         : '',
     [order],
   );
+
+  useEffect(() => {
+    if (
+      (claimPhase === 'claiming' || claimPhase === 'onchain') &&
+      claimStartedAt !== null &&
+      now - claimStartedAt >= 90
+    ) {
+      setClaimPhase('stalled');
+    }
+  }, [claimPhase, claimStartedAt, now]);
+
+  useEffect(() => {
+    if (
+      order?.status === 'USER_CLAIM_SEEN' ||
+      order?.status === 'SOLVER_CLAIM_BROADCAST' ||
+      order?.status === 'SOLVER_CLAIM_FINAL' ||
+      order?.status === 'DONE'
+    ) {
+      setClaimPhase('idle');
+      setClaimStartedAt(null);
+    }
+  }, [order?.status]);
 
   async function refresh(): Promise<void> {
     if (!id) return;
@@ -149,19 +189,19 @@ export function SwapStatusPage() {
   }
 
   async function handleClaim(): Promise<void> {
-    if (!id || !order) return;
+    if (!id || !order || claimInFlight.current) return;
+    claimInFlight.current = true;
     setBusy(true);
     setActionError(null);
     setActionMessage(null);
+    setClaimPhase('claiming');
+    setClaimStartedAt(Math.floor(Date.now() / 1_000));
     try {
       const secret = await loadSecret(id);
       if (!secret) {
         throw new Error(
           'No local recovery secret. Open the recovery file on the device that created this swap.',
         );
-      }
-      if (!bch.address) {
-        throw new Error('Connect the BCH wallet that will receive the claim.');
       }
       if (!order.bchLockUtxo) {
         throw new Error('The solver BCH lock is not visible yet.');
@@ -177,18 +217,52 @@ export function SwapStatusPage() {
         },
         feeSats: 500n,
       });
-      const claimTxId = await bch.broadcastTransaction(built.txHex);
-      await solver.submitSecret(id, secret);
-      await refresh();
-      setActionMessage(
-        `BCH claim broadcast: ${truncateAddress(claimTxId, 10, 6)}. The solver can now claim your USDC.`,
+      const result = await broadcastClaimIdempotent(
+        (txHex) => bch.broadcastTransaction(txHex),
+        built.txHex,
+        built.txid,
       );
+      setClaimPhase('onchain');
+      setActionMessage(
+        result.already
+          ? `BCH claim is already on chain: ${truncateAddress(result.txid, 10, 6)}. Waiting for the solver to release your USDC.`
+          : `BCH claim broadcast: ${truncateAddress(result.txid, 10, 6)}. Waiting for the solver to release your USDC.`,
+      );
+      try {
+        await solver.submitSecret(id, secret);
+      } catch {
+        setActionMessage(
+          'Claim is on chain. The solver notification failed, but the solver can still detect the public claim.',
+        );
+      }
+      await refresh();
     } catch (cause) {
+      setClaimPhase('idle');
+      setClaimStartedAt(null);
       showActionFailure(cause, 'Could not submit the claim');
     } finally {
+      claimInFlight.current = false;
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    claimActionRef.current = handleClaim;
+  });
+
+  useEffect(() => {
+    if (
+      !id ||
+      !order ||
+      reverse ||
+      !view?.claimAvailable ||
+      autoClaimFor.current === id
+    ) {
+      return;
+    }
+    autoClaimFor.current = id;
+    void claimActionRef.current();
+  }, [id, order, reverse, view?.claimAvailable]);
 
   async function handleReverseClaim(gasless: boolean): Promise<void> {
     if (!id || !order) return;
@@ -202,15 +276,15 @@ export function SwapStatusPage() {
           'No local recovery secret. Open the recovery file on the device that created this swap.',
         );
       }
-      if (!evm.address) {
-        throw new Error('Connect the Base wallet that will receive USDC.');
-      }
       if (gasless) {
         await solver.relayClaim(id, secret);
         setActionMessage(
           'USDC claim relayed. The solver pays the Base gas and the BCH side settles next.',
         );
       } else {
+        if (!evm.address) {
+          throw new Error('Connect the Base wallet that will receive USDC.');
+        }
         const lockId = evmLockId(
           order.terms.solverCounterAddress,
           order.terms.hashLock,
@@ -268,9 +342,6 @@ export function SwapStatusPage() {
     setActionError(null);
     setActionMessage(null);
     try {
-      if (!bch.address) {
-        throw new Error('Connect the BCH wallet that funded this swap.');
-      }
       if (order.bchTipError) {
         throw new Error(`BCH refund is disabled: ${order.bchTipError}`);
       }
@@ -502,6 +573,34 @@ export function SwapStatusPage() {
             ) : null}
           </section>
 
+          {!reverse && claimPhase !== 'idle' ? (
+            <section
+              aria-live="polite"
+              className="mt-5 rounded-card border border-hairline bg-surface-1 p-5 text-[11px] leading-5 text-text-muted sm:p-6"
+            >
+              {claimPhase === 'claiming' ? (
+                <p className="text-sm font-medium text-text">
+                  Claiming your tPUSD…
+                </p>
+              ) : claimPhase === 'onchain' ? (
+                <p className="text-sm font-medium text-text">
+                  Claim on chain, waiting for the solver to release your USDC.
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-warn">
+                    Your claim is on chain, but the solver has not released USDC
+                    after 90 seconds.
+                  </p>
+                  <p className="mt-1">
+                    Keep this page open; the solver can still detect the public
+                    claim. If it does not, open Recovery.
+                  </p>
+                </>
+              )}
+            </section>
+          ) : null}
+
           <section className="mt-5 rounded-card border border-hairline bg-surface-1 p-5 sm:p-6">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-sm font-semibold text-text">Timeline</h2>
@@ -608,12 +707,7 @@ export function SwapStatusPage() {
                     <button
                       type="button"
                       onClick={() => void handleReverseClaim(true)}
-                      disabled={busy || !evm.address}
-                      title={
-                        !evm.address
-                          ? 'Connect the Base wallet that will receive USDC'
-                          : undefined
-                      }
+                      disabled={busy}
                       className="mt-4 flex h-11 w-full items-center justify-center rounded-pill bg-olive px-5 text-sm font-semibold text-text shadow-pill disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {busy ? 'Relaying claim…' : 'Claim USDC (gasless)'}
@@ -622,6 +716,11 @@ export function SwapStatusPage() {
                       type="button"
                       onClick={() => void handleReverseClaim(false)}
                       disabled={busy || !evm.address}
+                      title={
+                        !evm.address
+                          ? 'Connect the Base wallet for a self-claim'
+                          : undefined
+                      }
                       className="mt-2 flex h-10 w-full items-center justify-center rounded-pill border border-hairline bg-surface-2 px-5 text-xs font-medium text-text disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Self-claim with Base wallet
@@ -631,15 +730,12 @@ export function SwapStatusPage() {
                   <button
                     type="button"
                     onClick={() => void handleClaim()}
-                    disabled={busy || !bch.address}
-                    title={
-                      !bch.address
-                        ? 'Connect the BCH wallet that will receive the claim'
-                        : undefined
-                    }
+                    disabled={busy || claimPhase === 'claiming'}
                     className="mt-4 flex h-11 w-full items-center justify-center rounded-pill bg-olive px-5 text-sm font-semibold text-text shadow-pill disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {busy ? 'Submitting claim…' : 'Claim tPUSD'}
+                    {claimPhase === 'claiming'
+                      ? 'Claiming your tPUSD…'
+                      : 'Claim tPUSD'}
                   </button>
                 )}
                 {reverse && !evm.address ? (
@@ -649,16 +745,7 @@ export function SwapStatusPage() {
                     disabled={evm.status === 'unavailable'}
                     className="mt-2 text-[11px] text-text-muted underline decoration-hairline underline-offset-2 hover:text-lime disabled:opacity-40"
                   >
-                    Connect Base wallet
-                  </button>
-                ) : null}
-                {!reverse && !bch.address ? (
-                  <button
-                    type="button"
-                    onClick={() => bch.connect()}
-                    className="mt-2 text-[11px] text-text-muted underline decoration-hairline underline-offset-2 hover:text-lime"
-                  >
-                    Connect BCH wallet
+                    Connect Base wallet for self-claim
                   </button>
                 ) : null}
               </div>
@@ -685,15 +772,11 @@ export function SwapStatusPage() {
                   onClick={() =>
                     reverse ? void handleBchRefund() : void handleRefund()
                   }
-                  disabled={busy || (reverse ? !bch.address : !evm.address)}
+                  disabled={busy || (!reverse && !evm.address)}
                   title={
-                    reverse
-                      ? !bch.address
-                        ? 'Connect the BCH wallet that funded this swap'
-                        : undefined
-                      : !evm.address
-                        ? 'Connect the Base wallet that made this lock'
-                        : undefined
+                    !reverse && !evm.address
+                      ? 'Connect the Base wallet that made this lock'
+                      : undefined
                   }
                   className="mt-4 flex h-11 w-full items-center justify-center rounded-pill border border-hairline bg-surface-2 px-5 text-sm font-semibold text-text disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -703,15 +786,6 @@ export function SwapStatusPage() {
                       ? 'Refund tPUSD'
                       : 'Refund USDC'}
                 </button>
-                {reverse && !bch.address ? (
-                  <button
-                    type="button"
-                    onClick={() => bch.connect()}
-                    className="mt-2 text-[11px] text-text-muted underline decoration-hairline underline-offset-2 hover:text-lime"
-                  >
-                    Connect BCH wallet
-                  </button>
-                ) : null}
                 {!reverse && !evm.address ? (
                   <button
                     type="button"
@@ -719,7 +793,7 @@ export function SwapStatusPage() {
                     disabled={evm.status === 'unavailable'}
                     className="mt-2 text-[11px] text-text-muted underline decoration-hairline underline-offset-2 hover:text-lime disabled:opacity-40"
                   >
-                    Connect Base wallet
+                    Connect Base wallet for self-claim
                   </button>
                 ) : null}
               </div>

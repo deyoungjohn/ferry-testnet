@@ -58,6 +58,27 @@ describe(' wallet panel with the Base wallet already connected', () => {
     expect(set.bch.disconnect).toHaveBeenCalledTimes(1);
   });
 
+  it('shows a remembered offline identity and can forget it', () => {
+    const forget = vi.fn();
+    const set = walletSet(
+      {
+        status: 'offline',
+        address: {
+          address: 'bchtest:zznldca5825k6le8hpnwxhzugn82j2gm8uzgy6y6j8',
+          lockingBytecode:
+            '0x76a914000000000000000000000000000000000000000088ac',
+          tokenAware: true,
+        },
+        walletName: 'Paytaca',
+        forget,
+      },
+      {},
+    );
+    renderPanel(set);
+    expect(screen.getByText(/Paytaca \(offline\)/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Forget wallet' }));
+    expect(forget).toHaveBeenCalledTimes(1);
+  });
   it('shows the BCH connection error instead of failing silently', () => {
     const set = walletSet(
       { status: 'disconnected', error: 'Relay unreachable' },

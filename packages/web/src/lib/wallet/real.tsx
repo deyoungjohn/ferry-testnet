@@ -34,6 +34,12 @@ import { sourceOutputToRelay } from './relay-format';
 import { wizardConnectTheme } from './wizard-theme';
 import { useBchReconnectTimeout } from './reconnect-timeout';
 import { isWrongEvmChain, wrongEvmChainMessage } from './chain';
+import {
+  clearRememberedBchWallet,
+  readRememberedBchWallet,
+  saveRememberedBchWallet,
+  type RememberedBchWallet,
+} from './remembered';
 import type {
   BchSignedTransaction,
   BchSignTransactionRequest,
@@ -156,13 +162,13 @@ function txidOf(txHex: string): string {
 
 function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
   const wizard = useWizardConnect({ dappName: 'Ferry' });
-  const reconnectTimedOut = useBchReconnectTimeout(
-    wizard.state,
-    () => wizard.disconnect(),
-    undefined,
-    !wizard.uri,
+  const reconnectTimedOut = useBchReconnectTimeout(wizard.state, () =>
+    wizard.disconnect(),
   );
   const [pendingRequest, setPendingRequest] = useState<string | null>(null);
+  const [remembered, setRemembered] = useState<RememberedBchWallet | null>(() =>
+    readRememberedBchWallet(),
+  );
   const [manualAddress, setManualAddress] =
     useState<BchWallet['address']>(null);
   const derived = useMemo(() => {
@@ -177,11 +183,17 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
     return pubkey ? addressFromPubkey(pubkey) : null;
   }, [wizard.state, wizard.manager]);
 
-  const address = manualAddress ?? derived;
+  const address = manualAddress ?? derived ?? remembered?.address ?? null;
 
   useEffect(() => {
     if (!manualAddress && derived) setManualAddress(derived);
   }, [manualAddress, derived]);
+
+  useEffect(() => {
+    if (wizard.state !== 'connected' || !derived) return;
+    const next = saveRememberedBchWallet(wizard.walletName, derived);
+    setRemembered(next);
+  }, [derived, wizard.state, wizard.walletName]);
 
   const wallet: BchWallet = {
     status:
@@ -190,15 +202,13 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
         : !reconnectTimedOut &&
             (wizard.state === 'connecting' || wizard.state === 'reconnecting')
           ? 'connecting'
-          : 'disconnected',
+          : remembered
+            ? 'offline'
+            : 'disconnected',
     address,
-    error:
-      wizard.error ??
-      (reconnectTimedOut
-        ? 'BCH wallet did not reconnect in time. Connect again.'
-        : null),
+    error: wizard.error,
     pendingRequest,
-    walletName: wizard.walletName,
+    walletName: wizard.walletName ?? remembered?.name ?? null,
     connect: () => {
       // A pairing left in "connecting" or "reconnecting" ignores a second
       // connect(); reset it first so the click always opens a fresh QR dialog.
@@ -213,7 +223,16 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
       setManualAddress(null);
       await wizard.disconnect();
     },
-    setAddress: setManualAddress,
+    setAddress: (next) => {
+      setManualAddress(next);
+      setRemembered(saveRememberedBchWallet(wizard.walletName, next));
+    },
+    forget: () => {
+      clearRememberedBchWallet();
+      setRemembered(null);
+      setManualAddress(null);
+      void wizard.disconnect();
+    },
     listUtxos: async (): Promise<readonly BchUtxo[]> => {
       if (!address) throw new Error('Connect a BCH wallet first');
       const owned = [
