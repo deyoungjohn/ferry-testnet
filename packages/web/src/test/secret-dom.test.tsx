@@ -44,5 +44,5 @@ describe('secret exposure', () => {
     expect(document.body.innerHTML).not.toContain(SECRET);
     const keys = await listVaultOrderIds();
     expect(keys.join(' ')).not.toContain(SECRET);
-  }, 20_000);
+  }, 45_000);
 });

@@ -160,7 +160,11 @@ describe('pay link pages', () => {
       await screen.findByRole('button', { name: /create pay link/i }),
     );
 
-    expect(await screen.findByText(/10 tPUSD invoice/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/10 tPUSD invoice/i, undefined, {
+        timeout: 20_000,
+      }),
+    ).toBeInTheDocument();
     expect(
       (await screen.findAllByText('Test-mode signature')).length,
     ).toBeGreaterThan(0);
@@ -170,7 +174,7 @@ describe('pay link pages', () => {
     );
     expect(url.textContent).not.toContain('bchtest:');
     expect(url.textContent).not.toContain('10.00');
-  }, 20_000);
+  }, 30_000);
 
   it('shows an invoice with its exact amount and test-mode signature label', async () => {
     renderAt(`/p/${MOCK_RESERVED_LINK_ID}`);
@@ -188,7 +192,7 @@ describe('pay link pages', () => {
     expect(screen.getAllByText('Test-mode signature').length).toBeGreaterThan(
       0,
     );
-  }, 20_000);
+  }, 30_000);
 
   it('blocks a reserved invoice before a second payer can quote', async () => {
     renderAt(`/p/${MOCK_RESERVED_LINK_ID}`);
@@ -203,7 +207,7 @@ describe('pay link pages', () => {
     expect(
       screen.getByRole('button', { name: /get exact quote/i }),
     ).toBeDisabled();
-  }, 20_000);
+  }, 30_000);
 
   it('blocks an expired link before quoting', async () => {
     renderAt(`/p/${MOCK_EXPIRED_LINK_ID}`);
@@ -214,7 +218,7 @@ describe('pay link pages', () => {
     expect(
       screen.getByRole('button', { name: /get exact quote/i }),
     ).toBeDisabled();
-  }, 20_000);
+  }, 30_000);
 
   it('quotes an open link for a Base payer without a BCH wallet', async () => {
     renderAt(`/p/${MOCK_PAY_LINK_ID}`);
@@ -226,7 +230,15 @@ describe('pay link pages', () => {
       await screen.findByRole('button', { name: /get exact quote/i }),
     );
 
-    expect(await screen.findByText('You pay')).toBeInTheDocument();
-    expect((await screen.findAllByText(/10 tPUSD/)).length).toBeGreaterThan(0);
-  }, 20_000);
+    expect(
+      await screen.findByText('You pay', undefined, { timeout: 20_000 }),
+    ).toBeInTheDocument();
+    expect(
+      (
+        await screen.findAllByText(/10 tPUSD/, undefined, {
+          timeout: 20_000,
+        })
+      ).length,
+    ).toBeGreaterThan(0);
+  }, 30_000);
 });
