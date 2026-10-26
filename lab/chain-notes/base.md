@@ -93,3 +93,29 @@ All transactions verified on-chain via Base Sepolia RPC (`https://sepolia.base.o
   - TXID: `0x34428991c723d086d9465044453ed28cc5cbb39fe77f7a86412a32722c04f1d4`
   - Block: `50156455`, Gas used: `61708`, Status: `1 (success)`
   - Explorer: `https://sepolia.basescan.org/tx/0x34428991c723d086d9465044453ed28cc5cbb39fe77f7a86412a32722c04f1d4`
+
+---
+
+## 2026-10-26 · Live Swaps On-Chain Evidence against localhost:8787 solver
+
+Executed end-to-end against live solver daemon running on `localhost:8787` (`pnpm dev:solver`) with funded human wallets.
+
+### Forward Swap (USDC → tPUSD, Safe Lane, Order `0x843bae146bbac9ed29ff3299b2f84e3615dc75b599c02060aa7d272d5b6f16ea`)
+- **User EVM Lock (`lock`):**
+  - TXID: `0x7448e549572da850d61dcebf16b9101d2b47a1935fe1992c0c7e70ae3bae3a63`
+  - Block: `50576610`, Status: `1 (success)`
+  - Explorer: `https://sepolia.basescan.org/tx/0x7448e549572da850d61dcebf16b9101d2b47a1935fe1992c0c7e70ae3bae3a63`
+- **Solver EVM Claim (`claim`):**
+  - TXID: `0x67430aae2eab59b994f054b08130201015cbebeb31e57877e63845dec27a49de`
+  - Block: `50576625`, Status: `1 (success)`
+  - Explorer: `https://sepolia.basescan.org/tx/0x67430aae2eab59b994f054b08130201015cbebeb31e57877e63845dec27a49de`
+
+### Reverse Swap (tPUSD → USDC, Order `0xa71a3bf75579046c8ae3d93c81a3c92fd836eea3b695bf9dc0958b107d46d9ab`)
+- **Solver EVM Counter-Lock (`lock`):**
+  - TXID: `0x2a9d44370db0e64b1dc1cc4a15c0191af12b5e51561bf790864f97b5c6be90f0`
+  - Block: `50577253`, Status: `1 (success)`
+  - Explorer: `https://sepolia.basescan.org/tx/0x2a9d44370db0e64b1dc1cc4a15c0191af12b5e51561bf790864f97b5c6be90f0`
+- **User EVM Claim (`claim` via `POST /v1/orders/:id/relay-claim`):**
+  - TXID: `0xc01aab351a1257a01c304ae6a1f6c0a851d1bdeaac75e7cdb72180706f6a7e5d`
+  - Block: `50577265`, Status: `1 (success)`
+  - Explorer: `https://sepolia.basescan.org/tx/0xc01aab351a1257a01c304ae6a1f6c0a851d1bdeaac75e7cdb72180706f6a7e5d`

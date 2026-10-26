@@ -163,3 +163,29 @@ All transactions verified on-chain via Chipnet Fulcrum indexers (`chipnet.imagin
   - TXID: `84f41d3add1822a3ca99d13475535e6055ef71b5bc1866bbda8569855bea4e8c`
   - Output: Solver token address claiming 1.00 tPUSD using secret preimage revealed on Base Sepolia.
   - Explorer: `https://chipnet.imaginary.cash/tx/84f41d3add1822a3ca99d13475535e6055ef71b5bc1866bbda8569855bea4e8c`
+
+---
+
+## 2026-10-26 · Live Swaps On-Chain Evidence against localhost:8787 solver
+
+Executed end-to-end against live solver daemon running on `localhost:8787` (`pnpm dev:solver`) with funded human wallets.
+
+### Forward Swap (USDC → tPUSD, Safe Lane, Order `0x843bae146bbac9ed29ff3299b2f84e3615dc75b599c02060aa7d272d5b6f16ea`)
+- **Solver BCH Lock:**
+  - TXID: `994ab56fbe5dd4d2e89c4242ac456613957415d319d62c7c241b43e6d4480da2`
+  - Output: 0.94 tPUSD (`ec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac`) + 3000 satoshis carry locked into covenant P2SH32.
+  - Explorer: `https://chipnet.imaginary.cash/tx/994ab56fbe5dd4d2e89c4242ac456613957415d319d62c7c241b43e6d4480da2`
+- **User BCH Claim:**
+  - TXID: `3de6b1d68b91b29f0275f8bb1dd46ce5f7843c52ef529d6f7bee36a47073fb67`
+  - Output: User token address receiving 0.94 tPUSD with secret preimage spend.
+  - Explorer: `https://chipnet.imaginary.cash/tx/3de6b1d68b91b29f0275f8bb1dd46ce5f7843c52ef529d6f7bee36a47073fb67`
+
+### Reverse Swap (tPUSD → USDC, Order `0xa71a3bf75579046c8ae3d93c81a3c92fd836eea3b695bf9dc0958b107d46d9ab`)
+- **User BCH Lock (`buildLockTransaction`):**
+  - TXID: `b02c888aeeaa3a9c01b67227f0f631f89c9ca449443e6e4aa4e65bd261c19f0a`
+  - Output: 1.00 tPUSD + 3000 satoshis carry locked into covenant P2SH32.
+  - Explorer: `https://chipnet.imaginary.cash/tx/b02c888aeeaa3a9c01b67227f0f631f89c9ca449443e6e4aa4e65bd261c19f0a`
+- **Solver BCH Claim (`buildClaimTransaction`):**
+  - TXID: `dc353eb0e06daa4d23c5bb8380a53eb7e886c64538057dafcfda05354e147ef6`
+  - Output: Solver token address claiming 1.00 tPUSD using secret preimage revealed on Base Sepolia.
+  - Explorer: `https://chipnet.imaginary.cash/tx/dc353eb0e06daa4d23c5bb8380a53eb7e886c64538057dafcfda05354e147ef6`

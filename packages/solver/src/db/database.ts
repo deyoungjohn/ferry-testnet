@@ -48,62 +48,135 @@ export class SolverDatabase {
   }
 
   private initTables(): void {
+    const tableExists = this.db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='orders'",
+      )
+      .get();
+
+    if (!tableExists) {
+      // Fresh database: create all tables with current schema
+      this.db.exec(`
+        CREATE TABLE orders (
+          id TEXT PRIMARY KEY,
+          direction TEXT NOT NULL,
+          status TEXT NOT NULL,
+          user_counter_address TEXT NOT NULL,
+          lock_id TEXT NOT NULL,
+          terms_json TEXT NOT NULL,
+          hash_lock TEXT NOT NULL,
+          secret TEXT,
+          secret_source TEXT,
+          user_lock_txid TEXT,
+          solver_lock_txid TEXT,
+          user_claim_txid TEXT,
+          solver_claim_txid TEXT,
+          solver_refund_txid TEXT,
+          lane TEXT DEFAULT 'safe',
+          fast_opt_in INTEGER DEFAULT 0,
+          first_seen_at INTEGER,
+          needs_attention INTEGER NOT NULL DEFAULT 0,
+          rejection_reason TEXT,
+          pay_link_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          UNIQUE (user_counter_address, hash_lock)
+        );
+
+        CREATE TABLE pay_links (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          recipient_cashaddr TEXT NOT NULL,
+          recipient_locking_bytecode TEXT NOT NULL,
+          token TEXT NOT NULL,
+          amount_out TEXT,
+          min_amount_out TEXT,
+          memo TEXT,
+          reference TEXT,
+          expires_at INTEGER,
+          verified INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL,
+          order_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE actions (
+          order_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          status TEXT NOT NULL,
+          intent_payload TEXT NOT NULL,
+          txid TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (order_id, action)
+        );
+      `);
+    } else {
+      // Existing database: run schema migrations before creating any new indexes
+      const columns = this.db.pragma('table_info(orders)') as Array<{
+        name: string;
+      }>;
+      const colNames = new Set(columns.map((c) => c.name));
+
+      // Migration v1 -> v2: pay_link_id column on orders
+      if (!colNames.has('pay_link_id')) {
+        this.db.exec('ALTER TABLE orders ADD COLUMN pay_link_id TEXT;');
+      }
+      if (!colNames.has('lane')) {
+        this.db.exec("ALTER TABLE orders ADD COLUMN lane TEXT DEFAULT 'safe';");
+      }
+      if (!colNames.has('fast_opt_in')) {
+        this.db.exec(
+          'ALTER TABLE orders ADD COLUMN fast_opt_in INTEGER DEFAULT 0;',
+        );
+      }
+      if (!colNames.has('first_seen_at')) {
+        this.db.exec('ALTER TABLE orders ADD COLUMN first_seen_at INTEGER;');
+      }
+      if (!colNames.has('needs_attention')) {
+        this.db.exec(
+          'ALTER TABLE orders ADD COLUMN needs_attention INTEGER NOT NULL DEFAULT 0;',
+        );
+      }
+      if (!colNames.has('rejection_reason')) {
+        this.db.exec('ALTER TABLE orders ADD COLUMN rejection_reason TEXT;');
+      }
+
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS pay_links (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          recipient_cashaddr TEXT NOT NULL,
+          recipient_locking_bytecode TEXT NOT NULL,
+          token TEXT NOT NULL,
+          amount_out TEXT,
+          min_amount_out TEXT,
+          memo TEXT,
+          reference TEXT,
+          expires_at INTEGER,
+          verified INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL,
+          order_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS actions (
+          order_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          status TEXT NOT NULL,
+          intent_payload TEXT NOT NULL,
+          txid TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (order_id, action)
+        );
+      `);
+    }
+
+    // Now all tables and columns are guaranteed to exist; create indexes
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS orders (
-        id TEXT PRIMARY KEY,
-        direction TEXT NOT NULL,
-        status TEXT NOT NULL,
-        user_counter_address TEXT NOT NULL,
-        lock_id TEXT NOT NULL,
-        terms_json TEXT NOT NULL,
-        hash_lock TEXT NOT NULL,
-        secret TEXT,
-        secret_source TEXT,
-        user_lock_txid TEXT,
-        solver_lock_txid TEXT,
-        user_claim_txid TEXT,
-        solver_claim_txid TEXT,
-        solver_refund_txid TEXT,
-        lane TEXT DEFAULT 'safe',
-        fast_opt_in INTEGER DEFAULT 0,
-        first_seen_at INTEGER,
-        needs_attention INTEGER NOT NULL DEFAULT 0,
-        rejection_reason TEXT,
-        pay_link_id TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        UNIQUE (user_counter_address, hash_lock)
-      );
-
-      CREATE TABLE IF NOT EXISTS pay_links (
-        id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL,
-        recipient_cashaddr TEXT NOT NULL,
-        recipient_locking_bytecode TEXT NOT NULL,
-        token TEXT NOT NULL,
-        amount_out TEXT,
-        min_amount_out TEXT,
-        memo TEXT,
-        reference TEXT,
-        expires_at INTEGER,
-        verified INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL,
-        order_id TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS actions (
-        order_id TEXT NOT NULL,
-        action TEXT NOT NULL,
-        status TEXT NOT NULL,
-        intent_payload TEXT NOT NULL,
-        txid TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY (order_id, action)
-      );
-
       CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
       CREATE INDEX IF NOT EXISTS idx_orders_lock_id ON orders(lock_id);
       CREATE INDEX IF NOT EXISTS idx_orders_pay_link_id ON orders(pay_link_id);
@@ -114,12 +187,8 @@ export class SolverDatabase {
       CREATE INDEX IF NOT EXISTS idx_pay_links_order_id ON pay_links(order_id);
     `);
 
-    // Migration guard for existing tables without pay_link_id
-    try {
-      this.db.exec('ALTER TABLE orders ADD COLUMN pay_link_id TEXT;');
-    } catch {
-      // Column already exists
-    }
+    // Record schema user_version
+    this.db.pragma('user_version = 2');
   }
 
   saveOrder(order: SolverOrderRecord): void {
