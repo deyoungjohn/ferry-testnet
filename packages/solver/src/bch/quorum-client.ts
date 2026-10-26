@@ -12,6 +12,11 @@ interface PendingRequest {
   reject: (err: unknown) => void;
 }
 
+export const BCH_GENESIS_HASHES = {
+  chipnet: '000000001dd410c49a788668ce26751718cc797474d3152a5fc073dd44fd9f7b',
+  mainnet: '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f',
+} as const;
+
 export class SingleFulcrumClient {
   private ws: WebSocket | null = null;
   private requestId = 0;
@@ -22,6 +27,7 @@ export class SingleFulcrumClient {
   private shouldReconnect = true;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private scriptSubscriptions = new Set<string>();
+  private genesisHash: string | null = null;
 
   public onTipUpdate?: (height: number) => void;
   public onScriptHashNotification?: (
@@ -32,6 +38,24 @@ export class SingleFulcrumClient {
   public onDisconnect?: () => void;
 
   constructor(public readonly url: string) {}
+
+  getGenesisHash(): string | null {
+    return this.genesisHash;
+  }
+
+  async fetchFeatures(): Promise<{
+    genesis_hash?: string;
+    [key: string]: unknown;
+  }> {
+    const features = await this.request<{
+      genesis_hash?: string;
+      [key: string]: unknown;
+    }>('server.features', []);
+    if (features && typeof features.genesis_hash === 'string') {
+      this.genesisHash = features.genesis_hash;
+    }
+    return features;
+  }
 
   async connect(): Promise<void> {
     this.shouldReconnect = true;
@@ -51,6 +75,13 @@ export class SingleFulcrumClient {
           this.tipHeight = header.height;
           this.tipTimestamp = Date.now();
           if (this.onTipUpdate) this.onTipUpdate(header.height);
+
+          // Query server features for genesis check
+          try {
+            await this.fetchFeatures();
+          } catch {
+            // Ignored on raw connect; checked strictly in verifyGenesis
+          }
 
           // Resubscribe to scripts if any
           for (const sh of this.scriptSubscriptions) {
@@ -215,7 +246,10 @@ export class BchQuorumClient implements DSProofWatcher {
   >();
   private knownHistory = new Map<string, Set<string>>();
 
-  constructor(serverUrls: string[]) {
+  constructor(
+    serverUrls: string[],
+    public readonly expectedNetwork?: 'chipnet' | 'mainnet' | 'testnet',
+  ) {
     if (serverUrls.length === 0) {
       throw new Error('At least one Fulcrum server URL must be configured');
     }
@@ -246,6 +280,39 @@ export class BchQuorumClient implements DSProofWatcher {
       }),
     );
     await Promise.all(connectPromises);
+
+    if (this.expectedNetwork) {
+      await this.verifyGenesis(this.expectedNetwork);
+    }
+  }
+
+  async verifyGenesis(
+    network?: 'chipnet' | 'mainnet' | 'testnet',
+  ): Promise<void> {
+    const rawNetwork = network || this.expectedNetwork || 'chipnet';
+    const targetNetwork = rawNetwork === 'mainnet' ? 'mainnet' : 'chipnet';
+    const expectedHash = BCH_GENESIS_HASHES[targetNetwork];
+
+    for (const client of this.clients) {
+      if (!client.isConnected()) {
+        await client.connect();
+      }
+      let hash = client.getGenesisHash();
+      if (!hash) {
+        const features = await client.fetchFeatures();
+        hash = features.genesis_hash || null;
+      }
+      if (!hash) {
+        throw new Error(
+          `Fulcrum server (${client.url}) failed genesis verification: server.features missing genesis_hash`,
+        );
+      }
+      if (hash.toLowerCase() !== expectedHash.toLowerCase()) {
+        throw new Error(
+          `Fulcrum server (${client.url}) returned genesis hash ${hash}, expected ${expectedHash} for network ${targetNetwork}`,
+        );
+      }
+    }
   }
 
   async reconcileScriptHash(scriptHash: string): Promise<void> {

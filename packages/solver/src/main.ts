@@ -71,11 +71,16 @@ async function main(): Promise<void> {
     .split(',')
     .map((u) => u.trim())
     .filter(Boolean);
-  const bchClient = new BchQuorumClient(electrumUrls);
+  const targetNetwork = config.network === 'mainnet' ? 'mainnet' : 'chipnet';
+  const bchClient = new BchQuorumClient(electrumUrls, targetNetwork);
   await bchClient.connect();
   logger.info(
-    { urls: electrumUrls, quorum: bchClient.getQuorumStatus() },
-    'Connected to BCH Fulcrum quorum',
+    {
+      urls: electrumUrls,
+      quorum: bchClient.getQuorumStatus(),
+      network: targetNetwork,
+    },
+    'Connected to BCH Fulcrum quorum and verified genesis hash',
   );
 
   if (!config.solverBchWif) {

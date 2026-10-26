@@ -579,6 +579,70 @@ export type CancelPayLinkRequest = z.infer<typeof CancelPayLinkRequestSchema>;
 export const CancelPayLinkResponseSchema = PayLinkSchema;
 export type CancelPayLinkResponse = z.infer<typeof CancelPayLinkResponseSchema>;
 
+export const QuotePolicySchema = z.strictObject({
+  spreadBps: uint,
+  fixedFeeUsdMicros: wireBigInt,
+});
+export type QuotePolicy = z.infer<typeof QuotePolicySchema>;
+
+export const StatsSummarySchema = z.strictObject({
+  completedSwaps: uint.nullable(),
+  volumeUsdMicros: wireBigInt.nullable(),
+  medianFastSeconds: uint.nullable(),
+  quotePolicy: QuotePolicySchema.nullable(),
+  asOf: uint.nullable(),
+});
+export type StatsSummary = z.infer<typeof StatsSummarySchema>;
+
+export const RecentSwapSchema = z.strictObject({
+  orderId: hex32,
+  settledAt: uint,
+  direction: z.enum(['COUNTER_TO_BCH', 'BCH_TO_COUNTER']),
+  counterSymbol: z.string().min(1).max(12),
+  counterDecimals: z.number().int().min(0).max(18),
+  counterAmount: wireBigInt,
+  bchSymbol: z.string().min(1).max(12),
+  bchDecimals: z.number().int().min(0).max(18),
+  bchTokenAmount: wireBigInt,
+  durationSeconds: uint,
+  baseTxId: hex32,
+  bchTxId: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/, 'Expected 64-character hex txid'),
+});
+export type RecentSwap = z.infer<typeof RecentSwapSchema>;
+
+export const RecentSwapsResponseSchema = z.strictObject({
+  swaps: z.array(RecentSwapSchema),
+});
+export type RecentSwapsResponse = z.infer<typeof RecentSwapsResponseSchema>;
+
+export const PegPointSchema = z.strictObject({
+  at: uint,
+  priceUsdMicros: wireBigInt.refine(
+    (value) => value > 0n,
+    'Peg price must be positive',
+  ),
+});
+export type PegPoint = z.infer<typeof PegPointSchema>;
+
+export const PegSnapshotSchema = z.strictObject({
+  token: z.enum(['PUSD', 'MUSD']),
+  priceUsdMicros: wireBigInt
+    .refine((value) => value > 0n, 'Peg price must be positive')
+    .nullable(),
+  points: z.array(PegPointSchema).max(1_440),
+  source: z.string().min(1).nullable(),
+  asOf: uint.nullable(),
+});
+export type PegSnapshot = z.infer<typeof PegSnapshotSchema>;
+export type PegToken = PegSnapshot['token'];
+
+export const PegsResponseSchema = z.strictObject({
+  pegs: z.array(PegSnapshotSchema),
+});
+export type PegsResponse = z.infer<typeof PegsResponseSchema>;
+
 /** Convert in-memory API values (including bigint fields) to JSON wire text. */
 export function serializeApiJson(value: unknown): string {
   return JSON.stringify(value, (_key, field: unknown) =>

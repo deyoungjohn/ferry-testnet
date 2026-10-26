@@ -21,14 +21,21 @@ import {
   PayLinkQuoteRequestSchema,
   PayLinkQuoteResponseSchema,
   PayLinkSchema,
+  PegPointSchema,
+  PegSnapshotSchema,
+  PegsResponseSchema,
+  QuotePolicySchema,
   QuoteRequestSchema,
   QuoteResponseSchema,
+  RecentSwapSchema,
+  RecentSwapsResponseSchema,
   RelayClaimRequestSchema,
   RelayClaimResponseSchema,
   RelayLockRequestSchema,
   RelayLockResponseSchema,
   RevealSecretRequestSchema,
   RevealSecretResponseSchema,
+  StatsSummarySchema,
   TERMINAL_ORDER_STATUSES,
   apiErrorStatus,
   isTerminalOrderStatus,
@@ -516,5 +523,88 @@ describe('API schemas and wire helpers', () => {
         serializeApiJson(cancelledLink),
       ),
     ).toEqual(cancelledLink);
+  });
+
+  it('validates and round-trips read endpoints: /v1/stats, /v1/orders/recent, /v1/pegs', () => {
+    const statsPayload = {
+      completedSwaps: 2,
+      volumeUsdMicros: 12_000_000n,
+      medianFastSeconds: 48,
+      quotePolicy: {
+        spreadBps: 40,
+        fixedFeeUsdMicros: 50_000n,
+      },
+      asOf: 1_793_000_000,
+    };
+    const serializedStats = serializeApiJson(statsPayload);
+    const parsedStats = parseApiJson(StatsSummarySchema, serializedStats);
+    expect(parsedStats).toEqual(statsPayload);
+    expect(QuotePolicySchema.parse(statsPayload.quotePolicy)).toEqual(
+      statsPayload.quotePolicy,
+    );
+
+    // Also supports null values for empty state
+    const emptyStats = {
+      completedSwaps: null,
+      volumeUsdMicros: null,
+      medianFastSeconds: null,
+      quotePolicy: null,
+      asOf: null,
+    };
+    expect(
+      parseApiJson(StatsSummarySchema, serializeApiJson(emptyStats)),
+    ).toEqual(emptyStats);
+
+    const recentSwapsPayload = {
+      swaps: [
+        {
+          orderId: `0x${'11'.repeat(32)}` as const,
+          settledAt: 1_793_000_000,
+          direction: 'COUNTER_TO_BCH' as const,
+          counterSymbol: 'USDC',
+          counterDecimals: 6,
+          counterAmount: 10_000_000n,
+          bchSymbol: 'PUSD',
+          bchDecimals: 2,
+          bchTokenAmount: 991n,
+          durationSeconds: 48,
+          baseTxId: `0x${'22'.repeat(32)}` as const,
+          bchTxId: '33'.repeat(32),
+        },
+      ],
+    };
+    const serializedRecent = serializeApiJson(recentSwapsPayload);
+    const parsedRecent = parseApiJson(
+      RecentSwapsResponseSchema,
+      serializedRecent,
+    );
+    expect(parsedRecent).toEqual(recentSwapsPayload);
+    expect(RecentSwapSchema.parse(recentSwapsPayload.swaps[0]!)).toEqual(
+      recentSwapsPayload.swaps[0]!,
+    );
+
+    const pegsPayload = {
+      pegs: [
+        {
+          token: 'PUSD' as const,
+          priceUsdMicros: 1_001_000n,
+          points: [
+            { at: 1_792_913_600, priceUsdMicros: 999_000n },
+            { at: 1_793_000_000, priceUsdMicros: 1_001_000n },
+          ],
+          source: 'Paryon + Cauldron',
+          asOf: 1_793_000_000,
+        },
+      ],
+    };
+    const serializedPegs = serializeApiJson(pegsPayload);
+    const parsedPegs = parseApiJson(PegsResponseSchema, serializedPegs);
+    expect(parsedPegs).toEqual(pegsPayload);
+    expect(PegSnapshotSchema.parse(pegsPayload.pegs[0]!)).toEqual(
+      pegsPayload.pegs[0]!,
+    );
+    expect(PegPointSchema.parse(pegsPayload.pegs[0]!.points[0]!)).toEqual(
+      pegsPayload.pegs[0]!.points[0]!,
+    );
   });
 });

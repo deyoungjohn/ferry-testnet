@@ -115,3 +115,51 @@ Live round-trip probe on Chipnet combining XO Engine template evaluation with Ca
 ### XO Engine Workaround Assessment
 - Testing `engine.buildInvitationTransactionFromMergedCommit` demonstrated that XO Engine can construct the unsigned wire transaction skeleton for the claim action (120 bytes, transaction hash `126922521cfe2e869137963d7efa2b0d3c4c635756dafebd603581b2fb5f8f41`).
 - However, generating unlocking bytecode via `engine.generateUnlockingBytecode` fails with `InputUnspentOutputUnavailableError` because the public `Engine` class exposes no API to import external UTXOs into its internal tracking store, and `compileInputUnlockingScript` mandates local HD derivation key references.
+
+
+---
+
+## 2026-10-30 · Live Testnet Swaps On-Chain Evidence (E2E-01, E2E-03, E2E-04, E2E-03-safe)
+
+All transactions verified on-chain via Chipnet Fulcrum indexers (`chipnet.imaginary.cash:50004`) and explorer `https://chipnet.imaginary.cash/tx/<txid>`.
+
+### E2E-01 Forward Swap (USDC → tPUSD, Safe Lane, 2026-10-25)
+- **Solver BCH Lock:**
+  - TXID: `f9e6332bb496a6c46a74db6ec1a31ae358ace39b0d44be8e9f1376d0b9dd0901`
+  - Output: 0.99 tPUSD (`ec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac`) + 3000 satoshis carry to covenant P2SH32.
+  - Explorer: `https://chipnet.imaginary.cash/tx/f9e6332bb496a6c46a74db6ec1a31ae358ace39b0d44be8e9f1376d0b9dd0901`
+- **User BCH Claim:**
+  - TXID: `62a242d5b81066dc68542f17a0e15e40251aede7c6e2300ebdb283f1901319ab`
+  - Output: User token address receiving 0.99 tPUSD with secret preimage spend.
+  - Explorer: `https://chipnet.imaginary.cash/tx/62a242d5b81066dc68542f17a0e15e40251aede7c6e2300ebdb283f1901319ab`
+
+### E2E-03 Reverse Swap (tPUSD → USDC, Fast Lane, Wallet-Signed Lock, 2026-10-25)
+- **User BCH Lock (`buildLockTransaction`):**
+  - TXID: `e3abdac5beab5585a1e2d04e7ab5591d42c1837eeec493bc12e64eeb4df0bb5b`
+  - Output: 1.00 tPUSD + 3000 satoshis carry locked into covenant P2SH32.
+  - Explorer: `https://chipnet.imaginary.cash/tx/e3abdac5beab5585a1e2d04e7ab5591d42c1837eeec493bc12e64eeb4df0bb5b`
+- **Solver BCH Claim (`buildClaimTransaction`):**
+  - TXID: `8d1b8415513e4940e5cdb9b5528afe0fadf86c7b17b45283bf07573d1465dc4f`
+  - Output: Solver token address claiming 1.00 tPUSD using secret extracted from Base Sepolia claim.
+  - Explorer: `https://chipnet.imaginary.cash/tx/8d1b8415513e4940e5cdb9b5528afe0fadf86c7b17b45283bf07573d1465dc4f`
+
+### E2E-04 Reverse Swap (tPUSD → USDC, Fast Lane, Manual Send, 2026-10-25)
+- **User BCH Lock (Manual send to displayed P2SH32 address):**
+  - TXID: `ded0ff8419d347f3e7ffd3a30ce6f119c40302dc1e2343c9e87fb356b20184d9`
+  - Output: 1.00 tPUSD + 3000 satoshis carry locked into displayed covenant address.
+  - Explorer: `https://chipnet.imaginary.cash/tx/ded0ff8419d347f3e7ffd3a30ce6f119c40302dc1e2343c9e87fb356b20184d9`
+- **Solver BCH Claim (`buildClaimTransaction`):**
+  - TXID: `9bea992c4b34a8fb4d6a9aeee2acabbe406d818eb524038f9873514b74a64ca7`
+  - Output: Solver token address claiming 1.00 tPUSD using secret extracted from Base Sepolia claim.
+  - Explorer: `https://chipnet.imaginary.cash/tx/9bea992c4b34a8fb4d6a9aeee2acabbe406d818eb524038f9873514b74a64ca7`
+
+### E2E-03-safe Reverse Swap (tPUSD → USDC, Safe Lane with 1 Block Confirmation, 2026-10-25)
+- **User BCH Lock (`buildLockTransaction`):**
+  - TXID: `f073a14bd557f8c39bc82d6c1cfae00b3f14840ade6ca660a819fbc328720f13`
+  - Output: 1.00 tPUSD (`ec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac`) + 3000 satoshis carry locked into covenant P2SH32.
+  - Confirmation: Mined in Chipnet block `329463` (1 confirmation verified before solver EVM counter-lock).
+  - Explorer: `https://chipnet.imaginary.cash/tx/f073a14bd557f8c39bc82d6c1cfae00b3f14840ade6ca660a819fbc328720f13`
+- **Solver BCH Claim (`buildClaimTransaction`):**
+  - TXID: `84f41d3add1822a3ca99d13475535e6055ef71b5bc1866bbda8569855bea4e8c`
+  - Output: Solver token address claiming 1.00 tPUSD using secret preimage revealed on Base Sepolia.
+  - Explorer: `https://chipnet.imaginary.cash/tx/84f41d3add1822a3ca99d13475535e6055ef71b5bc1866bbda8569855bea4e8c`

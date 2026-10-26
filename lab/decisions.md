@@ -429,3 +429,23 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Consequence for rebuild:** Standard TRON HTLC swaps use `approve` + `lock` with `SafeTRC20`. Fast lane requires 1 confirmation (~3s); safe lane requires solidified block (~19 blocks, ~48-50s) per Blueprint §24.2.
 - **Revisit if:** TRON introduces native EIP-2612 permit or alters TVM void return behavior.
 
+### D-A2-010 · Reverse safe-lane quote TTL, free price options, and deposit-seen evaluation
+- **Decision:**
+  1. *Context and initial TTL setting:* Earlier, reverse safe-lane quotes were given an 1800 s (30-minute) TTL (`quoteExpiry = now + 1800`) to avoid expiration while waiting for a 1-block Bitcoin Cash confirmation (average 10-minute block interval, up to 20–30 minutes in Poisson tail distribution).
+  2. *Adverse selection exposure analysis:*
+     - Offering a fixed swap rate for 30 minutes without requiring an on-chain commitment grants the user a 30-minute free lookahead price option against the solver inventory.
+     - Maximum swap size is $50.00 (`maxSwapUsdMicros = 50,000,000`) and total exposure cap is $250.00 (`maxExposureUsdMicros = 250,000,000`).
+     - Quoted spread is 40 bps (0.40%) plus $0.05 fixed fee. Peg tolerance guard is 1.0% (`PEG_TOLERANCE = 0.01`).
+     - If the CashToken peg (e.g., PUSD or MUSD) de-pegs or drops by 100 bps (1%) on external markets during the 30-minute window, the 40 bps spread ($0.20 on a $50 swap) fails to cover the price drop. An adverse arbitrageur can observe external market weakness, exercise the stale quote at minute 29, and dump devalued CashTokens to extract fixed USDC on Base, inflicting a net loss of 60 bps ($0.30 per $50 swap, or $1.50 across a $250 inventory). In severe depeg events (>2%), the exposure compounds further.
+     - Thus, **the configured 40 bps spread does not cover a 30-minute adverse peg move**.
+  3. *Root cause of the long TTL necessity and resolution:*
+     - The 1800 s quote TTL was originally introduced because `runner.ts` evaluated quote expiration against current wall-clock time at counter-lock time ($t_0$), conflating block mining latency with quote commitment.
+     - In the fix, `runner.ts` was corrected to evaluate quote expiration against `order.firstSeenAt` (the timestamp when the user's BCH transaction first appears in the mempool or block): `const lockSeenTime = order.firstSeenAt ? Math.floor(order.firstSeenAt / 1000) : now; if (lockSeenTime > terms.quoteExpiry) { reject }`.
+     - Because `firstSeenAt` captures the deposit broadcast timestamp (which occurs in seconds), the quote TTL only needs to provide sufficient time for the user/wallet to construct, sign, and broadcast the transaction. It does *not* need to cover the subsequent block confirmation interval.
+  4. *Rule and recommendation:*
+     - Reduce reverse safe-lane quote TTL from 1800 s to 180 s (3 minutes). 3 minutes provides ample margin for wallet interactions and broadcast while limiting the user's free price option window by 90%.
+     - If the user fails to broadcast within 180 s, the quote expires harmlessly and the UI requests a fresh quote (re-quote rule).
+     - Furthermore, before solver counter-locking at $t_0$, the engine retains the right to verify current peg health against `PriceSource`: if the peg has broken beyond `pegTolerance` during the block confirmation wait, the solver refuses to counter-lock, forcing a safe refund for the user by height.
+- **Evidence:** Documented in `lab/decisions.md` (D-A2-010); safe-lane reverse live run executed on Base Sepolia + Chipnet confirming `firstSeenAt` gating; tests in `packages/solver/test/reverse.test.ts`.
+- **Consequence for rebuild:** Differentiate quote validity window (time to enter mempool) from settlement/confirmation window (time to mine into block). Keep quote TTLs tight (<= 180 s) to bound adverse selection risk on stablecoin pegs.
+- **Revisit if:** User wallet UX requires longer signing timeouts, or dynamic volatility-adjusted spreads are implemented.
