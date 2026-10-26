@@ -11,4 +11,12 @@ for check in format:check typecheck lint; do
     exit 1
   fi
 done
+
+# Repository hygiene & credential audit
+if ! pnpm --silent --filter @ferry/scripts hygiene >/tmp/ferry-prepush-hygiene.log 2>&1; then
+  echo "pre-push: repository hygiene check failed; see /tmp/ferry-prepush-hygiene.log" >&2
+  cat /tmp/ferry-prepush-hygiene.log >&2
+  exit 1
+fi
+
 exit 0

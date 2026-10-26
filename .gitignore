@@ -1,10 +1,13 @@
 # secrets
 .env
-.env.local
-.env*.local
+.env.*
+!.env.example
 *.key
 *.wif
-keypair*.json
+*.pem
+*.pkcs8
+*keypair*.json
+*-keypair.json
 id.json
 
 # deps / builds
@@ -18,7 +21,8 @@ coverage/
 # foundry
 packages/htlc-evm/out/
 packages/htlc-evm/cache/
-packages/htlc-evm/broadcast/*/31337/
+packages/htlc-evm/broadcast/
+**/broadcast/
 
 # anchor / rust
 target/
@@ -27,12 +31,18 @@ test-ledger/
 
 # tron
 packages/htlc-tron/build/
+packages/htlc-tron/cache/
+packages/htlc-tron/out/
 
-# solver data
+# solver data & runtime state (holds HTLC preimages,)
+packages/solver/data/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+*.sqlite3
 *.db
+*.db-wal
+*.db-shm
 
 # web / test output
 playwright-report/
@@ -44,9 +54,3 @@ test-results/
 *.swp
 .idea/
 .vscode/
-
-# solver runtime state (holds HTLC preimages),
-packages/solver/data/
-*.db
-*.db-wal
-*.db-shm
