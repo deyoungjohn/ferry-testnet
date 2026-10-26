@@ -294,19 +294,30 @@ export class EvmChainAdapter implements ChainAdapter {
       throw new Error('WalletClient with account required to claim');
     }
 
-    const hash = await this.walletClient.writeContract({
-      address: this.htlcAddress,
-      abi: ferryHtlcAbi,
-      functionName: 'claim',
-      args: [lockId as Hex32, secret],
-      chain: null,
-      account: this.walletClient.account,
-    });
+    try {
+      const hash = await this.walletClient.writeContract({
+        address: this.htlcAddress,
+        abi: ferryHtlcAbi,
+        functionName: 'claim',
+        args: [lockId as Hex32, secret],
+        chain: null,
+        account: this.walletClient.account,
+      });
 
-    await this.client.waitForTransactionReceipt({ hash });
-    this.lastSeenTxByAction.set(actionKey, hash);
-    this.lastSeenSecretByLock.set(lockId, secret);
-    return { chain: this.id, txId: hash };
+      await this.client.waitForTransactionReceipt({ hash });
+      this.lastSeenTxByAction.set(actionKey, hash);
+      this.lastSeenSecretByLock.set(lockId, secret);
+      return { chain: this.id, txId: hash };
+    } catch (err: unknown) {
+      // Re-check on chain state in case of race / double-send / NotLocked()
+      const recheck = await this.getLock(lockId);
+      if (recheck.status === 'claimed') {
+        this.lastSeenTxByAction.set(actionKey, recheck.claimTx.txId);
+        this.lastSeenSecretByLock.set(lockId, secret);
+        return recheck.claimTx;
+      }
+      throw err;
+    }
   }
 
   async refund(lockId: string): Promise<TxRef> {
