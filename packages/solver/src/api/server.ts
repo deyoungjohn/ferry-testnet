@@ -176,7 +176,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
 
     const now = Math.floor(Date.now() / 1000);
     const quoteExpiry =
-      now + (isReverse && (request.lane ?? 'safe') === 'safe' ? 1800 : 120); // 30 mins for reverse safe lane (1 conf), 2 mins otherwise
+      now + (isReverse && (request.lane ?? 'safe') === 'safe' ? 180 : 120); // 3 mins for reverse safe lane, 2 mins otherwise (D-A2-010)
 
     let counterDeadline: number;
     let bchRefundHeight: number;

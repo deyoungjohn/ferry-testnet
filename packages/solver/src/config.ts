@@ -8,7 +8,7 @@ export const SolverConfigSchema = z.object({
   bchElectrumUrls: z
     .string()
     .default(
-      'wss://chipnet.imaginary.cash:50004,wss://blackie.c3-soft.com:50004',
+      'wss://chipnet.imaginary.cash:50004,wss://blackie.c3-soft.com:64004',
     ),
   baseRpcUrl: z.string().default('https://sepolia.base.org'),
   baseChainId: z.coerce.number().default(84532),

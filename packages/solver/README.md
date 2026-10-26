@@ -15,7 +15,7 @@ Ferryman is the autonomous solver daemon for Ferry. It watches supported chains,
    - Unexpected state combinations during startup reconciliation are marked `needs_attention: 1` rather than silently swept into DONE.
 
 3. **BCH Quorum Client & Real Lock Builder (`src/bch/`):**
-   - Dual-Fulcrum WebSocket client connecting to independent chipnet nodes (`wss://chipnet.imaginary.cash:50004` and `wss://blackie.c3-soft.com:50004`).
+   - Dual-Fulcrum WebSocket client connecting to independent chipnet nodes (`wss://chipnet.imaginary.cash:50004` and `wss://blackie.c3-soft.com:64004`).
    - Enforces a tip quorum where server tips must agree (`|tip1 - tip2| <= 1`).
    - Automatically handles reconnects and performs history reconciliation via `blockchain.scripthash.get_history` (CH-02 / CH-04).
    - Real BCH lock transactions assembled with CashScript `TransactionBuilder`, funding P2SH32 contract outputs with CashTokens and sats, signed with `SOLVER_BCH_WIF`.

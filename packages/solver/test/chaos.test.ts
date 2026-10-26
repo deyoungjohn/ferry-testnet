@@ -247,7 +247,7 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
     let notifiedStatus: string | null = null;
     const client = new BchQuorumClient([
       'wss://chipnet.imaginary.cash:50004',
-      'wss://blackie.c3-soft.com:50004',
+      'wss://blackie.c3-soft.com:64004',
     ]);
 
     await client.subscribeScriptHash('76a914testhash', (status) => {

@@ -116,7 +116,7 @@ async function runLiveSwap() {
   const db = new SolverDatabase(':memory:');
   const bchClient = new BchQuorumClient([
     'wss://chipnet.imaginary.cash:50004',
-    'wss://blackie.c3-soft.com:50004',
+    'wss://blackie.c3-soft.com:64004',
   ]);
   await bchClient.connect();
   console.log(
