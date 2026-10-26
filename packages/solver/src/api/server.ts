@@ -49,11 +49,39 @@ import {
   TestnetStubPriceSource,
 } from '../pricing/price-source.js';
 import type { PayLinkRecord } from '../db/database.js';
+import type { BchQuorumStatus } from '../bch/types.js';
 import {
   createLinkId,
   verifyPayLinkSignature,
   verifyPayLinksSignature,
 } from '../paylink/link.js';
+
+export function evaluateBchHealth(
+  quorum: BchQuorumStatus,
+  config: Pick<SolverConfig, 'network' | 'tipMaxAgeBchSeconds'>,
+): { isHealthy: boolean; stale: boolean } {
+  if (!quorum.isQuorumHealthy || !quorum.quorumTip || quorum.quorumTip <= 0) {
+    return { isHealthy: false, stale: true };
+  }
+
+  const livenessHealthy =
+    quorum.isLivenessHealthy !== undefined
+      ? quorum.isLivenessHealthy
+      : quorum.livenessAgeSeconds !== undefined
+        ? quorum.livenessAgeSeconds <= 60
+        : quorum.ageSeconds <= config.tipMaxAgeBchSeconds;
+
+  if (!livenessHealthy) {
+    return { isHealthy: false, stale: true };
+  }
+
+  const isMainnet = config.network === 'mainnet';
+  if (isMainnet && quorum.ageSeconds > config.tipMaxAgeBchSeconds) {
+    return { isHealthy: false, stale: true };
+  }
+
+  return { isHealthy: true, stale: false };
+}
 
 function toPayLinkWire(link: PayLinkRecord) {
   return {
@@ -257,12 +285,8 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
 
     // Check tip ages and quorum health
     const quorum = bchClient.getQuorumStatus();
-    if (
-      !quorum.isQuorumHealthy ||
-      !quorum.quorumTip ||
-      quorum.quorumTip <= 0 ||
-      quorum.ageSeconds > config.tipMaxAgeBchSeconds
-    ) {
+    const bchHealth = evaluateBchHealth(quorum, config);
+    if (!bchHealth.isHealthy) {
       return reply.status(503).send({
         code: 'BCH_TIP_UNHEALTHY',
         message:
@@ -827,9 +851,9 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
   // 6. GET /v1/health
   app.get('/v1/health', async (_req, reply) => {
     const quorum = bchClient.getQuorumStatus();
-    const staleBch = quorum.ageSeconds > config.tipMaxAgeBchSeconds;
-    const isQuorumOk = quorum.isQuorumHealthy && quorum.quorumTip > 0;
-    const isBchHealthy = isQuorumOk && !staleBch;
+    const bchHealth = evaluateBchHealth(quorum, config);
+    const staleBch = bchHealth.stale;
+    const isBchHealthy = bchHealth.isHealthy;
 
     let baseTipStatus: { height: number; ageSeconds: number; stale: boolean };
     try {
@@ -1159,12 +1183,8 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
 
       // Check tip freshness and quorum health
       const quorum = bchClient.getQuorumStatus();
-      if (
-        !quorum.isQuorumHealthy ||
-        !quorum.quorumTip ||
-        quorum.quorumTip <= 0 ||
-        quorum.ageSeconds > config.tipMaxAgeBchSeconds
-      ) {
+      const bchHealth = evaluateBchHealth(quorum, config);
+      if (!bchHealth.isHealthy) {
         return reply.status(503).send({
           code: 'STALE_CHAIN_TIP',
           message:

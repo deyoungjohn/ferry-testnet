@@ -23,9 +23,12 @@ export class SingleFulcrumClient {
   private pendingRequests = new Map<number, PendingRequest>();
   private tipHeight = 0;
   private tipTimestamp = 0;
+  private lastConfirmedAt = 0;
   private connected = false;
   private shouldReconnect = true;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private pingTimer: NodeJS.Timeout | null = null;
+  private isPinging = false;
   private scriptSubscriptions = new Set<string>();
   private genesisHash: string | null = null;
 
@@ -38,6 +41,19 @@ export class SingleFulcrumClient {
   public onDisconnect?: () => void;
 
   constructor(public readonly url: string) {}
+
+  getLastConfirmedAt(): number {
+    return this.lastConfirmedAt;
+  }
+
+  setLastConfirmedAt(ts: number): void {
+    this.lastConfirmedAt = ts;
+  }
+
+  setTip(height: number, timestamp: number): void {
+    this.tipHeight = height;
+    this.tipTimestamp = timestamp;
+  }
 
   getGenesisHash(): string | null {
     return this.genesisHash;
@@ -74,6 +90,8 @@ export class SingleFulcrumClient {
           )) as { height: number; hex: string };
           this.tipHeight = header.height;
           this.tipTimestamp = Date.now();
+          this.lastConfirmedAt = Date.now();
+          this.startPingTimer();
           if (this.onTipUpdate) this.onTipUpdate(header.height);
 
           // Query server features for genesis check
@@ -128,6 +146,7 @@ export class SingleFulcrumClient {
           ) {
             this.tipHeight = msg.params[0].height;
             this.tipTimestamp = Date.now();
+            this.lastConfirmedAt = Date.now();
             if (this.onTipUpdate) this.onTipUpdate(this.tipHeight);
           } else if (
             msg.method === 'blockchain.scripthash.subscribe' &&
@@ -152,6 +171,7 @@ export class SingleFulcrumClient {
 
       ws.on('close', () => {
         this.connected = false;
+        this.stopPingTimer();
         if (this.onDisconnect) this.onDisconnect();
         this.failPendingRequests(new Error('Connection closed'));
         if (this.shouldReconnect) {
@@ -224,8 +244,67 @@ export class SingleFulcrumClient {
     }
   }
 
+  async ping(timeoutMs = 10000): Promise<boolean> {
+    if (!this.isConnected()) return false;
+    let timer: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Ping timeout')), timeoutMs);
+      timer.unref?.();
+    });
+    try {
+      await Promise.race([this.request('server.ping'), timeoutPromise]);
+      this.lastConfirmedAt = Date.now();
+      return true;
+    } catch {
+      try {
+        const header = (await Promise.race([
+          this.request<{ height: number; hex: string }>(
+            'blockchain.headers.subscribe',
+            [],
+          ),
+          timeoutPromise,
+        ])) as { height: number; hex: string };
+        if (header && typeof header.height === 'number') {
+          this.tipHeight = header.height;
+          this.tipTimestamp = Date.now();
+        }
+        this.lastConfirmedAt = Date.now();
+        return true;
+      } catch {
+        return false;
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  startPingTimer(intervalMs = 30000): void {
+    this.stopPingTimer();
+    this.pingTimer = setInterval(async () => {
+      if (this.isConnected() && !this.isPinging) {
+        this.isPinging = true;
+        try {
+          await this.ping();
+        } catch {
+          // Ignored; handled within ping
+        } finally {
+          this.isPinging = false;
+        }
+      }
+    }, intervalMs);
+    this.pingTimer.unref?.();
+  }
+
+  stopPingTimer(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+
   close(): void {
     this.shouldReconnect = false;
+    this.stopPingTimer();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -342,16 +421,20 @@ export class BchQuorumClient implements DSProofWatcher {
     let minTip = Infinity;
     let maxTip = 0;
     let newestTimestamp = 0;
+    let newestConfirmedAt = 0;
     let connectedCount = 0;
 
     for (const client of this.clients) {
       if (client.isConnected()) {
         const { height, timestamp } = client.getTip();
+        const lastConfirmed = client.getLastConfirmedAt();
         if (height > 0) {
           tips[client.url] = height;
           if (height < minTip) minTip = height;
           if (height > maxTip) maxTip = height;
           if (timestamp > newestTimestamp) newestTimestamp = timestamp;
+          if (lastConfirmed > newestConfirmedAt)
+            newestConfirmedAt = lastConfirmed;
           connectedCount++;
         }
       }
@@ -363,6 +446,9 @@ export class BchQuorumClient implements DSProofWatcher {
         tips,
         isQuorumHealthy: false,
         ageSeconds: Infinity,
+        lastConfirmedAt: 0,
+        livenessAgeSeconds: Infinity,
+        isLivenessHealthy: false,
       };
     }
 
@@ -371,17 +457,32 @@ export class BchQuorumClient implements DSProofWatcher {
       connectedCount >= Math.min(2, this.clients.length) &&
       (connectedCount === 1 || maxTip - minTip <= 1);
 
+    const now = Date.now();
     const ageSeconds =
       newestTimestamp > 0
-        ? Math.floor((Date.now() - newestTimestamp) / 1000)
+        ? Math.floor((now - newestTimestamp) / 1000)
         : Infinity;
+
+    const livenessAgeSeconds =
+      newestConfirmedAt > 0
+        ? Math.floor((now - newestConfirmedAt) / 1000)
+        : Infinity;
+
+    const isLivenessHealthy = connectedCount > 0 && livenessAgeSeconds <= 60;
 
     return {
       quorumTip: minTip === Infinity ? 0 : minTip,
       tips,
       isQuorumHealthy,
       ageSeconds,
+      lastConfirmedAt: newestConfirmedAt,
+      livenessAgeSeconds,
+      isLivenessHealthy,
     };
+  }
+
+  async pingAll(): Promise<boolean[]> {
+    return Promise.all(this.clients.map((c) => c.ping()));
   }
 
   private getActiveClient(): SingleFulcrumClient {

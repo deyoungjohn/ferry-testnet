@@ -29,6 +29,9 @@ export interface BchQuorumStatus {
   tips: { [serverUrl: string]: number };
   isQuorumHealthy: boolean;
   ageSeconds: number;
+  lastConfirmedAt: number;
+  livenessAgeSeconds: number;
+  isLivenessHealthy: boolean;
 }
 
 export interface DSProofEvidence {
