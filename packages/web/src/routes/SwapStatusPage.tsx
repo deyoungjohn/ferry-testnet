@@ -25,6 +25,7 @@ import {
 import { loadOrderRecord, saveOrderRecord } from '../lib/orders/store';
 import { ElectrumClient } from '../recover/core';
 import { useSolver } from '../lib/solver/context';
+import { describeSolverError, type SolverFailure } from '../lib/solver/errors';
 import { solverIsLive } from '../lib/solver/kind';
 import type { OrderView } from '../lib/solver/types';
 import { buildOrderViewModel, formatDuration } from '../lib/solver/view';
@@ -44,8 +45,8 @@ export function SwapStatusPage() {
   const solver = useSolver();
   const { bch, evm } = useWallets();
   const [order, setOrder] = useState<OrderView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [error, setError] = useState<SolverFailure | null>(null);
+  const [actionError, setActionError] = useState<SolverFailure | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -87,11 +88,7 @@ export function SwapStatusPage() {
           setLocalFallback(true);
           setLocalSolverLive(local.solverLive);
         } else {
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : 'Could not load this order',
-          );
+          setError(describeSolverError(cause, 'Could not load this order'));
         }
       }
     };
@@ -123,6 +120,10 @@ export function SwapStatusPage() {
     setOrder(next);
   }
 
+  function showActionFailure(cause: unknown, fallback: string): void {
+    setActionError(describeSolverError(cause, fallback));
+  }
+
   async function handleRecoveryDownload(): Promise<void> {
     if (!order) return;
     try {
@@ -143,11 +144,7 @@ export function SwapStatusPage() {
       );
       setActionMessage('Recovery file downloaded.');
     } catch (cause) {
-      setActionError(
-        cause instanceof Error
-          ? cause.message
-          : 'Could not prepare the recovery file',
-      );
+      showActionFailure(cause, 'Could not prepare the recovery file');
     }
   }
 
@@ -187,9 +184,7 @@ export function SwapStatusPage() {
         `BCH claim broadcast: ${truncateAddress(claimTxId, 10, 6)}. The solver can now claim your USDC.`,
       );
     } catch (cause) {
-      setActionError(
-        cause instanceof Error ? cause.message : 'Could not submit the claim',
-      );
+      showActionFailure(cause, 'Could not submit the claim');
     } finally {
       setBusy(false);
     }
@@ -227,9 +222,7 @@ export function SwapStatusPage() {
       }
       await refresh();
     } catch (cause) {
-      setActionError(
-        cause instanceof Error ? cause.message : 'Could not claim USDC',
-      );
+      showActionFailure(cause, 'Could not claim USDC');
     } finally {
       setBusy(false);
     }
@@ -299,11 +292,7 @@ export function SwapStatusPage() {
       await refresh();
       setActionMessage(`BCH refund broadcast: ${truncateAddress(txid, 10, 6)}`);
     } catch (cause) {
-      setActionError(
-        cause instanceof Error
-          ? cause.message
-          : 'Could not refund the BCH lock',
-      );
+      showActionFailure(cause, 'Could not refund the BCH lock');
     } finally {
       setBusy(false);
     }
@@ -326,9 +315,7 @@ export function SwapStatusPage() {
       setActionMessage(`Refund submitted: ${truncateAddress(txHash, 10, 6)}`);
       await refresh();
     } catch (cause) {
-      setActionError(
-        cause instanceof Error ? cause.message : 'Could not refund the lock',
-      );
+      showActionFailure(cause, 'Could not refund the lock');
     } finally {
       setBusy(false);
     }
@@ -422,7 +409,15 @@ export function SwapStatusPage() {
 
       {error && !order ? (
         <div className="mt-8 rounded-card border border-danger/25 bg-danger/5 p-6">
-          <p className="text-sm font-medium text-danger">{error}</p>
+          <p className="text-sm font-medium text-danger">{error.sentence}</p>
+          {error.nextStep ? (
+            <p className="mt-1 text-xs text-text-muted">{error.nextStep}</p>
+          ) : null}
+          {error.code ? (
+            <p className="mt-1 font-mono text-[10px] text-text-muted">
+              Code: {error.code}
+            </p>
+          ) : null}
           <p className="mt-2 text-xs text-text-muted">
             Check the link, or open a swap you created in this browser.
           </p>
@@ -759,12 +754,20 @@ export function SwapStatusPage() {
             ) : null}
 
             {actionError ? (
-              <p
+              <div
                 role="alert"
-                className="mt-3 text-[11px] leading-5 text-danger"
+                className="mt-3 rounded-well border border-danger/25 bg-danger/5 px-3 py-2 text-[11px] leading-5 text-danger"
               >
-                {actionError}
-              </p>
+                <p>{actionError.sentence}</p>
+                {actionError.nextStep ? (
+                  <p className="mt-1 text-text-muted">{actionError.nextStep}</p>
+                ) : null}
+                {actionError.code ? (
+                  <p className="mt-1 font-mono text-[10px] text-text-muted">
+                    Code: {actionError.code}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
             {actionMessage ? (
               <p role="status" className="mt-3 text-[11px] leading-5 text-ok">

@@ -17,6 +17,7 @@ const webRoot = fileURLToPath(new URL('.', import.meta.url));
 const repoRoot = path.resolve(webRoot, '../..');
 
 function exposeRootViteEnv(mode: string): void {
+  if (mode === 'test') return;
   const webEnv = loadEnv(mode, webRoot, 'VITE_');
   const rootEnv = loadEnv(mode, repoRoot, 'VITE_');
   const merged = publicViteEnv(rootEnv, webEnv);

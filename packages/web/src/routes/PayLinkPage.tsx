@@ -34,6 +34,7 @@ import { useQuoteAutoRefresh } from '../lib/quote/auto-refresh';
 import { assertQuoteStillOpen } from '../lib/quote/expiry';
 import { saveQuoteRecord } from '../lib/orders/store';
 import { useSolver } from '../lib/solver/context';
+import { describeSolverError, type SolverFailure } from '../lib/solver/errors';
 import { solverIsLive } from '../lib/solver/kind';
 import { useWallets } from '../lib/wallet/context';
 import {
@@ -73,7 +74,7 @@ export function PayLinkPage() {
   const [recovery, setRecovery] = useState<RecoveryFile | null>(null);
   const [recoveryDownloaded, setRecoveryDownloaded] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<SolverFailure | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const lockStarted = useRef(false);
   const requestVersion = useRef(0);
@@ -151,23 +152,31 @@ export function PayLinkPage() {
     };
   }, [quote]);
 
+  function showFailure(cause: unknown, fallback: string): void {
+    setError(describeSolverError(cause, fallback));
+  }
+
+  function showMessage(sentence: string): void {
+    setError({ sentence, nextStep: '', code: null, kind: 'local' });
+  }
+
   async function handleQuote(auto = false): Promise<boolean> {
     if (auto && lockStarted.current) return false;
     const version = ++requestVersion.current;
     if (quoteConfigError) {
-      setError(quoteConfigError);
+      showMessage(quoteConfigError);
       return false;
     }
     if (!link || !evm.address) {
-      setError('Connect a Base wallet first.');
+      showMessage('Connect a Base wallet first.');
       return false;
     }
     if (!auto && linkExpired) {
-      setError('This link has expired.');
+      showMessage('This link has expired.');
       return false;
     }
     if (!auto && closed && !quote) {
-      setError('This invoice is being paid by another payer.');
+      showMessage('This invoice is being paid by another payer.');
       return false;
     }
     if (!auto) {
@@ -252,9 +261,7 @@ export function PayLinkPage() {
         setQuote(null);
         setRecovery(null);
       }
-      setError(
-        cause instanceof Error ? cause.message : 'Could not get a quote',
-      );
+      showFailure(cause, 'Could not get a quote');
       return false;
     } finally {
       if (!auto) setBusy(false);
@@ -277,11 +284,11 @@ export function PayLinkPage() {
   async function handlePay(): Promise<void> {
     if (!quote || !recovery || !evm.address) return;
     if (expired) {
-      setError('This quote expired. Get a fresh quote before paying.');
+      showMessage('This quote expired. Get a fresh quote before paying.');
       return;
     }
     if (!recoveryDownloaded) {
-      setError('Download the recovery file before paying.');
+      showMessage('Download the recovery file before paying.');
       return;
     }
     lockStarted.current = true;
@@ -307,7 +314,7 @@ export function PayLinkPage() {
       });
       navigate(`/swap/${quote.orderId}`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Payment failed');
+      showFailure(cause, 'Payment failed');
     } finally {
       setBusy(false);
     }
@@ -580,9 +587,20 @@ export function PayLinkPage() {
         ) : null}
 
         {error ? (
-          <p className="mt-4 text-sm text-danger" role="alert">
-            {error}
-          </p>
+          <div
+            className="mt-4 rounded-well border border-danger/25 bg-danger/5 px-3 py-2 text-[11px] leading-5 text-danger"
+            role="alert"
+          >
+            <p>{error.sentence}</p>
+            {error.nextStep ? (
+              <p className="mt-1 text-text-muted">{error.nextStep}</p>
+            ) : null}
+            {error.code ? (
+              <p className="mt-1 font-mono text-[10px] text-text-muted">
+                Code: {error.code}
+              </p>
+            ) : null}
+          </div>
         ) : null}
 
         {!quote ||

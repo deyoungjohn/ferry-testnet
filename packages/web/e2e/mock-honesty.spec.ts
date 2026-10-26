@@ -16,6 +16,10 @@ test('mock status never exposes explorer links or hides the simulation', async (
   ).toBeVisible();
   await expect(page.getByText(/mock, not on chain/i).first()).toBeVisible();
   await expect(page.getByText(/explorer links disabled/i)).toBeVisible();
+  await expect(
+    page.getByText(/Solver health: Mock solver \(simulated health\)/i),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/Quoting on/i)).toBeVisible();
   expect(await page.locator('a[href*="basescan.org/tx/"]').count()).toBe(0);
   expect(
     await page.locator('a[href*="blockexplorer.cash/chipnet/tx/"]').count(),

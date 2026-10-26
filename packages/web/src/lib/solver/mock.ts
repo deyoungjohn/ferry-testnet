@@ -13,6 +13,7 @@ import {
   type CancelPayLinkRequest,
   type CreatePayLinkRequest,
   type Direction,
+  type HealthResponse,
   type Hex32,
   type ListPayLinksQuery,
   type OrderTerms,
@@ -23,6 +24,7 @@ import {
 import { keccak256, sha256, toBytes, type Address } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { parseBchAddress } from '../bch/address';
+import { SolverError } from './errors';
 import {
   createLinkId,
   MOCK_EXPIRED_LINK_ID,
@@ -129,7 +131,14 @@ export interface MockSolverOptions {
   readonly direction?: Direction;
   readonly bchTipHeight?: number;
   readonly quoteTtlSeconds?: number | undefined;
-  readonly quoteFailure?: 'rejected' | 'unavailable' | undefined;
+  readonly quoteFailure?:
+    | 'rejected'
+    | 'unavailable'
+    | 'bch-tip'
+    | 'evm-tip'
+    | 'quoting-disabled'
+    | 'unknown'
+    | undefined;
   readonly linkIdFactory?: () => string;
 }
 
@@ -173,7 +182,14 @@ export class MockSolverClient implements SolverClient {
   readonly #direction: Direction;
   readonly #bchTipHeight: number;
   readonly #quoteTtlSeconds: number;
-  readonly #quoteFailure: 'rejected' | 'unavailable' | undefined;
+  readonly #quoteFailure:
+    | 'rejected'
+    | 'unavailable'
+    | 'bch-tip'
+    | 'evm-tip'
+    | 'quoting-disabled'
+    | 'unknown'
+    | undefined;
   readonly #linkIdFactory: () => string;
 
   constructor(options: MockSolverOptions = {}) {
@@ -261,15 +277,57 @@ export class MockSolverClient implements SolverClient {
     }
   }
 
+  async getHealth(): Promise<HealthResponse> {
+    const now = Math.floor(Date.now() / 1_000);
+    return {
+      ok: true,
+      quotingEnabled: true,
+      quoting: true,
+      bchTip: {
+        height: this.#bchTipHeight,
+        ageSeconds: 0,
+        stale: false,
+        quorum: true,
+      },
+      counterTips: {
+        base: { height: 1, ageSeconds: 0, stale: false },
+      },
+      inventory: [],
+      timestamp: now,
+    };
+  }
+
   async quote(input: QuoteRequest): Promise<SignedQuote> {
     if (this.#quoteFailure === 'unavailable') {
-      throw new Error(
-        'Solver unavailable. Check the solver URL or start the local solver, then try again.',
-      );
+      throw new SolverError('UNREACHABLE', 'connect ECONNREFUSED');
     }
     if (this.#quoteFailure === 'rejected') {
-      throw new Error(
-        'QUOTE_REJECTED: The solver cannot cover this amount right now. Try a smaller amount.',
+      throw new SolverError(
+        'INSUFFICIENT_INVENTORY',
+        'The solver cannot cover this amount right now',
+      );
+    }
+    if (this.#quoteFailure === 'bch-tip') {
+      throw new SolverError(
+        'BCH_TIP_UNHEALTHY',
+        'BCH quorum is unhealthy or tip is unknown/stale; quoting disabled',
+      );
+    }
+    if (this.#quoteFailure === 'evm-tip') {
+      throw new SolverError(
+        'EVM_TIP_UNHEALTHY',
+        'Base tip is stale or unavailable; quoting disabled',
+      );
+    }
+    if (this.#quoteFailure === 'quoting-disabled') {
+      throw new SolverError('QUOTING_DISABLED', 'Quoting is paused');
+    }
+    if (this.#quoteFailure === 'unknown') {
+      throw new SolverError(
+        'UNKNOWN',
+        'A future solver failure',
+        400,
+        'FUTURE_CODE',
       );
     }
     const request = QuoteRequestSchema.parse(input);
