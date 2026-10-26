@@ -18,7 +18,7 @@
     "format:check": "prettier --check .",
     "toolchain:check": "bash scripts/toolchain/check.sh",
     "dev:web": "pnpm --filter @ferry/web dev --host 0.0.0.0",
-    "dev:solver": "tsx --env-file=.env.local packages/solver/src/main.ts"
+    "dev:solver": "tsx --conditions=ferry-source --env-file=.env.local packages/solver/src/main.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
