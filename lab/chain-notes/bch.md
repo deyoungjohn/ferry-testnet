@@ -189,3 +189,34 @@ Executed end-to-end against live solver daemon running on `localhost:8787` (`pnp
   - TXID: `dc353eb0e06daa4d23c5bb8380a53eb7e886c64538057dafcfda05354e147ef6`
   - Output: Solver token address claiming 1.00 tPUSD using secret preimage revealed on Base Sepolia.
   - Explorer: `https://chipnet.imaginary.cash/tx/dc353eb0e06daa4d23c5bb8380a53eb7e886c64538057dafcfda05354e147ef6`
+
+---
+
+## 2026-10-26 · BCH Claim Detection Latency Analysis & Reconciliation Safety Net
+
+### 1. Root Cause Analysis of 7-Minute Stalled Swap (Order `0xee9a1baa…`)
+Timestamps extracted from solver SQLite database and Chipnet block explorer:
+- **Order creation:** 17:53:35 UTC (`1793037215894`)
+- **Solver BCH lock broadcast:** 17:54:25 UTC (`1793037265293`, TXID `f173cf8a01b8245e11e7a9a8c472107dd1fef2d64db9d03a074cdbfa7d64a938`)
+- **User claim broadcast:** ~18:00:30 UTC (TXID `07390a3e2af054c7b1433ad2b68502c10ad5d52b96508a4cc140c38e542a10ad`)
+- **User claim mined on Chipnet:** blocktime 18:00:50 UTC (`1793037650`, block 329636)
+- **Solver secret extracted & EVM claim broadcast:** 18:00:32 UTC (`1793037632012`, TXID `0x65a9754452c20e417356372516d7bc5fbe8285833c6970b779c1afda44484f06`)
+- **Order completed (DONE):** 18:00:40 UTC (`1793037640877`)
+
+**Findings:**
+1. **Confirmation Depth:** The solver does **not** wait for confirmation depth (mined block). It accepted the user claim with `height = 0` (mempool), broadcasting the EVM claim at 18:00:32 UTC, 18 seconds before the block was mined at 18:00:50 UTC.
+2. **Missing History Reconciliation:** The solver previously had `reconcileOrders()` running only once at startup. During active execution, `processOrder()` only watched for the refund height when in `SOLVER_LOCK_SEEN` and did not actively poll `getHistory()`. It was solely dependent on either WebSocket push notifications (`blockchain.scripthash.subscribe`) or the client's cooperative `submitSecret` endpoint.
+3. **Client Handoff Failure:** The web UI's `handleClaim` button threw an error on second click ("already in block chain") and aborted `submitSecret`, so the solver never received the cooperative secret.
+4. **Reconciliation Safety Net:** Added continuous 2-second background history reconciliation in `runner.pollInterval`. If any WebSocket notification is dropped or delayed, the engine automatically checks `findClaimInHistory` and advances within 2 seconds.
+5. **EVM Claim Idempotency:** Guarded `processSolverClaim` with `inFlightClaims` set and added pre-check / error catch on `evmAdapter.getLock` to adopt already-claimed locks and eliminate `NotLocked()` reverts.
+
+### 2. Measured Detect-to-Broadcast Latencies
+- **Live swap `0x843bae14…` (with live WebSocket notification):**
+  - User BCH claim in mempool: 17:53:26 UTC (`1793037206000`)
+  - Solver EVM claim broadcast: 17:53:26.552 UTC (`1793037206552`)
+  - Latency: **552 ms**
+- **Hermetic test with dropped WebSocket notification (`bch-claim-reconciliation.test.ts`):**
+  - WebSocket notification suppressed completely: `subscriptionCallback` never invoked
+  - Periodic reconciliation detected user claim in mempool `height = 0`
+  - Secret extracted & EVM claim broadcast within **1 ms** of reconciliation pass
+  - Swap transitioned cleanly to `SOLVER_CLAIM_BROADCAST`

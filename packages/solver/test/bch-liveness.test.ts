@@ -328,5 +328,63 @@ describe('BCH Tip Liveness vs Block Age', () => {
       client.close();
       await new Promise<void>((r) => wss.close(() => r()));
     });
+
+    it('ping fallback to headers.subscribe does NOT update tipTimestamp if height is unchanged', async () => {
+      wss.on('connection', (ws) => {
+        ws.on('message', (raw) => {
+          const msg = JSON.parse(raw.toString());
+          if (msg.method === 'blockchain.headers.subscribe') {
+            ws.send(
+              JSON.stringify({
+                id: msg.id,
+                result: { height: 320000, hex: '00' },
+              }),
+            );
+          } else if (msg.method === 'server.features') {
+            ws.send(
+              JSON.stringify({
+                id: msg.id,
+                result: {
+                  genesis_hash:
+                    '000000001dd410c49a788668ce26751718cc797474d3152a5fc073dd44fd9f7b',
+                },
+              }),
+            );
+          } else if (msg.method === 'server.ping') {
+            // Simulate server.ping failing or unsupported
+            ws.send(
+              JSON.stringify({
+                id: msg.id,
+                error: { code: -32601, message: 'Method not found' },
+              }),
+            );
+          }
+        });
+      });
+
+      const client = new SingleFulcrumClient(`ws://127.0.0.1:${port}`);
+      await client.connect();
+
+      const initialTip = client.getTip();
+      expect(initialTip.height).toBe(320000);
+      const initialTimestamp = initialTip.timestamp;
+
+      // Wait 20ms and ping (which fails server.ping and falls back to headers.subscribe with same height 320000)
+      await new Promise((r) => setTimeout(r, 20));
+      const pingSuccess = await client.ping();
+      expect(pingSuccess).toBe(true);
+
+      const afterTip = client.getTip();
+      // Height unchanged, so tipTimestamp must NOT have been refreshed!
+      expect(afterTip.height).toBe(320000);
+      expect(afterTip.timestamp).toBe(initialTimestamp);
+      // But lastConfirmedAt MUST have been updated
+      expect(client.getLastConfirmedAt()).toBeGreaterThanOrEqual(
+        initialTimestamp,
+      );
+
+      client.close();
+      await new Promise<void>((r) => wss.close(() => r()));
+    });
   });
 });

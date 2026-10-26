@@ -144,10 +144,13 @@ export class SingleFulcrumClient {
             msg.method === 'blockchain.headers.subscribe' &&
             msg.params?.[0]
           ) {
-            this.tipHeight = msg.params[0].height;
-            this.tipTimestamp = Date.now();
+            const newHeight = msg.params[0].height;
+            if (newHeight !== this.tipHeight) {
+              this.tipHeight = newHeight;
+              this.tipTimestamp = Date.now();
+              if (this.onTipUpdate) this.onTipUpdate(this.tipHeight);
+            }
             this.lastConfirmedAt = Date.now();
-            if (this.onTipUpdate) this.onTipUpdate(this.tipHeight);
           } else if (
             msg.method === 'blockchain.scripthash.subscribe' &&
             msg.params
@@ -265,8 +268,10 @@ export class SingleFulcrumClient {
           timeoutPromise,
         ])) as { height: number; hex: string };
         if (header && typeof header.height === 'number') {
-          this.tipHeight = header.height;
-          this.tipTimestamp = Date.now();
+          if (header.height !== this.tipHeight) {
+            this.tipHeight = header.height;
+            this.tipTimestamp = Date.now();
+          }
         }
         this.lastConfirmedAt = Date.now();
         return true;

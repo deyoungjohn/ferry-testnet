@@ -12,6 +12,7 @@ import {
   invariantR,
   revealPolicy,
   type LockEvent,
+  type TxRef,
 } from '@ferry/core';
 import type { EvmChainAdapter } from '@ferry/chain-evm';
 import { decodeTransaction } from '@bitauth/libauth';
@@ -41,6 +42,7 @@ export class SolverEngine {
   private pollInterval: NodeJS.Timeout | null = null;
   private evmUnwatch: (() => void) | null = null;
   private subscribedScriptHashes = new Set<string>();
+  private inFlightClaims = new Set<string>();
   private readonly logger: pino.Logger;
 
   constructor(
@@ -109,11 +111,12 @@ export class SolverEngine {
       await this.ensureBchSubscription(order);
     }
 
-    // 4. Poll / event loop for processing order state transitions
+    // 4. Poll / event loop for processing order state transitions and history reconciliation
     this.pollInterval = setInterval(async () => {
       if (!this.running) return;
       try {
         await this.step();
+        await this.reconcileOrders();
       } catch (err) {
         this.logger.error({ err }, 'Error in solver engine loop');
       }
@@ -242,8 +245,9 @@ export class SolverEngine {
     order: SolverOrderRecord,
     scriptHash: string,
   ): Promise<void> {
-    if (order.direction === 'BCH_TO_COUNTER') {
-      await this.checkUserBchLock(order, scriptHash);
+    const currentOrder = this.db.getOrder(order.id) ?? order;
+    if (currentOrder.direction === 'BCH_TO_COUNTER') {
+      await this.checkUserBchLock(currentOrder, scriptHash);
       return;
     }
 
@@ -253,29 +257,40 @@ export class SolverEngine {
     );
 
     // 1. Check if solver lock is seen
-    if (order.status === 'SOLVER_LOCK_BROADCAST' && order.solverLockTxId) {
-      const hasUtxo = utxos.some((u) => u.tx_hash === order.solverLockTxId);
+    if (
+      currentOrder.status === 'SOLVER_LOCK_BROADCAST' &&
+      currentOrder.solverLockTxId
+    ) {
+      const hasUtxo = utxos.some(
+        (u) => u.tx_hash === currentOrder.solverLockTxId,
+      );
       if (hasUtxo) {
-        this.applyEvent(order, {
+        this.applyEvent(currentOrder, {
           type: 'SOLVER_LOCK_SEEN',
-          txId: order.solverLockTxId,
+          txId: currentOrder.solverLockTxId,
         });
       }
     }
 
     // 2. Check if user claimed the lock (spent UTXO revealing secret in unlocking script)
     if (
-      order.status === 'SOLVER_LOCK_SEEN' ||
-      order.status === 'SOLVER_LOCK_BROADCAST' ||
-      order.status === 'SECRET_KNOWN'
+      currentOrder.status === 'SOLVER_LOCK_SEEN' ||
+      currentOrder.status === 'SOLVER_LOCK_BROADCAST' ||
+      currentOrder.status === 'SECRET_KNOWN'
     ) {
-      const claim = await this.findClaimInHistory(order, scriptHash);
+      const claim = await this.findClaimInHistory(currentOrder, scriptHash);
       if (claim) {
-        this.applyEvent(order, {
+        this.applyEvent(currentOrder, {
           type: 'USER_CLAIM_SEEN',
           txId: claim.txId,
           secret: claim.secret,
         });
+        const locker = currentOrder.terms.userCounterAddress;
+        const lockId = this.evmAdapter.lockId(
+          locker as `0x${string}`,
+          currentOrder.terms.hashLock,
+        );
+        await this.processSolverClaim(currentOrder, lockId);
       }
     }
   }
@@ -301,7 +316,10 @@ export class SolverEngine {
 
     for (const spend of spends) {
       if (typeof this.bchClient.getTransaction !== 'function') continue;
-      const rawSpend = await this.bchClient.getTransaction(spend.tx_hash);
+      const rawSpend = await this.bchClient.getTransaction(
+        spend.tx_hash,
+        false,
+      );
       const rawHex =
         typeof rawSpend === 'string'
           ? rawSpend
@@ -315,6 +333,18 @@ export class SolverEngine {
               order.terms.hashLock,
             );
             if (secret) {
+              const detectedAt = Date.now();
+              const mempoolStatus = spend.height <= 0 ? 'mempool' : 'confirmed';
+              this.logger.info(
+                {
+                  orderId: order.id,
+                  txId: spend.tx_hash,
+                  height: spend.height,
+                  mempoolStatus,
+                  detectedAt,
+                },
+                'Extracted secret from user claim in BCH history',
+              );
               return { txId: spend.tx_hash, secret };
             }
           }
@@ -841,16 +871,33 @@ export class SolverEngine {
     lockId: string,
   ): Promise<void> {
     if (!order.secret) return;
+    if (this.inFlightClaims.has(order.id)) {
+      this.logger.debug(
+        { orderId: order.id },
+        'EVM claim is already in-flight for order',
+      );
+      return;
+    }
+
     const existingAction = this.db.getAction(order.id, 'SOLVER_CLAIM');
-    if (!existingAction || existingAction.status === 'PENDING') {
+    if (existingAction && existingAction.status === 'BROADCAST') {
+      return;
+    }
+
+    this.inFlightClaims.add(order.id);
+    try {
       const startClaim = Date.now();
       this.db.recordActionIntent(order.id, 'SOLVER_CLAIM', {
         lockId,
       });
 
-      // Pre-broadcast check on chain state
+      // Pre-broadcast check on chain state for idempotency (Blueprint §11.3 /)
       const currentLock = await this.evmAdapter.getLock(lockId);
       if (currentLock.status === 'claimed') {
+        this.logger.info(
+          { orderId: order.id, claimTxId: currentLock.claimTx.txId },
+          'EVM lock already claimed on chain; adopting claim tx',
+        );
         this.applyEvent(order, {
           type: 'SOLVER_CLAIM_FINAL',
           txId: currentLock.claimTx.txId,
@@ -860,18 +907,50 @@ export class SolverEngine {
       }
 
       if (currentLock.status === 'locked') {
-        const claimTx = await this.evmAdapter.claim(lockId, order.secret);
+        let claimTx: TxRef;
+        try {
+          claimTx = await this.evmAdapter.claim(lockId, order.secret);
+        } catch (err: unknown) {
+          // Re-verify on chain state in case of concurrent execution / NotLocked()
+          const recheck = await this.evmAdapter.getLock(lockId);
+          if (recheck.status === 'claimed') {
+            this.logger.info(
+              { orderId: order.id, claimTxId: recheck.claimTx.txId },
+              'EVM claim caught error but lock is claimed on chain; adopting',
+            );
+            claimTx = recheck.claimTx;
+          } else {
+            throw err;
+          }
+        }
+
         this.db.recordActionBroadcast(order.id, 'SOLVER_CLAIM', claimTx.txId);
 
         const latency = Date.now() - startClaim;
         this.metrics.lastReactionTimeMs = latency;
         this.metrics.reactionTimesMs.push(latency);
 
+        this.logger.info(
+          {
+            orderId: order.id,
+            claimTxId: claimTx.txId,
+            reactionLatencyMs: latency,
+          },
+          'Solver EVM claim broadcast successfully',
+        );
+
         this.applyEvent(order, {
           type: 'SOLVER_CLAIM_BROADCAST',
           txId: claimTx.txId,
         });
+      } else {
+        this.logger.warn(
+          { orderId: order.id, lockStatus: currentLock.status },
+          'Cannot claim EVM lock; lock is neither locked nor claimed',
+        );
       }
+    } finally {
+      this.inFlightClaims.delete(order.id);
     }
   }
 
