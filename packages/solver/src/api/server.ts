@@ -105,6 +105,67 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     );
   });
 
+  // Global 404 handler returning typed error envelope
+  app.setNotFoundHandler((request, reply) => {
+    return reply.status(404).send({
+      code: 'NOT_FOUND',
+      message: `Route ${request.method} ${request.url} not found`,
+    });
+  });
+
+  // Global error handler ensuring all errors return typed code and never expose raw stack traces
+  app.setErrorHandler((error: unknown, request, reply) => {
+    const err = (error && typeof error === 'object' ? error : {}) as {
+      statusCode?: number;
+      code?: string;
+      name?: string;
+      message?: string;
+    };
+
+    const isPayloadTooLarge =
+      err.statusCode === 413 ||
+      err.code === 'FST_ERR_CTP_BODY_TOO_LARGE' ||
+      (typeof err.message === 'string' &&
+        err.message.toLowerCase().includes('body is too large'));
+
+    if (isPayloadTooLarge) {
+      return reply.status(413).send({
+        code: 'BAD_REQUEST',
+        message: 'Request payload exceeds maximum allowed size',
+      });
+    }
+
+    const isSyntaxOrContentType =
+      err.statusCode === 400 ||
+      err.name === 'SyntaxError' ||
+      err.code === 'FST_ERR_CTP_INVALID_CONTENT_TYPE' ||
+      err.code === 'FST_ERR_CTP_EMPTY_JSON_BODY';
+
+    if (isSyntaxOrContentType) {
+      return reply.status(400).send({
+        code: 'BAD_REQUEST',
+        message: err.message || 'Malformed or invalid request payload',
+      });
+    }
+
+    const statusCode =
+      typeof err.statusCode === 'number' &&
+      err.statusCode >= 400 &&
+      err.statusCode < 600
+        ? err.statusCode
+        : 500;
+
+    logger.error(
+      { err: error, url: request.url, method: request.method },
+      'Unhandled API error',
+    );
+
+    return reply.status(statusCode).send({
+      code: err.code || 'INTERNAL_ERROR',
+      message: err.message || 'Internal server error',
+    });
+  });
+
   const { config, db, evmAdapter, bchClient, engine } = options;
   const priceSource = options.priceSource ?? new TestnetStubPriceSource(logger);
   const solverAccount = privateKeyToAccount(
@@ -124,6 +185,32 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     }
 
     const request = parseResult.data;
+
+    if (!config.quotingEnabled) {
+      return reply.status(503).send({
+        code: 'QUOTING_DISABLED',
+        message: 'Quoting is temporarily disabled',
+      });
+    }
+
+    // Check EVM tip health
+    try {
+      const evmTip = await evmAdapter.getTip();
+      if (
+        evmTip.height <= 0 ||
+        evmTip.ageSeconds > config.tipMaxAgeBaseSeconds
+      ) {
+        return reply.status(503).send({
+          code: 'EVM_TIP_UNHEALTHY',
+          message: 'EVM chain tip is stale or invalid; quoting disabled',
+        });
+      }
+    } catch {
+      return reply.status(503).send({
+        code: 'EVM_TIP_UNHEALTHY',
+        message: 'EVM chain tip is unreachable; quoting disabled',
+      });
+    }
 
     // Check limits
     const isReverse = request.direction === 'BCH_TO_COUNTER';
@@ -363,7 +450,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     const response = {
       orderId: order.id,
       status: order.status,
-      lane: 'safe',
+      lane: order.lane ?? 'safe',
       terms: order.terms,
       signature,
       signerAddress: solverAddress,
@@ -449,12 +536,24 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
         order.terms.userCounterAddress as `0x${string}`,
         order.terms.hashLock,
       );
-      const evmLock = await evmAdapter.getLock(lockId);
+      let evmLock;
       let confs = 0;
       let safeFinal = false;
-      if (evmLock.status === 'locked') {
-        safeFinal = await evmAdapter.isFinal(evmLock.lockTx, 'safe');
-        confs = safeFinal ? config.evmConfs : 1;
+      try {
+        evmLock = await evmAdapter.getLock(lockId);
+        if (evmLock.status === 'locked') {
+          safeFinal = await evmAdapter.isFinal(evmLock.lockTx, 'safe');
+          confs = safeFinal ? config.evmConfs : 1;
+        }
+      } catch (err: unknown) {
+        logger.error(
+          { err, orderId: order.id },
+          'Failed to query EVM lock status from chain',
+        );
+        return reply.status(502).send({
+          code: 'UPSTREAM_ERROR',
+          message: 'Failed to query EVM lock status from chain',
+        });
       }
 
       policyResult = revealPolicy({
@@ -520,8 +619,29 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
 
     const relayReq = parseResult.data;
 
-    // Verify permit deadline hasn't expired
+    if (order.terms.direction !== 'COUNTER_TO_BCH') {
+      return reply.status(400).send({
+        code: 'UNSUPPORTED_ROUTE',
+        message: 'Relay lock is only supported for COUNTER_TO_BCH orders',
+      });
+    }
+
+    if (order.status !== 'QUOTED') {
+      return reply.status(409).send({
+        code: 'INVALID_ORDER_STATE',
+        message: `Order ${id} is in status ${order.status}; expected QUOTED`,
+      });
+    }
+
     const now = Math.floor(Date.now() / 1000);
+    if (order.terms.quoteExpiry < now) {
+      return reply.status(410).send({
+        code: 'QUOTE_EXPIRED',
+        message: 'Order quote has expired',
+      });
+    }
+
+    // Verify permit deadline hasn't expired
     if (relayReq.permitDeadline < BigInt(now)) {
       return reply.status(400).send({
         code: 'PERMIT_EXPIRED',
@@ -581,6 +701,13 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
 
     const { secret, lockId: reqLockId } = parseResult.data;
 
+    if (order.direction !== 'BCH_TO_COUNTER') {
+      return reply.status(400).send({
+        code: 'UNSUPPORTED_ROUTE',
+        message: 'Relay claim is only supported for BCH_TO_COUNTER orders',
+      });
+    }
+
     // Verify secret matches hashLock
     const { sha256 } = await import('viem');
     if (sha256(secret) !== order.hashLock) {
@@ -618,13 +745,26 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
             order.userClaimTxId ??
             '0x0000000000000000000000000000000000000000000000000000000000000000',
         };
+        try {
+          engine.applyEvent(order, {
+            type: 'USER_CLAIM_SEEN',
+            txId: txRef.txId,
+            secret,
+          });
+        } catch {
+          // Claim already recorded in state
+        }
       } else if (currentLock.status === 'locked') {
         txRef = await evmAdapter.claim(expectedLockId, secret);
-        engine.applyEvent(order, {
-          type: 'USER_CLAIM_SEEN',
-          txId: txRef.txId,
-          secret,
-        });
+        try {
+          engine.applyEvent(order, {
+            type: 'USER_CLAIM_SEEN',
+            txId: txRef.txId,
+            secret,
+          });
+        } catch {
+          // Claim already recorded in state
+        }
         if (order.direction === 'BCH_TO_COUNTER') {
           void engine.processSolverBchClaim(order).catch((err) => {
             logger.warn(
@@ -659,29 +799,45 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
   // 6. GET /v1/health
   app.get('/v1/health', async (_req, reply) => {
     const quorum = bchClient.getQuorumStatus();
-    const stale = quorum.ageSeconds > config.tipMaxAgeBchSeconds;
+    const staleBch = quorum.ageSeconds > config.tipMaxAgeBchSeconds;
     const isQuorumOk = quorum.isQuorumHealthy && quorum.quorumTip > 0;
-    const isBchHealthy = isQuorumOk && !stale;
+    const isBchHealthy = isQuorumOk && !staleBch;
+
+    let baseTipStatus: { height: number; ageSeconds: number; stale: boolean };
+    try {
+      const tip = await evmAdapter.getTip();
+      const staleBase = tip.ageSeconds > config.tipMaxAgeBaseSeconds;
+      baseTipStatus = {
+        height: tip.height,
+        ageSeconds: Math.max(0, tip.ageSeconds),
+        stale: staleBase,
+      };
+    } catch {
+      baseTipStatus = {
+        height: 0,
+        ageSeconds: config.tipMaxAgeBaseSeconds + 1,
+        stale: true,
+      };
+    }
+
+    const isBaseHealthy = !baseTipStatus.stale && baseTipStatus.height > 0;
+    const ok = isBchHealthy && isBaseHealthy && config.quotingEnabled;
 
     const response = {
-      ok: isBchHealthy && config.quotingEnabled,
+      ok,
       quotingEnabled: config.quotingEnabled,
-      quoting: config.quotingEnabled && isBchHealthy,
+      quoting: ok,
       bchTip: {
         height: quorum.quorumTip,
         ageSeconds: Math.max(
           0,
           quorum.ageSeconds === Infinity ? 0 : quorum.ageSeconds,
         ),
-        stale,
+        stale: staleBch,
         quorum: quorum.isQuorumHealthy,
       },
       counterTips: {
-        base: {
-          height: 1,
-          ageSeconds: 0,
-          stale: false,
-        },
+        base: baseTipStatus,
       },
       inventory: [
         {
@@ -906,6 +1062,32 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       }
 
       const request = parseResult.data;
+
+      if (!config.quotingEnabled) {
+        return reply.status(503).send({
+          code: 'QUOTING_DISABLED',
+          message: 'Quoting is temporarily disabled',
+        });
+      }
+
+      // Check EVM tip health
+      try {
+        const evmTip = await evmAdapter.getTip();
+        if (
+          evmTip.height <= 0 ||
+          evmTip.ageSeconds > config.tipMaxAgeBaseSeconds
+        ) {
+          return reply.status(503).send({
+            code: 'EVM_TIP_UNHEALTHY',
+            message: 'EVM chain tip is stale or invalid; quoting disabled',
+          });
+        }
+      } catch {
+        return reply.status(503).send({
+          code: 'EVM_TIP_UNHEALTHY',
+          message: 'EVM chain tip is unreachable; quoting disabled',
+        });
+      }
       if (link.token !== 'PUSD') {
         return reply.status(400).send({
           code: 'UNSUPPORTED_ROUTE',

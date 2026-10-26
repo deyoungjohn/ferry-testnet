@@ -635,4 +635,17 @@ export class EvmChainAdapter implements ChainAdapter {
       return 0.05; // Fallback 5 cents
     }
   }
+
+  async getTip(): Promise<{
+    height: number;
+    timestamp: number;
+    ageSeconds: number;
+  }> {
+    const block = await this.client.getBlock({ blockTag: 'latest' });
+    const height = Number(block.number);
+    const timestamp = Number(block.timestamp);
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const ageSeconds = Math.max(0, nowSeconds - timestamp);
+    return { height, timestamp, ageSeconds };
+  }
 }
