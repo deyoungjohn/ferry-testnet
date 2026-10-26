@@ -42,6 +42,11 @@ describe('Stats, Recent Swaps & Pegs Endpoints', () => {
 
     const fakeEvmAdapter = {
       address: solverAddress,
+      getTip: async () => ({
+        height: 18500000,
+        timestamp: Math.floor(Date.now() / 1000) - 2,
+        ageSeconds: 2,
+      }),
     } as unknown as EvmChainAdapter;
 
     const engine = new SolverEngine(
