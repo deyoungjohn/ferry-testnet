@@ -45,3 +45,25 @@ Per-chain quirks: RPC behaviour, confirmation times, fees, faucets, explorers, m
 - **Rebuild Rule:** `anchor build` exits 0 despite this warning. Developers and CI builds that do not deploy must ignore this warning. **Never run `anchor keys sync`** on a clean clone, as doing so rewrites `declare_id!` in `programs/ferry_htlc/src/lib.rs` and `Anchor.toml`, mutating tracked git files and disconnecting from the devnet deployment.
 - Re-deployments to any target network must specify the explicit program keypair path:
   `anchor deploy --program-keypair <path-to-keypair.json>` (or `solana program deploy <binary.so> --program-id <path-to-keypair.json>`).
+
+---
+
+## 2026-10-26 · Live Circle Devnet USDC Round-Trip Execution (S-09 Verified)
+
+### Live Round Trips with Official Circle Devnet USDC
+- **Token Mint:** `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` (Official Circle Devnet USDC, 6 decimals).
+- **Program ID:** `DbFyFKCGHZ7Pb3rUsbGtNhYcrvmbGm3qx4mnF4fYnyqN`.
+- **Round Trip 1: Solver Lock -> User Claim (Relayed):**
+  - Solver Lock Tx: `5YVAGEF4GB2wFh7oBB1RzoercsXDc1T8Cq1thQD39iFRZK76L4hmaaEyArzSiwxaHrzjt8gqyxTXVXAzFif6u5mG` (fee: 5,000 lamports, confirmation: 1,775 ms).
+  - LockState confirmed: owner `ErGkftKbKE8pKFn2PYWGsuizBw9b8JKPkAhLFv4KqudS`, recipient `7qRHmL8MXZS2ZwWKbUe4P43F6Bas9aL4eJxPAzptyY4v`, amount 5,000,000 (5 USDC).
+  - User SOL balance before claim: 999,990,000 lamports.
+  - Relayed User Claim Tx: `2v3BHXgrLZuH2UepV11BoKTauXp1Wp4DVBeZ4QEkTfwkeemeUj1B7qKhT2L2xC9G9Z9czaZinAVTZsLHqb9S1pV5` (fee: 5,000 lamports paid by Deployer/Relayer, confirmation: 1,358 ms).
+  - User SOL balance after claim: 999,990,000 lamports.
+  - User SOL Delta: exactly **0 lamports** (S-09 Invariant preserved with real Circle token).
+  - LockState account closed on devnet: YES (null).
+- **Round Trip 2: User Lock -> Refund After Deadline:**
+  - User Lock Tx: `2rC9PdyMxYoPeikP61jGmKJcZH3qKULYqgWe2dpbYNYAdfmrhjTuMx81ou1BYZfMAkK7N8vy6E9xQ3oHHTBA3W2X`.
+  - Refund Tx: `5oxmjxBXqnNStD9K6h446RExhPUSCu3Ayt4aKJiTZmDC3LT9fq46ctMV9KpBSete2mHSZNKfM1F87hSoKsE7FSV1` (fee: 5,000 lamports, confirmation: 1,892 ms).
+  - Refunded Amount: 2,000,000 (2 USDC) returned to user.
+  - Refund LockState account closed on devnet: YES (null).
+

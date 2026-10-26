@@ -30,3 +30,15 @@ Per-chain quirks: RPC behaviour, confirmation times, fees, faucets, explorers, m
 ### Deployment and Live Test Status
 - Target CREATE2 Address: `0x5A0C062f4B7b8fF2263530e12bc15De9C836a641`.
 - Blocked on Funding: Deployer (`0x8138A3447485aA2613aD07d07123FdD623e48158`) and Solver (`0xC9ec91859Bdb598dC2eeE715934D8231478f7A70`) currently hold 0 tBNB.
+
+---
+
+## 2026-10-26 · BSC Testnet CREATE2 Deployment
+
+### Contract Deployment
+- Target & Deployed Address: `0x5A0C062f4B7b8fF2263530e12bc15De9C836a641` (exact byte-for-byte code match across Base Sepolia, Ethereum Sepolia, Arc, and Arbitrum Sepolia).
+- Canonical CREATE2 Factory: `0x4e59b44847b379578588920cA78FbF26c0B4956C` (confirmed present and verified).
+- Deploy Transaction: `0x9df32d95c2275c3c9adf4c785c5a90fdb08438f21fa632758d3f5d5b5ed21e48` (Block 139032942).
+- Status: Successfully deployed to canonical address on BSC Testnet.
+- Round-Trip Status: Deployer and Solver hold 0.1 tBNB gas. Live round trip awaits testnet USDT minting/funding to `0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd` or `0xC9ec91859Bdb598dC2eeE715934D8231478f7A70` on BSC Testnet.
+
