@@ -22,10 +22,13 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // Testnet lab only: lets a temporary cloudflared tunnel reach the dev server.
+    allowedHosts: true,
   },
   preview: {
     port: 4173,
     strictPort: true,
+    allowedHosts: true,
   },
   test: {
     environment: 'jsdom',
