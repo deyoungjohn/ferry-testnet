@@ -54,9 +54,7 @@ describe(' wallet panel with the Base wallet already connected', () => {
     expect(
       screen.queryByRole('button', { name: 'Connect BCH' }),
     ).not.toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole('button', { name: /cancel bch connect/i }),
-    );
+    fireEvent.click(screen.getByRole('button', { name: /reconnecting bch/i }));
     expect(set.bch.disconnect).toHaveBeenCalledTimes(1);
   });
 

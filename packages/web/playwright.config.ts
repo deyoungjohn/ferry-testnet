@@ -5,7 +5,7 @@ const baseURL = `http://127.0.0.1:${port.toString()}`;
 
 export default defineConfig({
   testDir: './e2e',
-  testIgnore: 'recover/**',
+  testIgnore: ['recover/**', 'live/**'],
   outputDir: 'test-results/playwright',
   fullyParallel: true,
   reporter: [['list']],

@@ -44,11 +44,14 @@ function renderAt(path: string) {
 const payer = '0x2222222222222222222222222222222222222222' as const;
 const ROUTE_WAIT = { timeout: 10_000 } as const;
 
-function quoteRequest(amountOut?: bigint): PayLinkQuoteRequest {
+function quoteRequest(
+  amountOut?: bigint,
+  userCounterAddress: `0x${string}` = payer,
+): PayLinkQuoteRequest {
   return {
     counterChain: 'base',
     counterSymbol: 'USDC',
-    userCounterAddress: payer,
+    userCounterAddress,
     hashLock: hashLockForSecret(generateSecret()),
     lane: 'safe',
     ...(amountOut !== undefined ? { amountOut } : {}),
@@ -80,8 +83,32 @@ describe('pay link quotes', () => {
     const reserved = await solver.getPayLink(link.id);
     expect(reserved.status).toBe('reserved');
     expect(
-      await rejectionMessage(solver.quotePayLink(link.id, quoteRequest())),
+      await rejectionMessage(
+        solver.quotePayLink(
+          link.id,
+          quoteRequest(undefined, '0x3333333333333333333333333333333333333333'),
+        ),
+      ),
     ).toMatch(/LINK_RESERVED/);
+  });
+
+  it('allows the same payer to refresh a reserved invoice', async () => {
+    const solver = createMockSolverClient();
+    const parsed = parseBchAddress(MOCK_BCH_USER_ADDRESS);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const link = await solver.createPayLink({
+      kind: 'invoice',
+      recipientCashaddr: parsed.value.address,
+      recipientLockingBytecode: parsed.value.lockingBytecode,
+      token: 'PUSD',
+      amountOut: 4_000n,
+    });
+    const first = await solver.quotePayLink(link.id, quoteRequest());
+    const firstHash = first.terms.hashLock;
+
+    const refreshed = await solver.quotePayLink(link.id, quoteRequest());
+    expect(refreshed.terms.hashLock).not.toBe(firstHash);
+    expect(refreshed.terms.bchTokenAmount).toBe(4_000n);
   });
 
   it('accepts an open-link amount', async () => {

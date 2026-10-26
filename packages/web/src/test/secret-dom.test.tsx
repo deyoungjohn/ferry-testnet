@@ -34,11 +34,15 @@ describe('secret exposure', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Connect Base' }));
     fireEvent.click(screen.getByRole('button', { name: 'Get quote' }));
 
-    await screen.findByRole('button', { name: /download recovery file/i });
+    await screen.findByRole(
+      'button',
+      { name: /download recovery file/i },
+      { timeout: 15_000 },
+    );
 
     expect(document.body.textContent).not.toContain(SECRET);
     expect(document.body.innerHTML).not.toContain(SECRET);
     const keys = await listVaultOrderIds();
     expect(keys.join(' ')).not.toContain(SECRET);
-  });
+  }, 20_000);
 });

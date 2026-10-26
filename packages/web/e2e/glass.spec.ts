@@ -44,7 +44,9 @@ test('wallet sheet uses glass, keeps two layers, and opens on mobile', async ({
     'true',
   );
 
-  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page
+    .getByRole('button', { name: /wallet connection: connect/i })
+    .click();
   await expect(page.locator('[data-glass-panel="modal"]')).toBeVisible();
   expect(await page.locator('.glass:visible').count()).toBe(2);
 
@@ -62,7 +64,9 @@ test('wallet sheet uses glass, keeps two layers, and opens on mobile', async ({
     'data-scrolled',
     'true',
   );
-  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page
+    .getByRole('button', { name: /wallet connection: connect/i })
+    .click();
   await expect(page.locator('[data-glass-panel="sheet"]')).toBeVisible();
   expect(await page.locator('.glass:visible').count()).toBe(2);
 
@@ -128,9 +132,9 @@ test('token picker, network popover, toast and status drawer are glass', async (
   await expect(
     page.getByRole('heading', { level: 1, name: /rejected/i }),
   ).toBeVisible();
-  await page.getByRole('button', { name: 'Open live drawer' }).click();
+  await page.getByRole('button', { name: 'Open timeline drawer' }).click();
   await expect(
-    page.getByRole('dialog', { name: 'Live swap timeline' }),
+    page.getByRole('dialog', { name: 'Swap timeline (mock)' }),
   ).toBeVisible();
   expect(await page.locator('.glass:visible').count()).toBeLessThanOrEqual(2);
 });
@@ -138,7 +142,9 @@ test('token picker, network popover, toast and status drawer are glass', async (
 test('body text on glass clears 4.5:1 over the lime glow', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?mock=1');
-  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page
+    .getByRole('button', { name: /wallet connection: connect/i })
+    .click();
 
   const panel = page.locator('[data-glass-panel="modal"]');
   await expect(panel).toBeVisible();

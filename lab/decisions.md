@@ -449,3 +449,33 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** Documented in `lab/decisions.md` (D-A2-010); safe-lane reverse live run executed on Base Sepolia + Chipnet confirming `firstSeenAt` gating; tests in `packages/solver/test/reverse.test.ts`.
 - **Consequence for rebuild:** Differentiate quote validity window (time to enter mempool) from settlement/confirmation window (time to mine into block). Keep quote TTLs tight (<= 180 s) to bound adverse selection risk on stablecoin pegs.
 - **Revisit if:** User wallet UX requires longer signing timeouts, or dynamic volatility-adjusted spreads are implemented.
+### D-A1-019 · quote refresh is a new quote, never a reused hash lock
+- **Decision:** Auto-refresh is a timer-driven state machine that runs only while the card is quoted and no lock action has begun. It fires five seconds before expiry, creates a new secret and recovery file, re-runs signature verification, T9 term binding, independent BCH tip checks and timing invariants, then re-arms the recovery download gate. It stops after three automatic attempts without user action; manual quoting resets the counter.
+- **Cancellation:** Starting Ferry, starting reverse BCH funding, changing amount/direction/lane, or replacing the quote cancels or invalidates an in-flight refresh. A request-version counter prevents a stale response from overwriting a newer user action.
+- **Pay links:** The same hook drives exact-output pay-link quotes. The mock allows a reserved invoice to be re-quoted only by the payer who owns the current reservation, so refresh does not look like a second payer. Different payers still receive `LINK_RESERVED`.
+- **Evidence:** Hook fake-timer tests cover pre-expiry timing, disabled-after-lock, cap, cancellation and failure; Playwright with `quoteTtl=8` verifies a new order id/secret, re-armed recovery download and the pay-link path.
+- **Consequence for rebuild:** A refreshed quote is a new order. Never reuse the hash lock, never refresh after a wallet action starts, and keep old vault secrets until their orders are provably unused.
+- **Revisit if:** The solver supports idempotent quote renewal or the protocol changes the one-order-per-hash-lock rule.
+
+### D-A1-020 · one solver-kind flag governs mock disclosure
+- **Decision:** `solverIsLive()` remains the single source for solver labels, footer copy, status-page banner, transaction links, address explorers and recovery-file issuer metadata. Mock status pages show a visible “no funds move” banner, render hashes as plain text marked mock, and expose no transaction/address explorer links. Recovery files carry optional `solverKind`; mock files warn that they are simulations, while old files remain readable.
+- **Evidence:** `mock-honesty.spec.ts` asserts no Base/BCH tx explorer links and a visible simulation banner; recovery E2E uses a live-marked fixture for the real recovery path.
+- **Consequence for rebuild:** Never infer solver kind from wallet mode; the backend identity is independent. A single flag must drive every “real vs simulated” presentation.
+- **Revisit if:** A live solver can be mixed with mock orders in one browser session and records need per-order provenance beyond the recovery file.
+
+### D-A1-021 · UI-02 is an isolated opt-in live harness
+- **Decision:** `test:e2e:live` uses its own Playwright config, Vite server on port 5181 and solver on port 8790 with a memory database. It derives the solver signer/BCH address from `.env.local`, loads only those server-side values, and keeps the live suite out of default E2E discovery.
+- **Result:** Forward and reverse live quote requests pass and the web accepts the solver signatures, independent tip and terms. Fully funded swaps are blocked because the user and solver token-aware BCH addresses hold no tPUSD, and pay-link live endpoints are not implemented yet.
+- **Consequence for rebuild:** Separate quote-level live verification from funded acceptance runs. Check inventory and endpoint completeness before scheduling funded UI tests, and always prove which solver process the test is using.
+- **Revisit if:** tPUSD inventory is restored and the solver publishes live pay-link endpoints.
+
+### D-A1-022 · durable local order state and explicit wallet activity
+- **Decision:** Every created quote is written to an IndexedDB order journal with terms, direction, lane, status, txids and the last known tip state; the secret remains only in the encrypted vault. Status pages merge live solver state with the journal: on 404 they retain the local record, show a restart warning, and expose recovery download plus the recovery-page path.
+- **Wallet state:** A restored WizardConnect session gets an eight-second reconnect budget, then disconnects and returns to “Connect BCH”; fresh QR connections are exempt. The nav reads the same wallet context and shows a truncated EVM address, “1 of 2 wallets”, or “Connect”. Wallet methods expose a named pending request so the global banner can say exactly what confirmation is awaited.
+- **Errors:** Solver network failures, invalid responses, wrong EVM chain, wallet rejection and quote expiry during signing receive specific messages. Quote expiry is checked immediately before relay as well as before signing.
+- **Evidence:** Unit tests cover journal round-trip/txid updates/no secret, reconnect timeout, chain guard, nav states and pending banner; Playwright covers restart fallback, solver rejection/outage, wallet rejection, pending naming and expiry mid-sign.
+- **Consequence for rebuild:** Persist order metadata, never secrets, outside the vault; wallet state and pending confirmation must be observable; and every asynchronous safety-sensitive action needs a post-await recheck.
+- **Revisit if:** Solver status becomes event-sourced or the wallet library exposes a stable restored-session flag.
+
+### Correction to D-A1-019 · live quote horizon
+- The mock TTL remains 60 seconds, but the web now accepts live quote expiries up to `MAX_QUOTE_FUTURE_S` (300 seconds). The solver’s D-A2-010 policy returns 120 seconds forward and 180 seconds for reverse safe-lane quotes; those are legitimate, not stale quotes.

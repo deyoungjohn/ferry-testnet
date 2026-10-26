@@ -16,7 +16,9 @@
     "test:unit": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "toolchain:check": "bash scripts/toolchain/check.sh"
+    "toolchain:check": "bash scripts/toolchain/check.sh",
+    "dev:web": "pnpm --filter @ferry/web dev --host 0.0.0.0",
+    "dev:solver": "tsx --env-file=.env.local packages/solver/src/main.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -24,6 +26,7 @@
     "@vitest/coverage-v8": "5.0.5",
     "eslint": "10.13.0",
     "prettier": "3.9.10",
+    "tsx": "4.23.15",
     "typescript": "5.9.3",
     "typescript-eslint": "8.72.0",
     "vitest": "5.0.5"

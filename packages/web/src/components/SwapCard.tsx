@@ -1,5 +1,5 @@
 import type { Direction } from '@ferry/core';
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { bchElectrumUrls, bchQuoteConfigError } from '../lib/bch/tip';
 import {
@@ -13,7 +13,7 @@ import {
   FWD_EVM_DEADLINE_S,
   PUSD_CATEGORY,
   PUSD_SYMBOL,
-  QUOTE_TTL_S,
+  MAX_QUOTE_FUTURE_S,
   REV_BCH_REFUND_BLOCKS,
   REV_EVM_DEADLINE_S,
   requireSolverSigner,
@@ -24,11 +24,14 @@ import {
   USDC_DECIMALS,
 } from '../lib/config';
 import { formatBasisPoints, formatUsdMicros } from '../lib/format';
+import { useQuoteAutoRefresh } from '../lib/quote/auto-refresh';
+import { assertQuoteStillOpen } from '../lib/quote/expiry';
 import {
   buildRecoveryFile,
   downloadRecoveryFile,
   type RecoveryFile,
 } from '../lib/recovery';
+import { saveQuoteRecord } from '../lib/orders/store';
 import { useSolver } from '../lib/solver/context';
 import { solverIsLive } from '../lib/solver/kind';
 import type { QuoteRequest, SignedQuote } from '../lib/solver/types';
@@ -95,6 +98,8 @@ export function SwapCard() {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [reviewOpen, setReviewOpen] = useState(false);
+  const lockStarted = useRef(false);
+  const requestVersion = useRef(0);
   const toast = useToast();
 
   useEffect(() => {
@@ -139,6 +144,9 @@ export function SwapCard() {
   }, [quote, reverse]);
 
   function resetQuote(): void {
+    requestVersion.current += 1;
+    lockStarted.current = false;
+    autoRefresh.reset();
     setQuote(null);
     setRecovery(null);
     setRecoveryDownloaded(false);
@@ -147,17 +155,22 @@ export function SwapCard() {
     setError(null);
   }
 
-  async function handleQuote(): Promise<void> {
+  async function handleQuote(auto = false): Promise<boolean> {
+    if (auto && lockStarted.current) return false;
+    const version = ++requestVersion.current;
     if (quoteConfigError) {
       setError(quoteConfigError);
-      return;
+      return false;
     }
     if (!evm.address || !bch.address) {
       setError('Connect the BCH wallet first, then the Base wallet.');
-      return;
+      return false;
     }
 
-    setPhase('quoting');
+    if (!auto) {
+      autoRefresh.reset();
+      setPhase('quoting');
+    }
     setError(null);
     try {
       const amountIn = reverse
@@ -178,6 +191,9 @@ export function SwapCard() {
         ...(lane === 'fast' ? { fastOptIn: true } : {}),
       };
       const next = await solver.quote(nextRequest);
+      if (auto && (lockStarted.current || version !== requestVersion.current)) {
+        return false;
+      }
       const { parseBchAddress } = await import('../lib/bch/address');
       const solverBch = parseBchAddress(SOLVER_BCH_ADDRESS);
       if (!solverBch.ok) throw new Error(solverBch.error);
@@ -208,7 +224,7 @@ export function SwapCard() {
           fixedFeeUsdMicros: FIXED_FEE_USD_MICROS,
         },
         nowSeconds: Math.floor(Date.now() / 1000),
-        maxQuoteFutureSeconds: QUOTE_TTL_S * 2,
+        maxQuoteFutureSeconds: MAX_QUOTE_FUTURE_S,
         maxCounterDeadlineSeconds:
           (reverse ? REV_EVM_DEADLINE_S : FWD_EVM_DEADLINE_S) + 300,
         minBchRefundBlocks: reverse
@@ -219,20 +235,38 @@ export function SwapCard() {
       };
       assertTermsMatchRequest(next.terms, nextRequest, checkConfig);
       assertTimingInvariant(next.terms, checkConfig);
-      const file = buildRecoveryFile(next.orderId, next.terms, secret);
+      if (auto && (lockStarted.current || version !== requestVersion.current)) {
+        return false;
+      }
+      await saveQuoteRecord(next, solverIsLive());
+      const file = buildRecoveryFile(
+        next.orderId,
+        next.terms,
+        secret,
+        Math.floor(Date.now() / 1_000),
+        solverIsLive() ? 'live' : 'mock',
+      );
       await saveSecret(next.orderId, secret);
       setQuote(next);
       setRecovery(file);
       setRecoveryDownloaded(false);
       setSignatureValid(true);
       setPhase('quoted');
+      return true;
     } catch (cause) {
-      setPhase('idle');
+      if (!auto) setPhase('idle');
       setError(
         cause instanceof Error ? cause.message : 'Could not get a quote',
       );
+      return false;
     }
   }
+
+  const autoRefresh = useQuoteAutoRefresh({
+    enabled: phase === 'quoted' && Boolean(quote) && !busy,
+    expiresAt: quote?.terms.quoteExpiry ?? null,
+    onRefresh: () => handleQuote(true),
+  });
 
   function handleDirection(): void {
     resetQuote();
@@ -244,6 +278,8 @@ export function SwapCard() {
 
   function handleFunded(txid: string): void {
     if (!quote) return;
+    lockStarted.current = true;
+    autoRefresh.cancel();
     navigate(`/swap/${quote.orderId}`, {
       state: { fundingTxid: txid },
     });
@@ -280,6 +316,8 @@ export function SwapCard() {
       return;
     }
 
+    lockStarted.current = true;
+    autoRefresh.cancel();
     setPhase('locking');
     setError(null);
     try {
@@ -290,6 +328,7 @@ export function SwapCard() {
       const intentSignature = await evm.signTypedData(
         buildIntentTypedData(quote.terms),
       );
+      assertQuoteStillOpen(quote.terms);
       await solver.relayLock({
         orderId: quote.orderId,
         terms: quote.terms,
@@ -466,11 +505,37 @@ export function SwapCard() {
         </p>
       ) : null}
 
+      {autoRefresh.refreshing ? (
+        <p
+          role="status"
+          className="mt-3 rounded-well border border-hairline bg-surface-2 px-3 py-2 text-[11px] leading-5 text-text-muted"
+        >
+          Refreshing quote… A new secret and recovery file will be issued.
+        </p>
+      ) : null}
+      {autoRefresh.error ? (
+        <p
+          role="alert"
+          className="mt-3 rounded-well border border-danger/25 bg-danger/5 px-3 py-2 text-[11px] leading-5 text-danger"
+        >
+          {autoRefresh.error}
+        </p>
+      ) : null}
+      {autoRefresh.stopped &&
+      autoRefresh.attempts >= 3 &&
+      !autoRefresh.error ? (
+        <p className="mt-3 text-[11px] leading-5 text-text-muted">
+          Auto-refresh paused after 3 refreshes. Get a new quote when you are
+          ready.
+        </p>
+      ) : null}
+
       <div className="mt-4 space-y-2">
         {quote ? (
           <button
             type="button"
             onClick={handleDownload}
+            disabled={autoRefresh.refreshing}
             className="flex h-11 w-full items-center justify-center gap-2 rounded-pill border border-hairline bg-surface-2 text-sm font-medium text-text transition-colors hover:border-lime/30 hover:text-lime"
           >
             {recoveryDownloaded ? (
@@ -488,18 +553,19 @@ export function SwapCard() {
           <button
             type="button"
             onClick={() => setReviewOpen(true)}
+            disabled={autoRefresh.refreshing}
             className="flex h-11 w-full items-center justify-center rounded-pill border border-hairline bg-surface-2 text-sm font-medium text-text transition-colors hover:border-lime/30 hover:text-lime"
           >
             Review and confirm
           </button>
         ) : null}
 
-        {!quote || expired ? (
+        {(!quote || expired) && !autoRefresh.refreshing ? (
           <button
             type="button"
             onClick={() => {
               if (expired) resetQuote();
-              void handleQuote();
+              void handleQuote(false);
             }}
             disabled={!canQuote}
             className="flex h-13 w-full items-center justify-center gap-1.5 rounded-pill bg-olive px-5 text-sm font-semibold text-text shadow-pill transition-[filter,transform] hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
@@ -510,7 +576,7 @@ export function SwapCard() {
                 ? 'Quote expired — get a fresh quote'
                 : 'Get quote'}
           </button>
-        ) : reverse ? (
+        ) : reverse && quote ? (
           <Suspense
             fallback={
               <p
@@ -524,13 +590,24 @@ export function SwapCard() {
             <ReverseFundingPanel
               terms={quote.terms}
               onFunded={handleFunded}
-              disabled={!recoveryDownloaded || !signatureValid || !walletsReady}
+              onFundingStart={() => {
+                lockStarted.current = true;
+                autoRefresh.cancel();
+              }}
+              disabled={
+                autoRefresh.refreshing ||
+                !recoveryDownloaded ||
+                !signatureValid ||
+                !walletsReady
+              }
               disabledReason={
-                !recoveryDownloaded
-                  ? 'Download the recovery file before funding the BCH lock.'
-                  : !signatureValid
-                    ? 'The solver signature is not valid.'
-                    : 'Connect both wallets before funding.'
+                autoRefresh.refreshing
+                  ? 'Wait for the refreshed quote before funding.'
+                  : !recoveryDownloaded
+                    ? 'Download the recovery file before funding the BCH lock.'
+                    : !signatureValid
+                      ? 'The solver signature is not valid.'
+                      : 'Connect both wallets before funding.'
               }
             />
           </Suspense>
@@ -539,7 +616,11 @@ export function SwapCard() {
             type="button"
             onClick={() => void handleFerry()}
             disabled={
-              busy || !signatureValid || !recoveryDownloaded || !walletsReady
+              busy ||
+              autoRefresh.refreshing ||
+              !signatureValid ||
+              !recoveryDownloaded ||
+              !walletsReady
             }
             title={
               !recoveryDownloaded

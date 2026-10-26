@@ -1,6 +1,8 @@
 import { lazy, Suspense, useState } from 'react';
 import { Link } from 'react-router';
 import { NETWORK_LABEL } from '../lib/config';
+import { truncateAddress } from '../lib/swap';
+import { useWallets } from '../lib/wallet/context';
 import { GlassNav } from './GlassNav';
 import { GlassPopover } from './GlassPopover';
 import { InfoIcon, WalletIcon } from './icons';
@@ -12,6 +14,15 @@ const WalletSheet = lazy(async () => {
 
 export function NavBar() {
   const [walletOpen, setWalletOpen] = useState(false);
+  const { bch, evm } = useWallets();
+  const connectedCount =
+    Number(Boolean(bch.address)) + Number(Boolean(evm.address));
+  const walletLabel =
+    connectedCount === 2
+      ? truncateAddress(evm.address ?? bch.address?.address ?? '', 6, 4)
+      : connectedCount === 1
+        ? '1 of 2 wallets'
+        : 'Connect';
 
   return (
     <GlassNav>
@@ -83,10 +94,11 @@ export function NavBar() {
             onClick={() => setWalletOpen(true)}
             aria-haspopup="dialog"
             aria-expanded={walletOpen}
+            aria-label={`Wallet connection: ${walletLabel}`}
             className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-text px-3.5 text-xs font-semibold text-bg transition-colors hover:bg-lime hover:text-lime-ink sm:px-4"
           >
             <WalletIcon className="size-3.5" />
-            Connect
+            {walletLabel}
           </button>
         </div>
       </nav>

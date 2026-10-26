@@ -160,6 +160,10 @@ function renderSummary(): void {
   summaryFacts.replaceChildren(
     fact('Order', short(file.orderId)),
     fact(
+      'Issued by',
+      file.solverKind === 'mock' ? 'mock solver (simulation)' : 'live solver',
+    ),
+    fact(
       'You send',
       `${terms.counterAmount} base units on ${terms.counterChain}`,
     ),
@@ -365,7 +369,9 @@ fileInput.addEventListener('change', () => {
       actionCard.classList.add('hidden');
       setStatus(
         fileStatus,
-        'Recovery file loaded. The BCH address was recomputed and matches.',
+        file.solverKind === 'mock'
+          ? 'Recovery file loaded. This file was issued by the mock solver and cannot be claimed on chain.'
+          : 'Recovery file loaded. The BCH address was recomputed and matches.',
         'ok',
       );
     })

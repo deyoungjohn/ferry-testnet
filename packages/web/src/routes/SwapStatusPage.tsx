@@ -17,7 +17,12 @@ import {
 } from '../lib/config';
 import { addressFromLockingBytecode } from '../lib/bch/address';
 import { loadSecret } from '../lib/vault';
-import { bchParametersFromTerms } from '../lib/recovery';
+import {
+  buildRecoveryFile,
+  bchParametersFromTerms,
+  downloadRecoveryFile,
+} from '../lib/recovery';
+import { loadOrderRecord, saveOrderRecord } from '../lib/orders/store';
 import { ElectrumClient } from '../recover/core';
 import { useSolver } from '../lib/solver/context';
 import { solverIsLive } from '../lib/solver/kind';
@@ -45,6 +50,8 @@ export function SwapStatusPage() {
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [localFallback, setLocalFallback] = useState(false);
+  const [localSolverLive, setLocalSolverLive] = useState(false);
 
   const id =
     orderId && ORDER_ID_PATTERN.test(orderId) ? (orderId as Hex32) : null;
@@ -68,11 +75,24 @@ export function SwapStatusPage() {
         if (!active) return;
         setOrder(next);
         setError(null);
+        setLocalFallback(false);
+        void saveOrderRecord(next, solverIsLive());
       } catch (cause) {
         if (!active) return;
-        setError(
-          cause instanceof Error ? cause.message : 'Could not load this order',
-        );
+        const local = await loadOrderRecord(id);
+        if (!active) return;
+        if (local) {
+          setOrder(local);
+          setError(null);
+          setLocalFallback(true);
+          setLocalSolverLive(local.solverLive);
+        } else {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : 'Could not load this order',
+          );
+        }
       }
     };
 
@@ -101,6 +121,34 @@ export function SwapStatusPage() {
     if (!id) return;
     const next = await solver.getOrder(id);
     setOrder(next);
+  }
+
+  async function handleRecoveryDownload(): Promise<void> {
+    if (!order) return;
+    try {
+      const secret = await loadSecret(order.orderId);
+      if (!secret) {
+        throw new Error(
+          'No local recovery secret. This browser did not create the order.',
+        );
+      }
+      downloadRecoveryFile(
+        buildRecoveryFile(
+          order.orderId,
+          order.terms,
+          secret,
+          Math.floor(Date.now() / 1_000),
+          (localFallback ? localSolverLive : solverIsLive()) ? 'live' : 'mock',
+        ),
+      );
+      setActionMessage('Recovery file downloaded.');
+    } catch (cause) {
+      setActionError(
+        cause instanceof Error
+          ? cause.message
+          : 'Could not prepare the recovery file',
+      );
+    }
   }
 
   async function handleClaim(): Promise<void> {
@@ -335,6 +383,43 @@ export function SwapStatusPage() {
         </span>
       </div>
 
+      {!solverIsLive() ? (
+        <p
+          role="note"
+          className="mt-6 rounded-well border border-warn/25 bg-warn/5 px-4 py-3 text-[11px] leading-5 text-warn"
+        >
+          Mock interface — no funds move. This timeline is simulated; hashes are
+          not on chain and explorer links are disabled.
+        </p>
+      ) : null}
+
+      {localFallback && order ? (
+        <section
+          role="status"
+          className="mt-6 rounded-well border border-warn/25 bg-warn/5 px-4 py-3 text-[11px] leading-5 text-warn"
+        >
+          <p className="font-medium">
+            The solver has no record of this order (it may have been restarted).
+          </p>
+          <p className="mt-1">
+            Showing the last record saved in this browser. The recovery file and
+            recovery page remain available.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void handleRecoveryDownload()}
+              className="rounded-pill border border-warn/30 bg-warn/10 px-3 py-1.5 font-medium text-warn"
+            >
+              Download recovery file
+            </button>
+            <Link to="/recover" className="underline underline-offset-2">
+              Open recovery page
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
       {error && !order ? (
         <div className="mt-8 rounded-card border border-danger/25 bg-danger/5 p-6">
           <p className="text-sm font-medium text-danger">{error}</p>
@@ -435,7 +520,7 @@ export function SwapStatusPage() {
                   onClick={() => setDrawerOpen(true)}
                   className="rounded-pill border border-hairline bg-surface-2 px-2.5 py-1 text-[10px] font-medium text-text-muted transition-colors hover:border-lime/30 hover:text-lime"
                 >
-                  Open live drawer
+                  Open timeline drawer
                 </button>
               </div>
             </div>
@@ -690,22 +775,28 @@ export function SwapStatusPage() {
 
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-[11px] text-text-muted">
             <div className="flex items-center gap-3">
-              <a
-                href={`${BCH_EXPLORER_URL}/address/${bchUserAddress}`}
-                target="_blank"
-                rel="noreferrer"
-                className="hover:text-lime"
-              >
-                BCH explorer
-              </a>
-              <a
-                href={`${BASE_EXPLORER_URL}/address/${FERRY_HTLC_ADDRESS}`}
-                target="_blank"
-                rel="noreferrer"
-                className="hover:text-lime"
-              >
-                Base contract
-              </a>
+              {solverIsLive() ? (
+                <>
+                  <a
+                    href={`${BCH_EXPLORER_URL}/address/${bchUserAddress}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="hover:text-lime"
+                  >
+                    BCH explorer
+                  </a>
+                  <a
+                    href={`${BASE_EXPLORER_URL}/address/${FERRY_HTLC_ADDRESS}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="hover:text-lime"
+                  >
+                    Base contract
+                  </a>
+                </>
+              ) : (
+                <span>Mock mode: explorer links disabled</span>
+              )}
               <Link to="/recover" className="hover:text-lime">
                 Recovery
               </Link>

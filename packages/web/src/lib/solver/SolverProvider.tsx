@@ -19,6 +19,20 @@ function directionFromLocation(): 'COUNTER_TO_BCH' | 'BCH_TO_COUNTER' {
     : 'COUNTER_TO_BCH';
 }
 
+function quoteFailureFromLocation(): 'rejected' | 'unavailable' | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const value = new URLSearchParams(window.location.search).get('quoteFailure');
+  return value === 'rejected' || value === 'unavailable' ? value : undefined;
+}
+
+function quoteTtlFromLocation(): number | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const value = Number(
+    new URLSearchParams(window.location.search).get('quoteTtl'),
+  );
+  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
 export function SolverProvider({ children }: { readonly children: ReactNode }) {
   const client = useMemo(() => {
     const url = import.meta.env.VITE_SOLVER_URL;
@@ -27,6 +41,12 @@ export function SolverProvider({ children }: { readonly children: ReactNode }) {
       : createMockSolverClient({
           scenario: scenarioFromLocation(),
           direction: directionFromLocation(),
+          ...(quoteTtlFromLocation() !== undefined
+            ? { quoteTtlSeconds: quoteTtlFromLocation() }
+            : {}),
+          ...(quoteFailureFromLocation() !== undefined
+            ? { quoteFailure: quoteFailureFromLocation() }
+            : {}),
         });
   }, []);
   return (

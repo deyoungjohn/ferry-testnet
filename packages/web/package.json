@@ -13,7 +13,8 @@
     "test:e2e": "playwright test",
     "build:recover": "node scripts/build-recover.mjs",
     "check:recover": "node scripts/build-recover.mjs --check",
-    "test:e2e:recover": "node scripts/build-recover.mjs && playwright test -c playwright.recover.config.ts"
+    "test:e2e:recover": "node scripts/build-recover.mjs && playwright test -c playwright.recover.config.ts",
+    "test:e2e:live": "playwright test -c playwright.live.config.ts"
   },
   "dependencies": {
     "@bitauth/libauth": "3.0.0",

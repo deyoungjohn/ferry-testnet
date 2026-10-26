@@ -117,15 +117,29 @@ export class HttpSolverClient implements SolverClient {
     path: string,
     init?: RequestInit,
   ): Promise<T> {
-    const response = await fetch(`${this.#baseUrl}${path}`, {
-      ...init,
-      headers: {
-        accept: 'application/json',
-        ...(init?.body ? { 'content-type': 'application/json' } : {}),
-        ...init?.headers,
-      },
-    });
-    const body: unknown = await response.json();
+    let response: Response;
+    try {
+      response = await fetch(`${this.#baseUrl}${path}`, {
+        ...init,
+        headers: {
+          accept: 'application/json',
+          ...(init?.body ? { 'content-type': 'application/json' } : {}),
+          ...init?.headers,
+        },
+      });
+    } catch {
+      throw new Error(
+        'Solver unavailable. Check the solver URL or start the local solver, then try again.',
+      );
+    }
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new Error(
+        `Solver returned an invalid response (${response.status.toString()}).`,
+      );
+    }
     if (!response.ok) {
       const parsed = ApiErrorResponseSchema.safeParse(body);
       throw new Error(

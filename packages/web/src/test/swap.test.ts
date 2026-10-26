@@ -425,7 +425,13 @@ describe('recovery file', () => {
     const solver = createMockSolverClient();
     const quote = await solver.quote(request());
     const secret = generateSecret();
-    const file = buildRecoveryFile(quote.orderId, quote.terms, secret);
+    const file = buildRecoveryFile(
+      quote.orderId,
+      quote.terms,
+      secret,
+      Math.floor(Date.now() / 1_000),
+      'mock',
+    );
     const parsed = parseRecoveryFileJson(serializeApiJson(file));
 
     expect(parsed.orderId).toBe(quote.orderId);

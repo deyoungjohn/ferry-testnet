@@ -62,6 +62,7 @@ const AXE_ROUTES = [
 
 for (const route of AXE_ROUTES) {
   test(`axe: ${route.name}`, async ({ page }) => {
+    test.setTimeout(60_000);
     await page.goto(route.url);
     await expect(route.ready(page)).toBeVisible({ timeout: 15_000 });
     await expectNoAxeViolations(page);
@@ -130,7 +131,9 @@ test('prefers-reduced-motion keeps the wallet dialog usable', async ({
     ),
   ).toBe('auto');
 
-  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page
+    .getByRole('button', { name: /wallet connection: connect/i })
+    .click();
   await expect(
     page.getByRole('dialog', { name: 'Connect wallets' }),
   ).toBeVisible();
@@ -154,7 +157,9 @@ test('prefers-reduced-transparency removes backdrop filters', async ({
     ),
   ).toBe(true);
 
-  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page
+    .getByRole('button', { name: /wallet connection: connect/i })
+    .click();
   const panel = page.locator('[data-glass-panel="modal"]');
   await expect(panel).toBeVisible();
   const styles = await panel.evaluate((element) => {

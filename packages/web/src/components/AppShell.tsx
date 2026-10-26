@@ -3,6 +3,7 @@ import { GlassLayerProvider } from './GlassLayerProvider';
 import { BannerBar } from './BannerBar';
 import { Footer } from './Footer';
 import { ToastProvider } from './GlassToast';
+import { WalletActivityBanner } from './WalletActivityBanner';
 import { NavBar } from './NavBar';
 
 export function AppShell() {
@@ -17,6 +18,7 @@ export function AppShell() {
             Skip to content
           </a>
           <BannerBar />
+          <WalletActivityBanner />
           <NavBar />
           <main id="main" className="flex-1">
             <Outlet />

@@ -47,7 +47,7 @@ export function WalletPanel() {
           {bch.status === 'connected'
             ? 'Disconnect BCH'
             : bch.status === 'connecting'
-              ? 'Cancel BCH connect'
+              ? 'Reconnecting BCH…'
               : 'Connect BCH'}
         </button>
       </div>

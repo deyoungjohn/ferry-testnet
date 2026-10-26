@@ -5,8 +5,17 @@
     "jsx": "react-jsx",
     "types": ["vite/client", "node"],
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src", "e2e", "vite.config.ts", "playwright.config.ts"]
+  "include": [
+    "src",
+    "e2e",
+    "env",
+    "vite.config.ts",
+    "playwright.config.ts",
+    "playwright.recover.config.ts",
+    "playwright.live.config.ts"
+  ]
 }
