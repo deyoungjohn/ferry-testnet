@@ -24,6 +24,14 @@ export default defineConfig({
     strictPort: true,
     // Testnet lab only: lets a temporary cloudflared tunnel reach the dev server.
     allowedHosts: true,
+    // Same-origin path to the local solver so a tunnel or phone needs no CORS or second URL.
+    proxy: {
+      '/solver': {
+        target: 'http://127.0.0.1:8787',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/solver/, ''),
+      },
+    },
   },
   preview: {
     port: 4173,
