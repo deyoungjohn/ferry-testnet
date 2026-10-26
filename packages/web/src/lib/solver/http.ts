@@ -5,6 +5,7 @@ import {
   CreatePayLinkRequestSchema,
   CreatePayLinkResponseSchema,
   GetPayLinkResponseSchema,
+  HealthResponseSchema,
   ListPayLinksQuerySchema,
   ListPayLinksResponseSchema,
   OrderStatusResponseSchema,
@@ -18,6 +19,7 @@ import {
   serializeApiJson,
   type CancelPayLinkRequest,
   type CreatePayLinkRequest,
+  type HealthResponse,
   type Hex32,
   type ListPayLinksQuery,
   type OrderStatus,
@@ -33,6 +35,7 @@ import {
   type BchTipReader,
 } from '../bch/tip';
 import { BCH_NETWORK } from '../config';
+import { SolverError } from './errors';
 import type {
   OrderTransaction,
   OrderView,
@@ -128,24 +131,65 @@ export class HttpSolverClient implements SolverClient {
         },
       });
     } catch {
-      throw new Error(
-        'Solver unavailable. Check the solver URL or start the local solver, then try again.',
+      throw new SolverError(
+        'UNREACHABLE',
+        'Solver unreachable: the network request failed',
       );
     }
     let body: unknown;
     try {
       body = await response.json();
     } catch {
-      throw new Error(
-        `Solver returned an invalid response (${response.status.toString()}).`,
+      if (response.status >= 502 && response.status <= 504) {
+        throw new SolverError(
+          'UNREACHABLE',
+          `Solver unreachable: proxy returned ${response.status.toString()}`,
+          response.status,
+        );
+      }
+      throw new SolverError(
+        'UNKNOWN',
+        `Solver returned an invalid response (${response.status.toString()})`,
+        response.status,
+        `HTTP_${response.status.toString()}`,
       );
     }
     if (!response.ok) {
       const parsed = ApiErrorResponseSchema.safeParse(body);
-      throw new Error(
-        parsed.success
-          ? `${parsed.data.code}: ${parsed.data.message}`
-          : `Solver request failed (${response.status})`,
+      if (parsed.success) {
+        throw new SolverError(
+          parsed.data.code,
+          `${parsed.data.code}: ${parsed.data.message}`,
+          response.status,
+        );
+      }
+      const rawCode =
+        body !== null &&
+        typeof body === 'object' &&
+        'code' in body &&
+        typeof body.code === 'string'
+          ? body.code
+          : null;
+      if (rawCode) {
+        throw new SolverError(
+          'UNKNOWN',
+          `${rawCode}: unknown solver error`,
+          response.status,
+          rawCode,
+        );
+      }
+      if (response.status >= 502 && response.status <= 504) {
+        throw new SolverError(
+          'UNREACHABLE',
+          `Solver unreachable: proxy returned ${response.status.toString()}`,
+          response.status,
+        );
+      }
+      throw new SolverError(
+        'UNKNOWN',
+        `Solver request failed (${response.status.toString()})`,
+        response.status,
+        `HTTP_${response.status.toString()}`,
       );
     }
     return schema.parse(body);
@@ -164,6 +208,10 @@ export class HttpSolverClient implements SolverClient {
         }`,
       );
     });
+  }
+
+  async getHealth(): Promise<HealthResponse> {
+    return this.#json(HealthResponseSchema, '/v1/health');
   }
 
   async quote(request: QuoteRequest): Promise<SignedQuote> {

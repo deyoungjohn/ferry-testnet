@@ -19,10 +19,24 @@ function directionFromLocation(): 'COUNTER_TO_BCH' | 'BCH_TO_COUNTER' {
     : 'COUNTER_TO_BCH';
 }
 
-function quoteFailureFromLocation(): 'rejected' | 'unavailable' | undefined {
+function quoteFailureFromLocation():
+  | 'rejected'
+  | 'unavailable'
+  | 'bch-tip'
+  | 'evm-tip'
+  | 'quoting-disabled'
+  | 'unknown'
+  | undefined {
   if (typeof window === 'undefined') return undefined;
   const value = new URLSearchParams(window.location.search).get('quoteFailure');
-  return value === 'rejected' || value === 'unavailable' ? value : undefined;
+  return value === 'rejected' ||
+    value === 'unavailable' ||
+    value === 'bch-tip' ||
+    value === 'evm-tip' ||
+    value === 'quoting-disabled' ||
+    value === 'unknown'
+    ? value
+    : undefined;
 }
 
 function quoteTtlFromLocation(): number | undefined {

@@ -33,6 +33,7 @@ import {
 } from '../lib/recovery';
 import { saveQuoteRecord } from '../lib/orders/store';
 import { useSolver } from '../lib/solver/context';
+import { describeSolverError, type SolverFailure } from '../lib/solver/errors';
 import { solverIsLive } from '../lib/solver/kind';
 import type { QuoteRequest, SignedQuote } from '../lib/solver/types';
 import {
@@ -95,7 +96,7 @@ export function SwapCard() {
   const [recovery, setRecovery] = useState<RecoveryFile | null>(null);
   const [recoveryDownloaded, setRecoveryDownloaded] = useState(false);
   const [signatureValid, setSignatureValid] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<SolverFailure | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [reviewOpen, setReviewOpen] = useState(false);
   const lockStarted = useRef(false);
@@ -155,15 +156,23 @@ export function SwapCard() {
     setError(null);
   }
 
+  function showFailure(cause: unknown, fallback: string): void {
+    setError(describeSolverError(cause, fallback));
+  }
+
+  function showMessage(sentence: string): void {
+    setError({ sentence, nextStep: '', code: null, kind: 'local' });
+  }
+
   async function handleQuote(auto = false): Promise<boolean> {
     if (auto && lockStarted.current) return false;
     const version = ++requestVersion.current;
     if (quoteConfigError) {
-      setError(quoteConfigError);
+      showMessage(quoteConfigError);
       return false;
     }
     if (!evm.address || !bch.address) {
-      setError('Connect the BCH wallet first, then the Base wallet.');
+      showMessage('Connect the BCH wallet first, then the Base wallet.');
       return false;
     }
 
@@ -255,9 +264,7 @@ export function SwapCard() {
       return true;
     } catch (cause) {
       if (!auto) setPhase('idle');
-      setError(
-        cause instanceof Error ? cause.message : 'Could not get a quote',
-      );
+      showFailure(cause, 'Could not get a quote');
       return false;
     }
   }
@@ -299,20 +306,20 @@ export function SwapCard() {
 
   async function handleFerry(): Promise<void> {
     if (reverse) {
-      setError('Use the BCH funding panel for a reverse swap.');
+      showMessage('Use the BCH funding panel for a reverse swap.');
       return;
     }
     if (!quote || !recovery || !evm.address) return;
     if (!signatureValid) {
-      setError('The quote signature is not valid.');
+      showMessage('The quote signature is not valid.');
       return;
     }
     if (expired) {
-      setError('This quote expired. Get a fresh quote before locking.');
+      showMessage('This quote expired. Get a fresh quote before locking.');
       return;
     }
     if (!recoveryDownloaded) {
-      setError('Download the recovery file before locking.');
+      showMessage('Download the recovery file before locking.');
       return;
     }
 
@@ -340,7 +347,7 @@ export function SwapCard() {
       navigate(`/swap/${quote.orderId}`);
     } catch (cause) {
       setPhase('quoted');
-      setError(cause instanceof Error ? cause.message : 'Locking failed');
+      showFailure(cause, 'Locking failed');
     }
   }
 
@@ -640,9 +647,20 @@ export function SwapCard() {
       </div>
 
       {error ? (
-        <p role="alert" className="mt-3 text-[11px] leading-5 text-danger">
-          {error}
-        </p>
+        <div
+          role="alert"
+          className="mt-3 rounded-well border border-danger/25 bg-danger/5 px-3 py-2 text-[11px] leading-5 text-danger"
+        >
+          <p>{error.sentence}</p>
+          {error.nextStep ? (
+            <p className="mt-1 text-text-muted">{error.nextStep}</p>
+          ) : null}
+          {error.code ? (
+            <p className="mt-1 font-mono text-[10px] text-text-muted">
+              Code: {error.code}
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       {quote ? (

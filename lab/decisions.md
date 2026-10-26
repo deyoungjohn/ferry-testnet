@@ -513,3 +513,17 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** Three consecutive clean-clone default Playwright runs with zero retries, plus three clean-clone root unit runs (recorded in the final clean-clone facts).
 - **Consequence for rebuild:** Separate readiness budgets from outer test budgets and always make the outer larger. A suite that passes only on retry is not a gate.
 - **Revisit if:** The suite is split into shards or a preview build removes cold-transform cost.
+
+### D-A1-025 · solver errors are translated once, with the raw code preserved
+- **Decision:** `lib/solver/errors.ts` owns a copy map for every `API_ERROR_CODES` value plus `UNREACHABLE` and `UNKNOWN`. `SolverError` carries the typed code, raw message and HTTP status. UI surfaces render the human sentence, a next step, and a secondary `Code: …` line; unknown future codes remain reportable.
+- **Reachability:** `HttpSolverClient` throws `UNREACHABLE` for fetch failures and for non-API 502/503/504 proxy responses. A typed `UPSTREAM_ERROR` is still a solver response and gets its own copy. Invalid/unknown error envelopes become `UNKNOWN` with their raw code.
+- **Coverage:** Quote, pay-link, status-load and claim/refund actions use the shared descriptor. Unit tests iterate all 28 core codes and HTTP tests cover network failure, proxy 502, typed BCH tip failure and an unknown future code.
+- **Consequence for rebuild:** Never render wire envelopes directly. Keep one exhaustive code map, preserve the code for support, and separate “cannot reach solver” from “solver said no”.
+- **Revisit if:** The core error enum grows; the compiler and the exhaustive loop force the new copy entry.
+
+### D-A1-026 · solver health is visible and tests are env-hermetic
+- **Decision:** The footer polls `GET /v1/health` through `SolverClient.getHealth()` every 30 seconds and shows solver kind, quoting on/off, BCH tip height/age/health and Base tip height/age/health in words, not colour. Mock mode labels the values “simulated health”; fetch failure shows an explicit unavailable state.
+- **Test isolation:** Vitest ignores the root Vite env in test mode. Playwright blanks every solver/network variable, including solver BCH address and both Electrum URLs, so a developer’s live `.env.local` cannot change default tests.
+- **Evidence:** Health unit tests cover ready and unavailable states; mock-honesty E2E checks the visible line; full local E2E is 34/34.
+- **Consequence for rebuild:** Health needs a stable, always-visible home with explicit wording. Test processes must opt into live endpoints explicitly.
+- **Revisit if:** Health polling becomes expensive or the solver adds a push health channel.

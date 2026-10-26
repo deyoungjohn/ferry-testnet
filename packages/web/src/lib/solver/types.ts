@@ -1,6 +1,7 @@
 import type {
   CancelPayLinkRequest,
   CreatePayLinkRequest,
+  HealthResponse,
   Hex32,
   Lane,
   ListPayLinksQuery,
@@ -54,6 +55,7 @@ export interface OrderView {
 }
 
 export interface SolverClient {
+  getHealth(): Promise<HealthResponse>;
   quote(request: QuoteRequest): Promise<SignedQuote>;
   createPayLink(request: CreatePayLinkRequest): Promise<PayLink>;
   getPayLink(id: string): Promise<PayLink>;
