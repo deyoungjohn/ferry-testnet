@@ -44,3 +44,9 @@ test-results/
 *.swp
 .idea/
 .vscode/
+
+# solver runtime state (holds HTLC preimages),
+packages/solver/data/
+*.db
+*.db-wal
+*.db-shm
