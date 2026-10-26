@@ -49,8 +49,8 @@ describe('Solver Configuration vs .env.example', () => {
     expect(parsedEnv.BCH_CARRY_SATS).toBe('3000');
     expect(parsedEnv.BCH_MAX_FEE_SATS).toBe('1500');
 
-    // Parse configuration from .env.example
-    const config = loadConfigFromEnv(parsedEnv);
+    // Parse configuration from .env.example with ALLOW_DEV_KEYS=1
+    const config = loadConfigFromEnv({ ...parsedEnv, ALLOW_DEV_KEYS: '1' });
 
     expect(config.network).toBe('testnet');
     expect(config.spreadBps).toBe(40);
@@ -77,5 +77,41 @@ describe('Solver Configuration vs .env.example', () => {
     );
     expect(config.baseUsdcAddress).toBe(parsedEnv.BASE_SEPOLIA_USDC_ADDRESS);
     expect(config.tpusdCategory).toBe(parsedEnv.TPUSD_CATEGORY);
+  });
+
+  it('fails closed when SOLVER_EVM_PRIVATE_KEY is missing without ALLOW_DEV_KEYS=1', () => {
+    expect(() =>
+      loadConfigFromEnv({
+        NETWORK: 'testnet',
+      }),
+    ).toThrowError(/ALLOW_DEV_KEYS=1/);
+  });
+
+  it('allows default dev key when ALLOW_DEV_KEYS=1 on testnet', () => {
+    const cfg = loadConfigFromEnv({
+      NETWORK: 'testnet',
+      ALLOW_DEV_KEYS: '1',
+    });
+    expect(cfg.solverEvmPrivateKey).toBe(
+      '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
+    );
+  });
+
+  it('strictly rejects default dev key or missing key on mainnet even with ALLOW_DEV_KEYS=1', () => {
+    expect(() =>
+      loadConfigFromEnv({
+        NETWORK: 'mainnet',
+        ALLOW_DEV_KEYS: '1',
+      }),
+    ).toThrowError(/SOLVER_EVM_PRIVATE_KEY is required on mainnet/);
+
+    expect(() =>
+      loadConfigFromEnv({
+        NETWORK: 'mainnet',
+        ALLOW_DEV_KEYS: '1',
+        SOLVER_EVM_PRIVATE_KEY:
+          '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
+      }),
+    ).toThrowError(/Default dev private key cannot be used on mainnet/);
   });
 });
