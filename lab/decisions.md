@@ -476,3 +476,6 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** Unit tests cover journal round-trip/txid updates/no secret, reconnect timeout, chain guard, nav states and pending banner; Playwright covers restart fallback, solver rejection/outage, wallet rejection, pending naming and expiry mid-sign.
 - **Consequence for rebuild:** Persist order metadata, never secrets, outside the vault; wallet state and pending confirmation must be observable; and every asynchronous safety-sensitive action needs a post-await recheck.
 - **Revisit if:** Solver status becomes event-sourced or the wallet library exposes a stable restored-session flag.
+
+### Correction to D-A1-019 · live quote horizon
+- The mock TTL remains 60 seconds, but the web now accepts live quote expiries up to `MAX_QUOTE_FUTURE_S` (300 seconds). The solver’s D-A2-010 policy returns 120 seconds forward and 180 seconds for reverse safe-lane quotes; those are legitimate, not stale quotes.

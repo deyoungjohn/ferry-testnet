@@ -36,6 +36,7 @@ export const MIN_SWAP_USD_MICROS = 1_000_000n;
 export const SPREAD_BPS = 40;
 export const FIXED_FEE_USD_MICROS = 50_000n;
 export const QUOTE_TTL_S = 60;
+export const MAX_QUOTE_FUTURE_S = 300;
 export const BCH_CARRY_SATS = 3_000n;
 export const BCH_MAX_FEE_SATS = 1_500n;
 export const FWD_BCH_REFUND_BLOCKS = 36;

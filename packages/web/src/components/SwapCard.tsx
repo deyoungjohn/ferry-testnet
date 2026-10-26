@@ -13,7 +13,7 @@ import {
   FWD_EVM_DEADLINE_S,
   PUSD_CATEGORY,
   PUSD_SYMBOL,
-  QUOTE_TTL_S,
+  MAX_QUOTE_FUTURE_S,
   REV_BCH_REFUND_BLOCKS,
   REV_EVM_DEADLINE_S,
   requireSolverSigner,
@@ -224,7 +224,7 @@ export function SwapCard() {
           fixedFeeUsdMicros: FIXED_FEE_USD_MICROS,
         },
         nowSeconds: Math.floor(Date.now() / 1000),
-        maxQuoteFutureSeconds: QUOTE_TTL_S * 2,
+        maxQuoteFutureSeconds: MAX_QUOTE_FUTURE_S,
         maxCounterDeadlineSeconds:
           (reverse ? REV_EVM_DEADLINE_S : FWD_EVM_DEADLINE_S) + 300,
         minBchRefundBlocks: reverse
