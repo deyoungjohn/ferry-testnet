@@ -61,6 +61,13 @@ export default defineConfig(({ mode }) => {
       setupFiles: ['./src/test/setup.ts'],
       testTimeout: 45_000,
       css: true,
+      // Unit tests assume mock mode whatever the developer's .env.local says.
+      env: {
+        VITE_SOLVER_URL: '',
+        VITE_SOLVER_SIGNING_ADDRESS: '',
+        VITE_SOLVER_BCH_ADDRESS: '',
+        VITE_USE_MOCKS: '',
+      },
       include: ['src/**/*.test.{ts,tsx}'],
     },
   };

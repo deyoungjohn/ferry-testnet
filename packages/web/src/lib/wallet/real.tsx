@@ -30,6 +30,7 @@ import {
 import { ElectrumClient } from '../../recover/core';
 import { WalletContext } from './context';
 import { wagmiConfig } from './evm-config';
+import { sourceOutputToRelay } from './relay-format';
 import { wizardConnectTheme } from './wizard-theme';
 import { useBchReconnectTimeout } from './reconnect-timeout';
 import { isWrongEvmChain, wrongEvmChainMessage } from './chain';
@@ -261,22 +262,10 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
         const response = await wizard.manager.signTransaction({
           transaction: {
             transaction: request.transaction,
-            sourceOutputs: request.sourceOutputs.map((output) => ({
-              outpointIndex: output.outpointIndex,
-              outpointTransactionHash: output.outpointTransactionHash,
-              sequenceNumber: output.sequenceNumber,
-              unlockingBytecode: output.unlockingBytecode,
-              valueSatoshis: output.valueSatoshis,
-              lockingBytecode: output.lockingBytecode,
-              ...(output.token
-                ? {
-                    token: {
-                      category: output.token.category,
-                      amount: output.token.amount,
-                    },
-                  }
-                : {}),
-            })),
+            // JSON transport: bigint and bytes must use the relay wire format.
+            sourceOutputs: request.sourceOutputs.map(
+              sourceOutputToRelay,
+            ) as never,
             ...(request.broadcast !== undefined
               ? { broadcast: request.broadcast }
               : {}),
