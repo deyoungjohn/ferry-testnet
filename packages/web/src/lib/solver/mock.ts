@@ -128,6 +128,8 @@ export interface MockSolverOptions {
   readonly scenario?: 'happy' | 'refund';
   readonly direction?: Direction;
   readonly bchTipHeight?: number;
+  readonly quoteTtlSeconds?: number | undefined;
+  readonly quoteFailure?: 'rejected' | 'unavailable' | undefined;
   readonly linkIdFactory?: () => string;
 }
 
@@ -170,12 +172,16 @@ export class MockSolverClient implements SolverClient {
   readonly #scenario: 'happy' | 'refund';
   readonly #direction: Direction;
   readonly #bchTipHeight: number;
+  readonly #quoteTtlSeconds: number;
+  readonly #quoteFailure: 'rejected' | 'unavailable' | undefined;
   readonly #linkIdFactory: () => string;
 
   constructor(options: MockSolverOptions = {}) {
     this.#scenario = options.scenario ?? 'happy';
     this.#direction = options.direction ?? 'COUNTER_TO_BCH';
     this.#bchTipHeight = options.bchTipHeight ?? 329_315;
+    this.#quoteTtlSeconds = options.quoteTtlSeconds ?? QUOTE_TTL_S;
+    this.#quoteFailure = options.quoteFailure;
     this.#linkIdFactory = options.linkIdFactory ?? createLinkId;
     this.#seedLinks();
   }
@@ -256,6 +262,16 @@ export class MockSolverClient implements SolverClient {
   }
 
   async quote(input: QuoteRequest): Promise<SignedQuote> {
+    if (this.#quoteFailure === 'unavailable') {
+      throw new Error(
+        'Solver unavailable. Check the solver URL or start the local solver, then try again.',
+      );
+    }
+    if (this.#quoteFailure === 'rejected') {
+      throw new Error(
+        'QUOTE_REJECTED: The solver cannot cover this amount right now. Try a smaller amount.',
+      );
+    }
     const request = QuoteRequestSchema.parse(input);
     if (request.bchToken !== 'PUSD') {
       throw new Error('Only tPUSD is enabled');
@@ -334,7 +350,7 @@ export class MockSolverClient implements SolverClient {
       bchCarrySats: BCH_CARRY_SATS,
       bchMaxFee: BCH_MAX_FEE_SATS,
       quoteId: `mock-quote-${now}`,
-      quoteExpiry: now + QUOTE_TTL_S,
+      quoteExpiry: now + this.#quoteTtlSeconds,
     });
     const id = computeOrderId(terms);
     const signature = await solverAccount.signMessage({
@@ -416,7 +432,13 @@ export class MockSolverClient implements SolverClient {
     const request = PayLinkQuoteRequestSchema.parse(input);
     const link = this.#link(id);
     if (link.status === 'reserved') {
-      throw new Error('LINK_RESERVED: This invoice is being paid');
+      const previous = link.orderId ? this.#orders.get(link.orderId) : null;
+      const samePayer =
+        previous?.quote.terms.userCounterAddress.toLowerCase() ===
+        request.userCounterAddress.toLowerCase();
+      if (!samePayer) {
+        throw new Error('LINK_RESERVED: This invoice is being paid');
+      }
     }
     if (link.status === 'paid') {
       throw new Error('LINK_CLOSED: This pay link is already paid');
@@ -467,8 +489,8 @@ export class MockSolverClient implements SolverClient {
     const now = Math.floor(Date.now() / 1000);
     const quoteExpiry =
       link.expiresAt === undefined
-        ? now + QUOTE_TTL_S
-        : Math.min(now + QUOTE_TTL_S, link.expiresAt);
+        ? now + this.#quoteTtlSeconds
+        : Math.min(now + this.#quoteTtlSeconds, link.expiresAt);
     if (quoteExpiry <= now) {
       throw new Error('LINK_EXPIRED: This pay link has expired');
     }
@@ -757,7 +779,7 @@ export class MockSolverClient implements SolverClient {
       bchCarrySats: BCH_CARRY_SATS,
       bchMaxFee: BCH_MAX_FEE_SATS,
       quoteId: reverse ? 'mock-reverse-refund' : 'mock-refund',
-      quoteExpiry: now + QUOTE_TTL_S,
+      quoteExpiry: now + this.#quoteTtlSeconds,
     });
     const quote: SignedQuote = {
       terms,

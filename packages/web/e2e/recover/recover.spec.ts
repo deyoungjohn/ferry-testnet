@@ -110,7 +110,13 @@ test.beforeAll(async () => {
     hashLock: hashLockForSecret(generateSecret()),
     lane: 'safe',
   });
-  file = buildRecoveryFile(quote.orderId, quote.terms, generateSecret());
+  file = buildRecoveryFile(
+    quote.orderId,
+    quote.terms,
+    generateSecret(),
+    Math.floor(Date.now() / 1_000),
+    'live',
+  );
   lockId = evmLockId(file.terms.userCounterAddress, file.terms.hashLock);
 
   server = new WebSocketServer({ port: 0 });

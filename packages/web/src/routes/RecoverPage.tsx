@@ -55,7 +55,10 @@ export function RecoverPage() {
       setRecovery(parsed);
       setFileNotice({
         kind: 'ok',
-        text: 'Recovery file loaded. The BCH address was recomputed and matches.',
+        text:
+          parsed.solverKind === 'mock'
+            ? 'Recovery file loaded. This file was issued by the mock solver and cannot be claimed on chain.'
+            : 'Recovery file loaded. The BCH address was recomputed and matches.',
       });
     } catch (cause) {
       setRecovery(null);

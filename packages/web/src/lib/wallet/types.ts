@@ -48,6 +48,7 @@ export interface EvmWallet {
   readonly status: WalletStatus;
   readonly address: Address | null;
   readonly error: string | null;
+  readonly pendingRequest?: string | null;
   connect(): void;
   disconnect(): Promise<void>;
   signTypedData(params: TypedDataDefinition): Promise<Hex>;
@@ -61,6 +62,7 @@ export interface BchWallet {
   readonly address: BchAddressInfo | null;
   readonly error: string | null;
   readonly walletName: string | null;
+  readonly pendingRequest?: string | null;
   connect(): void;
   disconnect(): Promise<void>;
   setAddress(address: BchAddressInfo): void;

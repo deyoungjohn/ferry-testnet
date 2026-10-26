@@ -1,5 +1,5 @@
 import type { PayLink, PayLinkQuoteRequest } from '@ferry/core';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { chunkCashaddr } from '../lib/paylink/link';
 import type { SignedQuote } from '../lib/solver/types';
@@ -30,7 +30,11 @@ import {
 } from '../lib/swap';
 import { bchElectrumUrls, bchQuoteConfigError } from '../lib/bch/tip';
 import { formatUsdMicros } from '../lib/format';
+import { useQuoteAutoRefresh } from '../lib/quote/auto-refresh';
+import { assertQuoteStillOpen } from '../lib/quote/expiry';
+import { saveQuoteRecord } from '../lib/orders/store';
 import { useSolver } from '../lib/solver/context';
+import { solverIsLive } from '../lib/solver/kind';
 import { useWallets } from '../lib/wallet/context';
 import {
   BASE_SEPOLIA_CHAIN_ID,
@@ -70,6 +74,8 @@ export function PayLinkPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const lockStarted = useRef(false);
+  const requestVersion = useRef(0);
 
   useEffect(() => {
     const timer = window.setInterval(
@@ -144,16 +150,29 @@ export function PayLinkPage() {
     };
   }, [quote]);
 
-  async function handleQuote(): Promise<void> {
+  async function handleQuote(auto = false): Promise<boolean> {
+    if (auto && lockStarted.current) return false;
+    const version = ++requestVersion.current;
     if (quoteConfigError) {
       setError(quoteConfigError);
-      return;
+      return false;
     }
     if (!link || !evm.address) {
       setError('Connect a Base wallet first.');
-      return;
+      return false;
     }
-    setBusy(true);
+    if (!auto && linkExpired) {
+      setError('This link has expired.');
+      return false;
+    }
+    if (!auto && closed && !quote) {
+      setError('This invoice is being paid by another payer.');
+      return false;
+    }
+    if (!auto) {
+      autoRefresh.reset();
+      setBusy(true);
+    }
     setError(null);
     try {
       const nextAmountOut =
@@ -172,6 +191,9 @@ export function PayLinkPage() {
         ...(link.kind === 'open' ? { amountOut: nextAmountOut } : {}),
       };
       const next = await solver.quotePayLink(link.id, request);
+      if (auto && (lockStarted.current || version !== requestVersion.current)) {
+        return false;
+      }
       const { parseBchAddress } = await import('../lib/bch/address');
       const solverBch = parseBchAddress(SOLVER_BCH_ADDRESS);
       if (!solverBch.ok) throw new Error(solverBch.error);
@@ -208,21 +230,41 @@ export function PayLinkPage() {
       };
       assertPayLinkQuote(next.terms, link, request, config);
       assertTimingInvariant(next.terms, config);
-      const file = buildRecoveryFile(next.orderId, next.terms, secret);
+      if (auto && (lockStarted.current || version !== requestVersion.current)) {
+        return false;
+      }
+      await saveQuoteRecord(next, solverIsLive());
+      const file = buildRecoveryFile(
+        next.orderId,
+        next.terms,
+        secret,
+        Math.floor(Date.now() / 1_000),
+        solverIsLive() ? 'live' : 'mock',
+      );
       await saveSecret(next.orderId, secret);
       setQuote(next);
       setRecovery(file);
       setRecoveryDownloaded(false);
+      return true;
     } catch (cause) {
-      setQuote(null);
-      setRecovery(null);
+      if (!auto) {
+        setQuote(null);
+        setRecovery(null);
+      }
       setError(
         cause instanceof Error ? cause.message : 'Could not get a quote',
       );
+      return false;
     } finally {
-      setBusy(false);
+      if (!auto) setBusy(false);
     }
   }
+
+  const autoRefresh = useQuoteAutoRefresh({
+    enabled: Boolean(quote) && !busy && !linkExpired,
+    expiresAt: quote?.terms.quoteExpiry ?? null,
+    onRefresh: () => handleQuote(true),
+  });
 
   function handleDownload(): void {
     if (!recovery) return;
@@ -241,6 +283,8 @@ export function PayLinkPage() {
       setError('Download the recovery file before paying.');
       return;
     }
+    lockStarted.current = true;
+    autoRefresh.cancel();
     setBusy(true);
     setError(null);
     try {
@@ -251,6 +295,7 @@ export function PayLinkPage() {
       const intentSignature = await evm.signTypedData(
         buildIntentTypedData(quote.terms),
       );
+      assertQuoteStillOpen(quote.terms);
       await solver.relayLock({
         orderId: quote.orderId,
         terms: quote.terms,
@@ -377,6 +422,9 @@ export function PayLinkPage() {
                   inputMode="decimal"
                   value={amount}
                   onChange={(event) => {
+                    requestVersion.current += 1;
+                    lockStarted.current = false;
+                    autoRefresh.reset();
                     setQuote(null);
                     setRecovery(null);
                     setRecoveryDownloaded(false);
@@ -484,10 +532,36 @@ export function PayLinkPage() {
           </dl>
         ) : null}
 
+        {autoRefresh.refreshing ? (
+          <p
+            role="status"
+            className="mt-5 rounded-well border border-hairline bg-surface-2 px-3 py-2 text-[11px] leading-5 text-text-muted"
+          >
+            Refreshing quote… A new secret and recovery file will be issued.
+          </p>
+        ) : null}
+        {autoRefresh.error ? (
+          <p
+            role="alert"
+            className="mt-4 rounded-well border border-danger/25 bg-danger/5 px-3 py-2 text-[11px] leading-5 text-danger"
+          >
+            {autoRefresh.error}
+          </p>
+        ) : null}
+        {autoRefresh.stopped &&
+        autoRefresh.attempts >= 3 &&
+        !autoRefresh.error ? (
+          <p className="mt-4 text-[11px] leading-5 text-text-muted">
+            Auto-refresh paused after 3 refreshes. Get a fresh quote when you
+            are ready.
+          </p>
+        ) : null}
+
         {recovery ? (
           <button
             type="button"
             onClick={handleDownload}
+            disabled={autoRefresh.refreshing}
             className={`mt-5 w-full rounded-pill border px-4 py-3 text-sm font-semibold ${
               recoveryDownloaded
                 ? 'border-ok/40 bg-ok/10 text-ok'
@@ -515,27 +589,36 @@ export function PayLinkPage() {
           </p>
         ) : null}
 
-        {!quote ? (
+        {!quote ||
+        (expired && autoRefresh.stopped && !autoRefresh.refreshing) ? (
           <button
             type="button"
-            disabled={!canQuote}
-            onClick={() => void handleQuote()}
+            disabled={!canQuote && !autoRefresh.stopped}
+            onClick={() => void handleQuote(false)}
             className="mt-5 w-full rounded-pill bg-lime px-4 py-3 text-sm font-semibold text-lime-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {busy ? 'Getting quote…' : 'Get exact quote'}
+            {busy
+              ? 'Getting quote…'
+              : expired
+                ? 'Get fresh exact quote'
+                : 'Get exact quote'}
           </button>
         ) : (
           <button
             type="button"
-            disabled={busy || expired || !recoveryDownloaded}
+            disabled={
+              busy || autoRefresh.refreshing || expired || !recoveryDownloaded
+            }
             onClick={() => void handlePay()}
             className="mt-5 w-full rounded-pill bg-lime px-4 py-3 text-sm font-semibold text-lime-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy
               ? 'Locking USDC…'
-              : expired
-                ? 'Quote expired'
-                : `Pay ${formatUsdc(quote.terms.counterAmount)} USDC on Base`}
+              : autoRefresh.refreshing
+                ? 'Refreshing quote…'
+                : expired
+                  ? 'Quote expired'
+                  : `Pay ${formatUsdc(quote.terms.counterAmount)} USDC on Base`}
           </button>
         )}
 

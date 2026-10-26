@@ -37,25 +37,51 @@ export function MockWalletProvider({
 }) {
   const [evmStatus, setEvmStatus] = useState<WalletStatus>('disconnected');
   const [bchStatus, setBchStatus] = useState<WalletStatus>('disconnected');
+  const [evmPending, setEvmPending] = useState<string | null>(null);
+  const query =
+    typeof window === 'undefined'
+      ? null
+      : new URLSearchParams(window.location.search);
+  const rejectSigning = query?.get('walletReject') === '1';
+  const signingDelayMs = Number(query?.get('walletDelayMs') ?? 0);
 
   const evm = useMemo<EvmWallet>(
     () => ({
       status: evmStatus,
       address: evmStatus === 'connected' ? mockUser.address : null,
       error: null,
+      pendingRequest: evmPending,
       connect: () => {
         setEvmStatus('connected');
       },
       disconnect: async () => {
         setEvmStatus('disconnected');
       },
-      signTypedData: async (params: TypedDataDefinition) =>
-        mockUser.signTypedData(params as never),
+      signTypedData: async (params: TypedDataDefinition) => {
+        setEvmPending(
+          params.primaryType === 'Permit'
+            ? 'Sign the USDC permit'
+            : 'Sign the lock intent',
+        );
+        try {
+          if (signingDelayMs > 0) {
+            await new Promise((resolve) =>
+              window.setTimeout(resolve, signingDelayMs),
+            );
+          }
+          if (rejectSigning) {
+            throw new Error('User rejected the request.');
+          }
+          return mockUser.signTypedData(params as never);
+        } finally {
+          setEvmPending(null);
+        }
+      },
       readPermitNonce: async () => 0n,
       refundLock: async (id: Hex) => sha256(id),
       claimLock: async (id: Hex) => sha256(id),
     }),
-    [evmStatus],
+    [evmStatus, evmPending, rejectSigning, signingDelayMs],
   );
 
   const bch = useMemo<BchWallet>(
@@ -64,6 +90,7 @@ export function MockWalletProvider({
       address: bchStatus === 'connected' ? mockBch : null,
       error: null,
       walletName: bchStatus === 'connected' ? 'Mock BCH wallet' : null,
+      pendingRequest: null,
       connect: () => {
         setBchStatus('connected');
       },

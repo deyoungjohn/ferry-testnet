@@ -21,6 +21,7 @@ import {
 } from 'wagmi';
 import { addressFromPubkey } from '../bch/address';
 import {
+  BASE_SEPOLIA_CHAIN_ID,
   BCH_ELECTRUM_URL,
   FERRY_HTLC_ADDRESS,
   REOWN_PROJECT_ID,
@@ -30,6 +31,8 @@ import { ElectrumClient } from '../../recover/core';
 import { WalletContext } from './context';
 import { wagmiConfig } from './evm-config';
 import { wizardConnectTheme } from './wizard-theme';
+import { useBchReconnectTimeout } from './reconnect-timeout';
+import { isWrongEvmChain, wrongEvmChainMessage } from './chain';
 import type {
   BchSignedTransaction,
   BchSignTransactionRequest,
@@ -51,24 +54,33 @@ const noncesAbi = [
 ] as const;
 
 function useRealEvmWallet(): EvmWallet {
-  const { address, isConnected, isConnecting, isReconnecting } = useAccount();
+  const { address, chainId, isConnected, isConnecting, isReconnecting } =
+    useAccount();
+  const wrongChain =
+    isConnected && isWrongEvmChain(chainId, BASE_SEPOLIA_CHAIN_ID);
   const { disconnectAsync } = useDisconnect();
   const { open } = useAppKit();
   const { signTypedDataAsync } = useSignTypedData();
   const { writeContractAsync } = useWriteContract();
   const publicClient = usePublicClient();
   const [error, setError] = useState<string | null>(null);
+  const [pendingRequest, setPendingRequest] = useState<string | null>(null);
 
   return {
     status: !REOWN_PROJECT_ID
       ? 'unavailable'
-      : isConnected
-        ? 'connected'
-        : isConnecting || isReconnecting
-          ? 'connecting'
-          : 'disconnected',
-    address: address ?? null,
-    error,
+      : wrongChain
+        ? 'disconnected'
+        : isConnected
+          ? 'connected'
+          : isConnecting || isReconnecting
+            ? 'connecting'
+            : 'disconnected',
+    address: wrongChain ? null : (address ?? null),
+    error:
+      error ??
+      (wrongChain ? wrongEvmChainMessage(BASE_SEPOLIA_CHAIN_ID) : null),
+    pendingRequest,
     connect: () => {
       if (!REOWN_PROJECT_ID) {
         setError('Wallet connect needs a Reown project ID');
@@ -80,11 +92,18 @@ function useRealEvmWallet(): EvmWallet {
       await disconnectAsync();
     },
     signTypedData: async (params: TypedDataDefinition) => {
+      setPendingRequest(
+        params.primaryType === 'Permit'
+          ? 'Sign the USDC permit'
+          : 'Sign the lock intent',
+      );
       try {
         return await signTypedDataAsync(params as never);
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : 'Signature rejected');
         throw cause;
+      } finally {
+        setPendingRequest(null);
       }
     },
     readPermitNonce: async (owner: Address) => {
@@ -97,20 +116,30 @@ function useRealEvmWallet(): EvmWallet {
       });
     },
     refundLock: async (id: Hex) => {
-      return writeContractAsync({
-        address: FERRY_HTLC_ADDRESS,
-        abi: ferryHtlcAbi,
-        functionName: 'refund',
-        args: [id],
-      });
+      setPendingRequest('Confirm the USDC refund');
+      try {
+        return await writeContractAsync({
+          address: FERRY_HTLC_ADDRESS,
+          abi: ferryHtlcAbi,
+          functionName: 'refund',
+          args: [id],
+        });
+      } finally {
+        setPendingRequest(null);
+      }
     },
     claimLock: async (id: Hex, secret: Hex) => {
-      return writeContractAsync({
-        address: FERRY_HTLC_ADDRESS,
-        abi: ferryHtlcAbi,
-        functionName: 'claim',
-        args: [id, secret],
-      });
+      setPendingRequest('Confirm the USDC claim');
+      try {
+        return await writeContractAsync({
+          address: FERRY_HTLC_ADDRESS,
+          abi: ferryHtlcAbi,
+          functionName: 'claim',
+          args: [id, secret],
+        });
+      } finally {
+        setPendingRequest(null);
+      }
     },
   };
 }
@@ -126,6 +155,13 @@ function txidOf(txHex: string): string {
 
 function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
   const wizard = useWizardConnect({ dappName: 'Ferry' });
+  const reconnectTimedOut = useBchReconnectTimeout(
+    wizard.state,
+    () => wizard.disconnect(),
+    undefined,
+    !wizard.uri,
+  );
+  const [pendingRequest, setPendingRequest] = useState<string | null>(null);
   const [manualAddress, setManualAddress] =
     useState<BchWallet['address']>(null);
   const derived = useMemo(() => {
@@ -150,11 +186,17 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
     status:
       wizard.state === 'connected' && address
         ? 'connected'
-        : wizard.state === 'connecting' || wizard.state === 'reconnecting'
+        : !reconnectTimedOut &&
+            (wizard.state === 'connecting' || wizard.state === 'reconnecting')
           ? 'connecting'
           : 'disconnected',
     address,
-    error: wizard.error,
+    error:
+      wizard.error ??
+      (reconnectTimedOut
+        ? 'BCH wallet did not reconnect in time. Connect again.'
+        : null),
+    pendingRequest,
     walletName: wizard.walletName,
     connect: () => {
       // A pairing left in "connecting" or "reconnecting" ignores a second
@@ -214,50 +256,55 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
     ): Promise<BchSignedTransaction> => {
       if (!wizard.manager)
         throw new Error('Connect a WizardConnect wallet first');
-      const response = await wizard.manager.signTransaction({
-        transaction: {
-          transaction: request.transaction,
-          sourceOutputs: request.sourceOutputs.map((output) => ({
-            outpointIndex: output.outpointIndex,
-            outpointTransactionHash: output.outpointTransactionHash,
-            sequenceNumber: output.sequenceNumber,
-            unlockingBytecode: output.unlockingBytecode,
-            valueSatoshis: output.valueSatoshis,
-            lockingBytecode: output.lockingBytecode,
-            ...(output.token
-              ? {
-                  token: {
-                    category: output.token.category,
-                    amount: output.token.amount,
-                  },
-                }
+      setPendingRequest(request.userPrompt ?? 'Sign the BCH transaction');
+      try {
+        const response = await wizard.manager.signTransaction({
+          transaction: {
+            transaction: request.transaction,
+            sourceOutputs: request.sourceOutputs.map((output) => ({
+              outpointIndex: output.outpointIndex,
+              outpointTransactionHash: output.outpointTransactionHash,
+              sequenceNumber: output.sequenceNumber,
+              unlockingBytecode: output.unlockingBytecode,
+              valueSatoshis: output.valueSatoshis,
+              lockingBytecode: output.lockingBytecode,
+              ...(output.token
+                ? {
+                    token: {
+                      category: output.token.category,
+                      amount: output.token.amount,
+                    },
+                  }
+                : {}),
+            })),
+            ...(request.broadcast !== undefined
+              ? { broadcast: request.broadcast }
               : {}),
-          })),
-          ...(request.broadcast !== undefined
-            ? { broadcast: request.broadcast }
-            : {}),
-          ...(request.userPrompt !== undefined
-            ? { userPrompt: request.userPrompt }
-            : {}),
-        },
-        inputPaths: request.sourceOutputs.map((output) => {
-          const bytecode = bytesToHex(output.lockingBytecode).toLowerCase();
-          if (derived && bytecode === derived.lockingBytecode.toLowerCase()) {
-            return [0, 'receive', 0] as [number, 'receive', number];
-          }
-          if (
-            derivedChange &&
-            bytecode === derivedChange.lockingBytecode.toLowerCase()
-          ) {
-            return [1, 'change', 0] as [number, 'change', number];
-          }
-          throw new Error(
-            'A BCH input does not belong to the connected wallet receive or change path',
-          );
-        }),
-      });
-      const txHex = response.signedTransaction;
-      return { txHex, txid: txidOf(txHex) };
+            ...(request.userPrompt !== undefined
+              ? { userPrompt: request.userPrompt }
+              : {}),
+          },
+          inputPaths: request.sourceOutputs.map((output) => {
+            const bytecode = bytesToHex(output.lockingBytecode).toLowerCase();
+            if (derived && bytecode === derived.lockingBytecode.toLowerCase()) {
+              return [0, 'receive', 0] as [number, 'receive', number];
+            }
+            if (
+              derivedChange &&
+              bytecode === derivedChange.lockingBytecode.toLowerCase()
+            ) {
+              return [1, 'change', 0] as [number, 'change', number];
+            }
+            throw new Error(
+              'A BCH input does not belong to the connected wallet receive or change path',
+            );
+          }),
+        });
+        const txHex = response.signedTransaction;
+        return { txHex, txid: txidOf(txHex) };
+      } finally {
+        setPendingRequest(null);
+      }
     },
     broadcastTransaction: async (txHex: string) => {
       const electrum = new ElectrumClient(BCH_ELECTRUM_URL);
@@ -292,6 +339,7 @@ const unavailableEvm: EvmWallet = {
   status: 'unavailable',
   address: null,
   error: 'Wallet connect needs a Reown project ID',
+  pendingRequest: null,
   connect: () => undefined,
   disconnect: async () => undefined,
   signTypedData: async () => {

@@ -15,6 +15,7 @@ const solverBchLockingBytecode = solverBch.value.lockingBytecode;
 export interface ReverseFundingPanelProps {
   readonly terms: OrderTerms;
   readonly onFunded: (txid: string) => void;
+  readonly onFundingStart?: () => void;
   readonly disabled?: boolean;
   readonly disabledReason?: string;
 }
@@ -22,6 +23,7 @@ export interface ReverseFundingPanelProps {
 export function ReverseFundingPanel({
   terms,
   onFunded,
+  onFundingStart,
   disabled = false,
   disabledReason,
 }: ReverseFundingPanelProps) {
@@ -46,6 +48,7 @@ export function ReverseFundingPanel({
 
   async function handleSign(): Promise<void> {
     if (!target) return;
+    onFundingStart?.();
     setBusy(true);
     setError(null);
     try {

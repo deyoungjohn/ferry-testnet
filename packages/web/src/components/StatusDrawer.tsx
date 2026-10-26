@@ -1,5 +1,6 @@
 import type { OrderViewModel } from '../lib/solver/view';
 import { explorerTxUrl } from '../lib/config';
+import { solverIsLive } from '../lib/solver/kind';
 import { truncateAddress } from '../lib/swap';
 import { CheckIcon } from './icons';
 import { GlassSheet } from './GlassSheet';
@@ -21,7 +22,7 @@ export function StatusDrawer({
     <GlassSheet
       open={open}
       onOpenChange={onOpenChange}
-      title="Live swap timeline"
+      title={solverIsLive() ? 'Live swap timeline' : 'Swap timeline (mock)'}
       description={`${view.statusLabel} · ${truncateAddress(orderId, 10, 8)}`}
     >
       <div className="grid grid-cols-2 gap-3 border-b border-hairline pb-4 text-[11px]">
@@ -80,7 +81,12 @@ export function StatusDrawer({
               >
                 {step.label}
               </p>
-              {step.transaction ? (
+              {step.transaction && !solverIsLive() ? (
+                <span className="mt-0.5 inline-block truncate font-mono text-[10px] text-text-muted">
+                  {truncateAddress(step.transaction.hash, 12, 8)} (mock, not on
+                  chain)
+                </span>
+              ) : step.transaction ? (
                 <a
                   href={explorerTxUrl(
                     step.transaction.chain,

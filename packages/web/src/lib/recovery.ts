@@ -28,6 +28,7 @@ const hex = z
 
 export const RecoveryFileSchema = z.strictObject({
   version: z.literal(1),
+  solverKind: z.enum(['mock', 'live']).optional(),
   orderId: hex32,
   terms: ApiOrderTermsSchema,
   secret: hex32,
@@ -69,6 +70,7 @@ export function buildRecoveryFile(
   terms: OrderTerms,
   secret: Hex32,
   createdAt = Math.floor(Date.now() / 1000),
+  solverKind: 'mock' | 'live' = 'mock',
 ): RecoveryFile {
   const addresses = deriveHtlcAddresses(
     bchParametersFromTerms(terms),
@@ -77,6 +79,7 @@ export function buildRecoveryFile(
 
   return RecoveryFileSchema.parse({
     version: 1,
+    solverKind,
     orderId,
     terms,
     secret,
