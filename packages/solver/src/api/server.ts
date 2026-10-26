@@ -771,6 +771,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
           data.verification.challenge,
           data.verification.signature,
           data.recipientLockingBytecode,
+          config.allowMockPaylinkSignatures,
         )
       : false;
 
@@ -813,7 +814,22 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     }
 
     const query = parseResult.data;
-    if (!verifyPayLinksSignature(query.owner, query.challenge, query.sig)) {
+    if (!config.allowMockPaylinkSignatures) {
+      return reply.status(403).send({
+        code: 'MOCK_SIGNATURES_DISABLED',
+        message:
+          'Owner pay-link listing requires real signatures; mock signatures are disabled without ALLOW_MOCK_PAYLINK_SIGNATURES=1',
+      });
+    }
+
+    if (
+      !verifyPayLinksSignature(
+        query.owner,
+        query.challenge,
+        query.sig,
+        config.allowMockPaylinkSignatures,
+      )
+    ) {
       return reply.status(400).send({
         code: 'INVALID_SIGNATURE',
         message: 'Link list challenge is invalid',
@@ -1104,8 +1120,21 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       }
 
       const request = parseResult.data;
+      if (!config.allowMockPaylinkSignatures) {
+        return reply.status(403).send({
+          code: 'MOCK_SIGNATURES_DISABLED',
+          message:
+            'Pay-link cancellation requires real signatures; mock signatures are disabled without ALLOW_MOCK_PAYLINK_SIGNATURES=1',
+        });
+      }
+
       if (
-        !verifyPayLinksSignature(request.owner, request.challenge, request.sig)
+        !verifyPayLinksSignature(
+          request.owner,
+          request.challenge,
+          request.sig,
+          config.allowMockPaylinkSignatures,
+        )
       ) {
         return reply.status(400).send({
           code: 'INVALID_SIGNATURE',

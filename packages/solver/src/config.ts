@@ -63,6 +63,7 @@ export const SolverConfigSchema = z.object({
   skewMaxBps: z.coerce.number().default(50),
   tipMaxAgeBchSeconds: z.coerce.number().default(7200),
   tipMaxAgeBaseSeconds: z.coerce.number().default(60),
+  allowMockPaylinkSignatures: z.coerce.boolean().default(false),
 });
 
 export type SolverConfig = z.infer<typeof SolverConfigSchema>;
@@ -109,6 +110,16 @@ export function loadConfigFromEnv(
     env.ALLOW_DEV_KEYS === '1' ||
     env.ALLOW_DEV_KEYS === 'true' ||
     env.FERRY_ALLOW_DEV_KEYS === '1';
+
+  const allowMockPaylinkSignatures =
+    env.ALLOW_MOCK_PAYLINK_SIGNATURES === '1' ||
+    env.ALLOW_MOCK_PAYLINK_SIGNATURES === 'true';
+
+  if (isMainnet && allowMockPaylinkSignatures) {
+    throw new Error(
+      'ALLOW_MOCK_PAYLINK_SIGNATURES is not permitted on mainnet; real BCH signed messages required',
+    );
+  }
 
   let solverEvmPrivateKey: string;
   if (!rawSolverKey) {
@@ -189,5 +200,6 @@ export function loadConfigFromEnv(
     skewMaxBps: env.SKEW_MAX_BPS,
     tipMaxAgeBchSeconds: env.TIP_MAX_AGE_BCH_SECONDS,
     tipMaxAgeBaseSeconds: env.TIP_MAX_AGE_BASE_SECONDS,
+    allowMockPaylinkSignatures,
   });
 }

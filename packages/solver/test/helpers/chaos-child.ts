@@ -90,6 +90,13 @@ const engine = new SolverEngine(
   'testnet',
 );
 
+// Exit cleanly if parent closes stdin
+process.stdin.resume();
+process.stdin.on('end', () => process.exit(0));
+
+// Signal ready to parent process as soon as engine and db are initialized
+process.stdout.write('READY\n');
+
 if (values.runStep) {
   engine
     .step()
@@ -101,9 +108,6 @@ if (values.runStep) {
       process.exit(1);
     });
 } else {
-  // Signal ready to parent process
-  process.stdout.write('READY\n');
-
   // Keep process running so parent can SIGKILL it
   setInterval(() => {}, 1000);
 }

@@ -24,6 +24,8 @@ describe('Pay Links API (PL-01 to PL-05)', () => {
   let app: FastifyInstance;
   let db: SolverDatabase;
   let engine: SolverEngine;
+  let fakeBchClient: BchQuorumClient;
+  let fakeEvmAdapter: EvmChainAdapter;
 
   const solverEvmKey =
     '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as const;
@@ -37,7 +39,7 @@ describe('Pay Links API (PL-01 to PL-05)', () => {
   beforeAll(async () => {
     db = new SolverDatabase(':memory:');
 
-    const fakeBchClient = {
+    fakeBchClient = {
       getQuorumStatus: () => ({
         quorumTip: 330000,
         tips: { 'wss://mock1': 330000, 'wss://mock2': 330000 },
@@ -51,7 +53,7 @@ describe('Pay Links API (PL-01 to PL-05)', () => {
       unsubscribeScriptHash: async () => {},
     } as unknown as BchQuorumClient;
 
-    const fakeEvmAdapter = {
+    fakeEvmAdapter = {
       address: solverAddress,
       lockId: (sender: `0x${string}`, hashLock: `0x${string}`) =>
         `0xmock-lock-${sender}-${hashLock}`,
@@ -72,6 +74,7 @@ describe('Pay Links API (PL-01 to PL-05)', () => {
       quotingEnabled: true,
       solverEvmPrivateKey: solverEvmKey,
       solverBchWif: sampleWif,
+      allowMockPaylinkSignatures: true,
     });
 
     app = buildServer({
@@ -470,5 +473,73 @@ describe('Pay Links API (PL-01 to PL-05)', () => {
     const postRestart = db.getPayLink(linkToReserve.id);
     expect(postRestart?.status).toBe('reserved');
     expect(postRestart?.orderId).toBe(preRestart?.orderId);
+  });
+
+  it(': when allowMockPaylinkSignatures is false, verified is false and owner routes answer 403', async () => {
+    const disabledConfig = SolverConfigSchema.parse({
+      spreadBps: 40,
+      fixedFeeUsdMicros: 50000n,
+      quotingEnabled: true,
+      solverEvmPrivateKey: solverEvmKey,
+      solverBchWif: sampleWif,
+      allowMockPaylinkSignatures: false,
+    });
+    const disabledApp = buildServer({
+      config: disabledConfig,
+      db,
+      evmAdapter: fakeEvmAdapter,
+      bchClient: fakeBchClient,
+      engine,
+    });
+    await disabledApp.ready();
+
+    try {
+      const challenge = 'mock-chal-test';
+      const msg = payLinkMessage(challenge, merchantLockingBytecode);
+      const sig = mockMessageSignature(msg);
+
+      // 1. POST /v1/links sets verified: false
+      const createRes = await disabledApp.inject({
+        method: 'POST',
+        url: '/v1/links',
+        payload: {
+          kind: 'invoice',
+          recipientCashaddr: merchantCashaddr,
+          recipientLockingBytecode: merchantLockingBytecode,
+          token: 'PUSD',
+          amountOut: '1000',
+          verification: {
+            challenge,
+            signature: sig,
+          },
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+      const created = JSON.parse(createRes.body);
+      expect(created.verified).toBe(false);
+
+      // 2. GET /v1/links returns 403
+      const listRes = await disabledApp.inject({
+        method: 'GET',
+        url: `/v1/links?owner=${encodeURIComponent(merchantCashaddr)}&challenge=c&sig=s`,
+      });
+      expect(listRes.statusCode).toBe(403);
+      expect(JSON.parse(listRes.body).code).toBe('MOCK_SIGNATURES_DISABLED');
+
+      // 3. POST /v1/links/:id/cancel returns 403
+      const cancelRes = await disabledApp.inject({
+        method: 'POST',
+        url: `/v1/links/${created.id}/cancel`,
+        payload: {
+          owner: merchantCashaddr,
+          challenge: 'c',
+          sig: 's',
+        },
+      });
+      expect(cancelRes.statusCode).toBe(403);
+      expect(JSON.parse(cancelRes.body).code).toBe('MOCK_SIGNATURES_DISABLED');
+    } finally {
+      await disabledApp.close();
+    }
   });
 });

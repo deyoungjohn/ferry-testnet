@@ -38,7 +38,11 @@ export function verifyPayLinkSignature(
   challenge: string,
   signature: string,
   lockingBytecode: string,
+  allowMock = false,
 ): boolean {
+  if (!allowMock) {
+    return false;
+  }
   const expected = mockMessageSignature(
     payLinkMessage(challenge, lockingBytecode),
   );
@@ -49,7 +53,11 @@ export function verifyPayLinksSignature(
   owner: string,
   challenge: string,
   signature: string,
+  allowMock = false,
 ): boolean {
+  if (!allowMock) {
+    return false;
+  }
   const expected = mockMessageSignature(payLinksMessage(owner, challenge));
   return normalizeSig(signature) === normalizeSig(expected);
 }

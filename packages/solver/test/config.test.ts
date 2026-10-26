@@ -114,4 +114,35 @@ describe('Solver Configuration vs .env.example', () => {
       }),
     ).toThrowError(/Default dev private key cannot be used on mainnet/);
   });
+
+  describe('Pay-link mock signature gating', () => {
+    it('defaults allowMockPaylinkSignatures to false', () => {
+      const cfg = loadConfigFromEnv({
+        NETWORK: 'testnet',
+        ALLOW_DEV_KEYS: '1',
+      });
+      expect(cfg.allowMockPaylinkSignatures).toBe(false);
+    });
+
+    it('enables allowMockPaylinkSignatures on testnet with ALLOW_MOCK_PAYLINK_SIGNATURES=1', () => {
+      const cfg = loadConfigFromEnv({
+        NETWORK: 'testnet',
+        ALLOW_DEV_KEYS: '1',
+        ALLOW_MOCK_PAYLINK_SIGNATURES: '1',
+      });
+      expect(cfg.allowMockPaylinkSignatures).toBe(true);
+    });
+
+    it('strictly refuses startup on mainnet when ALLOW_MOCK_PAYLINK_SIGNATURES=1 is set', () => {
+      expect(() =>
+        loadConfigFromEnv({
+          NETWORK: 'mainnet',
+          SOLVER_EVM_PRIVATE_KEY: `0x${'11'.repeat(32)}`,
+          ALLOW_MOCK_PAYLINK_SIGNATURES: '1',
+        }),
+      ).toThrowError(
+        /ALLOW_MOCK_PAYLINK_SIGNATURES is not permitted on mainnet/,
+      );
+    });
+  });
 });
