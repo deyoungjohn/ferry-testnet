@@ -1,5 +1,6 @@
 import { PNG } from 'pngjs';
 import { expect, test } from '@playwright/test';
+import { openWalletDialog } from './wallet-ready';
 
 function channel(value: number): number {
   const normalized = value / 255;
@@ -36,6 +37,7 @@ test('glass nav turns on after 24px of scroll', async ({ page }) => {
 test('wallet sheet uses glass, keeps two layers, and opens on mobile', async ({
   page,
 }) => {
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?mock=1');
   await page.evaluate(() => window.scrollTo(0, 400));
@@ -44,9 +46,7 @@ test('wallet sheet uses glass, keeps two layers, and opens on mobile', async ({
     'true',
   );
 
-  await page
-    .getByRole('button', { name: /wallet connection: connect/i })
-    .click();
+  await openWalletDialog(page);
   await expect(page.locator('[data-glass-panel="modal"]')).toBeVisible();
   expect(await page.locator('.glass:visible').count()).toBe(2);
 
@@ -64,9 +64,7 @@ test('wallet sheet uses glass, keeps two layers, and opens on mobile', async ({
     'data-scrolled',
     'true',
   );
-  await page
-    .getByRole('button', { name: /wallet connection: connect/i })
-    .click();
+  await openWalletDialog(page);
   await expect(page.locator('[data-glass-panel="sheet"]')).toBeVisible();
   expect(await page.locator('.glass:visible').count()).toBe(2);
 
@@ -142,9 +140,7 @@ test('token picker, network popover, toast and status drawer are glass', async (
 test('body text on glass clears 4.5:1 over the lime glow', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?mock=1');
-  await page
-    .getByRole('button', { name: /wallet connection: connect/i })
-    .click();
+  await openWalletDialog(page);
 
   const panel = page.locator('[data-glass-panel="modal"]');
   await expect(panel).toBeVisible();

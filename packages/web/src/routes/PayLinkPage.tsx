@@ -56,7 +56,8 @@ import {
   USDC_DECIMALS,
 } from '../lib/config';
 import { useToast } from '../lib/toast';
-import { CheckIcon, ShieldIcon, WalletIcon } from '../components/icons';
+import { LinkVerificationBadge } from '../components/LinkVerificationBadge';
+import { ShieldIcon, WalletIcon } from '../components/icons';
 
 export function PayLinkPage() {
   const { linkId } = useParams<{ linkId: string }>();
@@ -348,12 +349,7 @@ export function PayLinkPage() {
         <p className="text-[10px] font-semibold tracking-[0.2em] text-lime uppercase">
           Pay link
         </p>
-        {link.verified ? (
-          <span className="inline-flex items-center gap-1 rounded-pill bg-ok/15 px-2 py-0.5 text-[9px] font-semibold tracking-[0.12em] text-ok uppercase">
-            <CheckIcon className="size-3" />
-            Verified
-          </span>
-        ) : null}
+        <LinkVerificationBadge verified={link.verified} />
       </div>
       <h1 className="mt-3 text-3xl font-medium tracking-[-0.04em] text-text sm:text-4xl">
         {link.kind === 'invoice'

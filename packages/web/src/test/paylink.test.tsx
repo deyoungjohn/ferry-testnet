@@ -161,7 +161,9 @@ describe('pay link pages', () => {
     );
 
     expect(await screen.findByText(/10 tPUSD invoice/i)).toBeInTheDocument();
-    expect((await screen.findAllByText('Verified')).length).toBeGreaterThan(0);
+    expect(
+      (await screen.findAllByText('Test-mode signature')).length,
+    ).toBeGreaterThan(0);
 
     const url = await screen.findByText(
       (content) => content.startsWith('http') && content.includes('/p/'),
@@ -170,7 +172,7 @@ describe('pay link pages', () => {
     expect(url.textContent).not.toContain('10.00');
   });
 
-  it('shows an invoice with its exact amount and verified badge', async () => {
+  it('shows an invoice with its exact amount and test-mode signature label', async () => {
     renderAt(`/p/${MOCK_RESERVED_LINK_ID}`);
 
     expect(
@@ -183,7 +185,9 @@ describe('pay link pages', () => {
         ROUTE_WAIT,
       ),
     ).toBeInTheDocument();
-    expect(screen.getAllByText('Verified').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Test-mode signature').length).toBeGreaterThan(
+      0,
+    );
   });
 
   it('blocks a reserved invoice before a second payer can quote', async () => {

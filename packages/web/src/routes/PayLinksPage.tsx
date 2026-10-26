@@ -8,6 +8,7 @@ import {
   type FormEvent,
 } from 'react';
 import { Link } from 'react-router';
+import { LinkVerificationBadge } from '../components/LinkVerificationBadge';
 import { parseBchAddress, type BchAddressInfo } from '../lib/bch/address';
 import {
   chunkCashaddr,
@@ -367,8 +368,8 @@ export function PayLinksPage() {
               ) : null}
               <p className="mt-3 text-[11px] text-text-muted">
                 {canSign
-                  ? 'This wallet can sign a challenge, so the link can carry a Verified badge.'
-                  : 'Verified badge is off: this address was pasted or the wallet cannot sign messages.'}
+                  ? 'This wallet can attach a test-mode signature. It is not a real ownership check yet.'
+                  : 'Unverified: this address was pasted or the wallet cannot sign a challenge.'}
               </p>
             </div>
 
@@ -395,11 +396,7 @@ export function PayLinksPage() {
                 <span className="rounded-pill bg-olive-soft px-2 py-0.5 text-[9px] font-semibold tracking-[0.12em] text-lime uppercase">
                   Ready
                 </span>
-                {created.verified ? (
-                  <span className="rounded-pill bg-ok/15 px-2 py-0.5 text-[9px] font-semibold tracking-[0.12em] text-ok uppercase">
-                    Verified
-                  </span>
-                ) : null}
+                <LinkVerificationBadge verified={created.verified} />
               </div>
               <h2 className="mt-3 text-lg font-medium">
                 {created.kind === 'invoice'

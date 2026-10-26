@@ -13,7 +13,7 @@ test('PL happy path: create an invoice, open it, quote and lock', async ({
   await expect(page.getByText(/10 tPUSD invoice/i)).toBeVisible({
     timeout: 15_000,
   });
-  await expect(page.getByText('Verified').first()).toBeVisible();
+  await expect(page.getByText('Test-mode signature').first()).toBeVisible();
 
   const preview = page.getByRole('link', { name: 'Preview' });
   const href = await preview.getAttribute('href');
