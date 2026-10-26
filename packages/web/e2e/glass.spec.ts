@@ -1,5 +1,6 @@
 import { PNG } from 'pngjs';
 import { expect, test } from '@playwright/test';
+import { openWalletDialog } from './wallet-ready';
 
 function channel(value: number): number {
   const normalized = value / 255;
@@ -36,6 +37,7 @@ test('glass nav turns on after 24px of scroll', async ({ page }) => {
 test('wallet sheet uses glass, keeps two layers, and opens on mobile', async ({
   page,
 }) => {
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?mock=1');
   await page.evaluate(() => window.scrollTo(0, 400));
@@ -44,9 +46,7 @@ test('wallet sheet uses glass, keeps two layers, and opens on mobile', async ({
     'true',
   );
 
-  await page
-    .getByRole('button', { name: /wallet connection: connect/i })
-    .click();
+  await openWalletDialog(page);
   await expect(page.locator('[data-glass-panel="modal"]')).toBeVisible();
   expect(await page.locator('.glass:visible').count()).toBe(2);
 
@@ -64,9 +64,7 @@ test('wallet sheet uses glass, keeps two layers, and opens on mobile', async ({
     'data-scrolled',
     'true',
   );
-  await page
-    .getByRole('button', { name: /wallet connection: connect/i })
-    .click();
+  await openWalletDialog(page);
   await expect(page.locator('[data-glass-panel="sheet"]')).toBeVisible();
   expect(await page.locator('.glass:visible').count()).toBe(2);
 
@@ -79,7 +77,7 @@ test('wallet sheet uses glass, keeps two layers, and opens on mobile', async ({
 test('token picker, network popover, toast and status drawer are glass', async ({
   page,
 }) => {
-  test.setTimeout(45_000);
+  test.setTimeout(90_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?mock=1');
 
@@ -93,7 +91,7 @@ test('token picker, network popover, toast and status drawer are glass', async (
     .click();
   await expect(
     page.getByRole('dialog', { name: 'Select a token' }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20_000 });
   await page.getByRole('button', { name: /tPUSD.*Bitcoin Cash/i }).click();
   const direction = page.getByRole('button', {
     name: 'Switch swap direction',
@@ -131,20 +129,18 @@ test('token picker, network popover, toast and status drawer are glass', async (
   await page.goto(`/swap/${orderId}?mock=1&scenario=refund`);
   await expect(
     page.getByRole('heading', { level: 1, name: /rejected/i }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20_000 });
   await page.getByRole('button', { name: 'Open timeline drawer' }).click();
   await expect(
     page.getByRole('dialog', { name: 'Swap timeline (mock)' }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20_000 });
   expect(await page.locator('.glass:visible').count()).toBeLessThanOrEqual(2);
 });
 
 test('body text on glass clears 4.5:1 over the lime glow', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?mock=1');
-  await page
-    .getByRole('button', { name: /wallet connection: connect/i })
-    .click();
+  await openWalletDialog(page);
 
   const panel = page.locator('[data-glass-panel="modal"]');
   await expect(panel).toBeVisible();

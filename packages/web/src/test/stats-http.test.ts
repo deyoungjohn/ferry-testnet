@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { StatsSummarySchema } from '@ferry/core';
 import { HttpStatsClient } from '../lib/stats/http';
+import { StatsSummarySchema as WebStatsSummarySchema } from '../lib/stats/types';
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe('HttpStatsClient', () => {
+  it('uses the shared core stats schemas', () => {
+    expect(WebStatsSummarySchema).toBe(StatsSummarySchema);
+  });
   it('validates all three local endpoint shapes and restores bigint fields', async () => {
     vi.stubGlobal(
       'fetch',

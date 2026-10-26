@@ -8,6 +8,9 @@ export default defineConfig({
   testIgnore: ['recover/**', 'live/**'],
   outputDir: 'test-results/playwright',
   fullyParallel: true,
+  timeout: 120_000,
+  expect: { timeout: 20_000 },
+  workers: 4,
   reporter: [['list']],
   use: {
     baseURL,

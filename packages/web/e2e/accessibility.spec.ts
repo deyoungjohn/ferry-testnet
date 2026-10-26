@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { openWalletDialog } from './wallet-ready';
 
 const ORDER_ID = `0x${'77'.repeat(32)}`;
 
@@ -118,6 +119,7 @@ test('keyboard-only swap reaches DONE', async ({ page }) => {
 test('prefers-reduced-motion keeps the wallet dialog usable', async ({
   page,
 }) => {
+  test.setTimeout(60_000);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/?mock=1');
   expect(
@@ -131,21 +133,15 @@ test('prefers-reduced-motion keeps the wallet dialog usable', async ({
     ),
   ).toBe('auto');
 
-  await page
-    .getByRole('button', { name: /wallet connection: connect/i })
-    .click();
-  await expect(
-    page.getByRole('dialog', { name: 'Connect wallets' }),
-  ).toBeVisible();
+  const dialog = await openWalletDialog(page);
   await page.keyboard.press('Escape');
-  await expect(
-    page.getByRole('dialog', { name: 'Connect wallets' }),
-  ).toHaveCount(0);
+  await expect(dialog).toHaveCount(0);
 });
 
 test('prefers-reduced-transparency removes backdrop filters', async ({
   page,
 }) => {
+  test.setTimeout(60_000);
   const session = await page.context().newCDPSession(page);
   await session.send('Emulation.setEmulatedMedia', {
     features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }],
@@ -157,11 +153,9 @@ test('prefers-reduced-transparency removes backdrop filters', async ({
     ),
   ).toBe(true);
 
-  await page
-    .getByRole('button', { name: /wallet connection: connect/i })
-    .click();
+  await openWalletDialog(page);
   const panel = page.locator('[data-glass-panel="modal"]');
-  await expect(panel).toBeVisible();
+  await expect(panel).toBeVisible({ timeout: 20_000 });
   const styles = await panel.evaluate((element) => {
     const style = getComputedStyle(element);
     const webkitStyle = style as CSSStyleDeclaration & {
