@@ -71,11 +71,20 @@ Configured through environment variables (defaults match `.env.example` exactly)
 
 ## Running Locally
 
-Run the daemon:
+Run the daemon with environment configuration:
 
 ```bash
-pnpm --filter @ferry/solver start
+# Recommended from workspace root (loads keys and endpoints from .env.local):
+pnpm --filter @ferry/solver exec tsx --env-file=.env.local src/main.ts
+
+# Or from inside packages/solver:
+tsx --env-file=../../.env.local src/main.ts
 ```
+
+> **Security & Fail-Closed Guards:**
+>
+> 1. **Fail-Closed EVM Keys:** `SOLVER_EVM_PRIVATE_KEY` is required. If missing or left as the default dev key, the solver refuses startup unless running on `NETWORK=testnet` with an explicit `ALLOW_DEV_KEYS=1` flag. On `mainnet`, dev keys are strictly rejected.
+> 2. **Fulcrum Genesis Verification:** At startup, `BchQuorumClient` verifies `server.features.genesis_hash` across every configured Fulcrum endpoint. If any server returns a mismatched genesis (e.g. mainnet tip `974561` on `wss://blackie.c3-soft.com:50004` instead of chipnet `wss://blackie.c3-soft.com:64004`), the solver refuses to connect and halts startup immediately.
 
 Run test suite:
 

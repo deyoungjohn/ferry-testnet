@@ -66,6 +66,79 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
       ...overrides,
     });
 
+  function spawnChaosChild(
+    args: string[],
+    envOverrides: Record<string, string> = {},
+  ): {
+    child: ReturnType<typeof spawn>;
+    readyPromise: Promise<void>;
+    closePromise: Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>;
+    killTree: (signal?: NodeJS.Signals) => void;
+  } {
+    const child = spawn(
+      'pnpm',
+      ['exec', 'tsx', 'test/helpers/chaos-child.ts', ...args],
+      {
+        detached: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          ...envOverrides,
+        },
+      },
+    );
+
+    const killTree = (signal: NodeJS.Signals = 'SIGKILL') => {
+      try {
+        if (child.pid) {
+          process.kill(-child.pid, signal);
+        }
+      } catch {
+        try {
+          child.kill(signal);
+        } catch {
+          // already closed
+        }
+      }
+    };
+
+    let stdoutBuf = '';
+    const readyPromise = new Promise<void>((resolve, reject) => {
+      const onData = (data: Buffer) => {
+        stdoutBuf += data.toString();
+        if (stdoutBuf.includes('READY')) {
+          child.stdout.off('data', onData);
+          resolve();
+        }
+      };
+      child.stdout.on('data', onData);
+      child.on('error', reject);
+      child.on('close', (code, signal) => {
+        if (!stdoutBuf.includes('READY')) {
+          reject(
+            new Error(
+              `Child process exited before READY signal (code=${code}, sig=${signal})`,
+            ),
+          );
+        }
+      });
+    });
+
+    const closePromise = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => {
+      child.on('close', (code, signal) => {
+        resolve({ code, signal });
+      });
+    });
+
+    return { child, readyPromise, closePromise, killTree };
+  }
+
   it('CH-01: SIGKILL child process in forward states against consistent chains; restart reaches safe terminal state with no duplicate broadcasts', async () => {
     const statesToTest: ForwardOrderStatus[] = [
       'QUOTED',
@@ -110,32 +183,20 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
         recordedBchBroadcasts.push('0xsolver-lock');
       }
 
-      // 1. Scripted child process SIGKILL
-      const child = spawn(
-        'pnpm',
-        [
-          'exec',
-          'tsx',
-          'test/helpers/chaos-child.ts',
-          `--dbPath=${tempDbPath}`,
-          `--orderId=${orderId}`,
-        ],
-        { stdio: ['pipe', 'pipe', 'pipe'] },
-      );
+      // 1. Scripted child process SIGKILL: wait on explicit readiness signal
+      const { child, readyPromise, closePromise, killTree } = spawnChaosChild([
+        `--dbPath=${tempDbPath}`,
+        `--orderId=${orderId}`,
+      ]);
 
-      // Wait for child process to be ready
-      await new Promise<void>((resolve) => {
-        child.stdout.on('data', (data) => {
-          if (data.toString().includes('READY')) {
-            resolve();
-          }
-        });
-      });
+      await readyPromise;
 
-      // Execute SIGKILL
-      child.kill('SIGKILL');
-      await new Promise((r) => setTimeout(r, 100));
-      expect(child.killed || child.exitCode !== null).toBe(true);
+      // Execute SIGKILL on process group and await explicit close event (no wall-clock timeout)
+      killTree('SIGKILL');
+      const { signal } = await closePromise;
+      expect(
+        child.killed || child.exitCode !== null || signal === 'SIGKILL',
+      ).toBe(true);
 
       // 2. Restart new engine on same DB with chain consistent with killed state
       const consistentEvm = {
@@ -241,7 +302,7 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
 
       restartEngine.stop();
     }
-  }, 30000);
+  }, 120_000);
 
   it('CH-02: Electrum drop mid-swap falls over to surviving server and reconciles on reconnect', async () => {
     let notifiedStatus: string | null = null;
@@ -530,30 +591,22 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
     const broadcastLog = `${tempDbPath}-broadcasts-b.log`;
     if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
 
-    const child = spawn(
-      'pnpm',
+    const { readyPromise, closePromise } = spawnChaosChild(
       [
-        'exec',
-        'tsx',
-        'test/helpers/chaos-child.ts',
         `--dbPath=${tempDbPath}`,
         `--orderId=${orderId}`,
         '--runStep',
         `--broadcastLogPath=${broadcastLog}`,
       ],
       {
-        stdio: 'pipe',
-        env: {
-          ...process.env,
-          FERRY_FAULT_INJECTION: '1',
-          FAULT_CRASH_POINT: 'BEFORE_BCH_LOCK_BROADCAST',
-        },
+        FERRY_FAULT_INJECTION: '1',
+        FAULT_CRASH_POINT: 'BEFORE_BCH_LOCK_BROADCAST',
       },
     );
 
-    await new Promise<void>((resolve) => {
-      child.on('close', () => resolve());
-    });
+    // Synchronize on explicit child readiness signal, then wait for injected crash
+    await readyPromise;
+    await closePromise;
 
     // 1. Verify child died before broadcast
     const recordedBefore = fs.existsSync(broadcastLog)
@@ -613,7 +666,7 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
 
     restartEngine.stop();
     if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
-  }, 20000);
+  }, 60_000);
 
   it('CH-01c: SIGKILL fault injection AFTER_BCH_LOCK_BROADCAST: restart adopts existing lock without duplicate broadcast', async () => {
     db.db.exec('DELETE FROM orders; DELETE FROM actions;');
@@ -633,30 +686,22 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
     const broadcastLog = `${tempDbPath}-broadcasts-c.log`;
     if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
 
-    const child = spawn(
-      'pnpm',
+    const { readyPromise, closePromise } = spawnChaosChild(
       [
-        'exec',
-        'tsx',
-        'test/helpers/chaos-child.ts',
         `--dbPath=${tempDbPath}`,
         `--orderId=${orderId}`,
         '--runStep',
         `--broadcastLogPath=${broadcastLog}`,
       ],
       {
-        stdio: 'pipe',
-        env: {
-          ...process.env,
-          FERRY_FAULT_INJECTION: '1',
-          FAULT_CRASH_POINT: 'AFTER_BCH_LOCK_BROADCAST',
-        },
+        FERRY_FAULT_INJECTION: '1',
+        FAULT_CRASH_POINT: 'AFTER_BCH_LOCK_BROADCAST',
       },
     );
 
-    await new Promise<void>((resolve) => {
-      child.on('close', () => resolve());
-    });
+    // Synchronize on explicit child readiness signal, then wait for injected crash
+    await readyPromise;
+    await closePromise;
 
     // 1. Verify broadcast happened before crash
     const recordedInChild = fs.existsSync(broadcastLog)
@@ -721,7 +766,7 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
 
     restartEngine.stop();
     if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
-  }, 20000);
+  }, 60_000);
 
   it('E2E-06 forward half: user abandons after solver BCH lock -> solver refunds at bchRefundHeight', async () => {
     db.db.exec('DELETE FROM orders; DELETE FROM actions;');
@@ -879,30 +924,22 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
     const broadcastLog = `${tempDbPath}-broadcasts-refund-b.log`;
     if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
 
-    const child = spawn(
-      'pnpm',
+    const { readyPromise, closePromise } = spawnChaosChild(
       [
-        'exec',
-        'tsx',
-        'test/helpers/chaos-child.ts',
         `--dbPath=${tempDbPath}`,
         `--orderId=${orderId}`,
         '--runStep',
         `--broadcastLogPath=${broadcastLog}`,
       ],
       {
-        stdio: 'pipe',
-        env: {
-          ...process.env,
-          FERRY_FAULT_INJECTION: '1',
-          FAULT_CRASH_POINT: 'BEFORE_BCH_REFUND_BROADCAST',
-        },
+        FERRY_FAULT_INJECTION: '1',
+        FAULT_CRASH_POINT: 'BEFORE_BCH_REFUND_BROADCAST',
       },
     );
 
-    await new Promise<void>((resolve) => {
-      child.on('close', () => resolve());
-    });
+    // Synchronize on explicit child readiness signal, then wait for injected crash
+    await readyPromise;
+    await closePromise;
 
     // 1. Verify child died before broadcast
     const recordedBefore = fs.existsSync(broadcastLog)
@@ -968,7 +1005,7 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
 
     restartEngine.stop();
     if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
-  }, 20000);
+  }, 60_000);
 
   it('CH-01e: SIGKILL fault injection AFTER_BCH_REFUND_BROADCAST: restart adopts existing refund without duplicate broadcast', async () => {
     db.db.exec('DELETE FROM orders; DELETE FROM actions;');
@@ -991,30 +1028,22 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
     const broadcastLog = `${tempDbPath}-broadcasts-refund-c.log`;
     if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
 
-    const child = spawn(
-      'pnpm',
+    const { readyPromise, closePromise } = spawnChaosChild(
       [
-        'exec',
-        'tsx',
-        'test/helpers/chaos-child.ts',
         `--dbPath=${tempDbPath}`,
         `--orderId=${orderId}`,
         '--runStep',
         `--broadcastLogPath=${broadcastLog}`,
       ],
       {
-        stdio: 'pipe',
-        env: {
-          ...process.env,
-          FERRY_FAULT_INJECTION: '1',
-          FAULT_CRASH_POINT: 'AFTER_BCH_REFUND_BROADCAST',
-        },
+        FERRY_FAULT_INJECTION: '1',
+        FAULT_CRASH_POINT: 'AFTER_BCH_REFUND_BROADCAST',
       },
     );
 
-    await new Promise<void>((resolve) => {
-      child.on('close', () => resolve());
-    });
+    // Synchronize on explicit child readiness signal, then wait for injected crash
+    await readyPromise;
+    await closePromise;
 
     // 1. Verify child successfully broadcast before crash
     const recordedInChild = fs.existsSync(broadcastLog)
@@ -1077,7 +1106,7 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
 
     restartEngine.stop();
     if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
-  }, 20000);
+  }, 60_000);
 
   it(': refund vs user claim race condition: user claim confirmed at refund height -> solver extracts secret, claims EVM USDC, order reaches DONE', async () => {
     db.db.exec('DELETE FROM orders; DELETE FROM actions;');

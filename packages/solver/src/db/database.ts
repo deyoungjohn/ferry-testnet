@@ -18,6 +18,24 @@ export interface ActionRecord {
   updatedAt: number;
 }
 
+export interface PayLinkRecord {
+  id: string;
+  kind: 'invoice' | 'open';
+  recipientCashaddr: string;
+  recipientLockingBytecode: string;
+  token: 'PUSD' | 'MUSD';
+  amountOut?: bigint | undefined;
+  minAmountOut?: bigint | undefined;
+  memo?: string | undefined;
+  reference?: string | undefined;
+  expiresAt?: number | undefined;
+  verified: boolean;
+  status: 'open' | 'reserved' | 'paid' | 'expired' | 'cancelled';
+  orderId?: string | undefined;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export class SolverDatabase {
   public readonly db: DatabaseType;
 
@@ -51,9 +69,28 @@ export class SolverDatabase {
         first_seen_at INTEGER,
         needs_attention INTEGER NOT NULL DEFAULT 0,
         rejection_reason TEXT,
+        pay_link_id TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         UNIQUE (user_counter_address, hash_lock)
+      );
+
+      CREATE TABLE IF NOT EXISTS pay_links (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        recipient_cashaddr TEXT NOT NULL,
+        recipient_locking_bytecode TEXT NOT NULL,
+        token TEXT NOT NULL,
+        amount_out TEXT,
+        min_amount_out TEXT,
+        memo TEXT,
+        reference TEXT,
+        expires_at INTEGER,
+        verified INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        order_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS actions (
@@ -69,9 +106,20 @@ export class SolverDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
       CREATE INDEX IF NOT EXISTS idx_orders_lock_id ON orders(lock_id);
+      CREATE INDEX IF NOT EXISTS idx_orders_pay_link_id ON orders(pay_link_id);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_user_hashlock ON orders(user_counter_address, hash_lock);
       CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status);
+      CREATE INDEX IF NOT EXISTS idx_pay_links_recipient ON pay_links(recipient_cashaddr);
+      CREATE INDEX IF NOT EXISTS idx_pay_links_status ON pay_links(status);
+      CREATE INDEX IF NOT EXISTS idx_pay_links_order_id ON pay_links(order_id);
     `);
+
+    // Migration guard for existing tables without pay_link_id
+    try {
+      this.db.exec('ALTER TABLE orders ADD COLUMN pay_link_id TEXT;');
+    } catch {
+      // Column already exists
+    }
   }
 
   saveOrder(order: SolverOrderRecord): void {
@@ -85,11 +133,11 @@ export class SolverDatabase {
       INSERT INTO orders (
         id, direction, status, user_counter_address, lock_id, terms_json, hash_lock, secret, secret_source,
         user_lock_txid, solver_lock_txid, user_claim_txid, solver_claim_txid,
-        solver_refund_txid, lane, fast_opt_in, first_seen_at, needs_attention, rejection_reason, created_at, updated_at
+        solver_refund_txid, lane, fast_opt_in, first_seen_at, needs_attention, rejection_reason, pay_link_id, created_at, updated_at
       ) VALUES (
         @id, @direction, @status, @user_counter_address, @lock_id, @terms_json, @hash_lock, @secret, @secret_source,
         @user_lock_txid, @solver_lock_txid, @user_claim_txid, @solver_claim_txid,
-        @solver_refund_txid, @lane, @fast_opt_in, @first_seen_at, @needs_attention, @rejection_reason, @created_at, @updated_at
+        @solver_refund_txid, @lane, @fast_opt_in, @first_seen_at, @needs_attention, @rejection_reason, @pay_link_id, @created_at, @updated_at
       )
       ON CONFLICT(id) DO UPDATE SET
         status = excluded.status,
@@ -105,6 +153,7 @@ export class SolverDatabase {
         first_seen_at = COALESCE(excluded.first_seen_at, orders.first_seen_at),
         needs_attention = excluded.needs_attention,
         rejection_reason = excluded.rejection_reason,
+        pay_link_id = COALESCE(excluded.pay_link_id, orders.pay_link_id),
         updated_at = excluded.updated_at
     `);
 
@@ -130,6 +179,7 @@ export class SolverDatabase {
       first_seen_at: order.firstSeenAt ?? null,
       needs_attention: order.needsAttention ? 1 : 0,
       rejection_reason: order.rejectionReason ?? null,
+      pay_link_id: order.payLinkId ?? null,
       created_at: order.createdAt,
       updated_at: order.updatedAt,
     });
@@ -299,9 +349,333 @@ export class SolverDatabase {
       solverRefundTxId: (row.solver_refund_txid as string) || undefined,
       needsAttention: row.needs_attention === 1,
       rejectionReason: (row.rejection_reason as string) || undefined,
+      payLinkId: (row.pay_link_id as string) || undefined,
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
     };
+  }
+
+  savePayLink(link: PayLinkRecord): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO pay_links (
+        id, kind, recipient_cashaddr, recipient_locking_bytecode, token,
+        amount_out, min_amount_out, memo, reference, expires_at,
+        verified, status, order_id, created_at, updated_at
+      ) VALUES (
+        @id, @kind, @recipient_cashaddr, @recipient_locking_bytecode, @token,
+        @amount_out, @min_amount_out, @memo, @reference, @expires_at,
+        @verified, @status, @order_id, @created_at, @updated_at
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        kind = excluded.kind,
+        recipient_cashaddr = excluded.recipient_cashaddr,
+        recipient_locking_bytecode = excluded.recipient_locking_bytecode,
+        token = excluded.token,
+        amount_out = excluded.amount_out,
+        min_amount_out = excluded.min_amount_out,
+        memo = excluded.memo,
+        reference = excluded.reference,
+        expires_at = excluded.expires_at,
+        verified = excluded.verified,
+        status = excluded.status,
+        order_id = excluded.order_id,
+        updated_at = excluded.updated_at
+    `);
+
+    stmt.run({
+      id: link.id,
+      kind: link.kind,
+      recipient_cashaddr: link.recipientCashaddr,
+      recipient_locking_bytecode: link.recipientLockingBytecode.toLowerCase(),
+      token: link.token,
+      amount_out:
+        link.amountOut !== undefined ? link.amountOut.toString(10) : null,
+      min_amount_out:
+        link.minAmountOut !== undefined ? link.minAmountOut.toString(10) : null,
+      memo: link.memo ?? null,
+      reference: link.reference ?? null,
+      expires_at: link.expiresAt ?? null,
+      verified: link.verified ? 1 : 0,
+      status: link.status,
+      order_id: link.orderId ?? null,
+      created_at: link.createdAt,
+      updated_at: link.updatedAt,
+    });
+  }
+
+  getPayLink(id: string): PayLinkRecord | null {
+    const stmt = this.db.prepare('SELECT * FROM pay_links WHERE id = ?');
+    const row = stmt.get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const link = this.mapPayLinkRow(row);
+    const now = Math.floor(Date.now() / 1000);
+    if (
+      link.expiresAt !== undefined &&
+      link.expiresAt <= now &&
+      (link.status === 'open' || link.status === 'reserved')
+    ) {
+      this.updatePayLinkStatus(link.id, 'expired');
+      link.status = 'expired';
+    }
+    return link;
+  }
+
+  getPayLinkByOrderId(orderId: string): PayLinkRecord | null {
+    const stmt = this.db.prepare(
+      'SELECT * FROM pay_links WHERE order_id = ? LIMIT 1',
+    );
+    const row = stmt.get(orderId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return this.mapPayLinkRow(row);
+  }
+
+  listPayLinksByRecipient(recipientCashaddr: string): PayLinkRecord[] {
+    const stmt = this.db.prepare(
+      'SELECT * FROM pay_links WHERE recipient_cashaddr = ? ORDER BY created_at DESC',
+    );
+    const rows = stmt.all(recipientCashaddr) as Record<string, unknown>[];
+    const now = Math.floor(Date.now() / 1000);
+    return rows.map((row) => {
+      const link = this.mapPayLinkRow(row);
+      if (
+        link.expiresAt !== undefined &&
+        link.expiresAt <= now &&
+        (link.status === 'open' || link.status === 'reserved')
+      ) {
+        this.updatePayLinkStatus(link.id, 'expired');
+        link.status = 'expired';
+      }
+      return link;
+    });
+  }
+
+  updatePayLinkStatus(
+    id: string,
+    status: PayLinkRecord['status'],
+    orderId?: string | null,
+  ): void {
+    const now = Math.floor(Date.now() / 1000);
+    if (orderId !== undefined) {
+      const stmt = this.db.prepare(`
+        UPDATE pay_links
+        SET status = ?, order_id = ?, updated_at = ?
+        WHERE id = ?
+      `);
+      stmt.run(status, orderId, now, id);
+    } else {
+      const stmt = this.db.prepare(`
+        UPDATE pay_links
+        SET status = ?, updated_at = ?
+        WHERE id = ?
+      `);
+      stmt.run(status, now, id);
+    }
+  }
+
+  private mapPayLinkRow(row: Record<string, unknown>): PayLinkRecord {
+    return {
+      id: row.id as string,
+      kind: row.kind as 'invoice' | 'open',
+      recipientCashaddr: row.recipient_cashaddr as string,
+      recipientLockingBytecode: row.recipient_locking_bytecode as string,
+      token: row.token as 'PUSD' | 'MUSD',
+      amountOut:
+        row.amount_out !== null && row.amount_out !== undefined
+          ? BigInt(row.amount_out as string)
+          : undefined,
+      minAmountOut:
+        row.min_amount_out !== null && row.min_amount_out !== undefined
+          ? BigInt(row.min_amount_out as string)
+          : undefined,
+      memo: (row.memo as string) || undefined,
+      reference: (row.reference as string) || undefined,
+      expiresAt: (row.expires_at as number) || undefined,
+      verified: row.verified === 1,
+      status: row.status as PayLinkRecord['status'],
+      orderId: (row.order_id as string) || undefined,
+      createdAt: row.created_at as number,
+      updatedAt: row.updated_at as number,
+    };
+  }
+
+  getStatsSummary(
+    spreadBps: number,
+    fixedFeeUsdMicros: bigint,
+  ): {
+    completedSwaps: number | null;
+    volumeUsdMicros: bigint | null;
+    medianFastSeconds: number | null;
+    quotePolicy: { spreadBps: number; fixedFeeUsdMicros: bigint } | null;
+    asOf: number | null;
+  } {
+    const stmt = this.db.prepare(`
+      SELECT terms_json, lane, created_at, updated_at
+      FROM orders
+      WHERE status = 'DONE'
+    `);
+    const rows = stmt.all() as {
+      terms_json: string;
+      lane: string;
+      created_at: number;
+      updated_at: number;
+    }[];
+
+    if (rows.length === 0) {
+      return {
+        completedSwaps: null,
+        volumeUsdMicros: null,
+        medianFastSeconds: null,
+        quotePolicy: {
+          spreadBps,
+          fixedFeeUsdMicros,
+        },
+        asOf: null,
+      };
+    }
+
+    let volumeUsdMicros = 0n;
+    const fastDurations: number[] = [];
+
+    for (const row of rows) {
+      try {
+        const terms = JSON.parse(row.terms_json);
+        if (terms && terms.counterAmount) {
+          volumeUsdMicros += BigInt(terms.counterAmount);
+        }
+      } catch {
+        // Skip malformed row
+      }
+
+      if (row.lane === 'fast') {
+        const duration = Math.max(
+          0,
+          Math.floor((row.updated_at - row.created_at) / 1000),
+        );
+        fastDurations.push(duration);
+      }
+    }
+
+    let medianFastSeconds: number | null = null;
+    if (fastDurations.length > 0) {
+      fastDurations.sort((a, b) => a - b);
+      const mid = Math.floor(fastDurations.length / 2);
+      const midVal = fastDurations[mid];
+      if (midVal !== undefined) {
+        if (fastDurations.length % 2 !== 0) {
+          medianFastSeconds = midVal;
+        } else {
+          const prevVal = fastDurations[mid - 1];
+          medianFastSeconds =
+            prevVal !== undefined ? Math.floor((prevVal + midVal) / 2) : midVal;
+        }
+      }
+    }
+
+    return {
+      completedSwaps: rows.length,
+      volumeUsdMicros,
+      medianFastSeconds,
+      quotePolicy: {
+        spreadBps,
+        fixedFeeUsdMicros,
+      },
+      asOf: Math.floor(Date.now() / 1000),
+    };
+  }
+
+  getRecentSwaps(limit: number = 50): Array<{
+    orderId: `0x${string}`;
+    settledAt: number;
+    direction: 'COUNTER_TO_BCH' | 'BCH_TO_COUNTER';
+    counterSymbol: string;
+    counterDecimals: number;
+    counterAmount: bigint;
+    bchSymbol: string;
+    bchDecimals: number;
+    bchTokenAmount: bigint;
+    durationSeconds: number;
+    baseTxId: `0x${string}`;
+    bchTxId: string;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT * FROM orders
+      WHERE status = 'DONE'
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `);
+    const rows = stmt.all(limit) as Record<string, unknown>[];
+    const result: Array<{
+      orderId: `0x${string}`;
+      settledAt: number;
+      direction: 'COUNTER_TO_BCH' | 'BCH_TO_COUNTER';
+      counterSymbol: string;
+      counterDecimals: number;
+      counterAmount: bigint;
+      bchSymbol: string;
+      bchDecimals: number;
+      bchTokenAmount: bigint;
+      durationSeconds: number;
+      baseTxId: `0x${string}`;
+      bchTxId: string;
+    }> = [];
+
+    for (const r of rows) {
+      const order = this.mapOrderRow(r);
+      const isReverse = order.direction === 'BCH_TO_COUNTER';
+
+      const rawBaseTxId = isReverse
+        ? order.solverLockTxId || order.userClaimTxId
+        : order.userLockTxId || order.solverClaimTxId;
+      const rawBchTxId = isReverse
+        ? order.userLockTxId || order.solverClaimTxId
+        : order.solverLockTxId || order.userClaimTxId;
+
+      if (!rawBaseTxId || !rawBchTxId) continue;
+
+      const baseTxId = this.formatHex32(rawBaseTxId);
+      const bchTxId = this.formatBchTxId(rawBchTxId);
+      if (!baseTxId || !bchTxId) continue;
+
+      const durationSeconds = Math.max(
+        0,
+        Math.floor((order.updatedAt - order.createdAt) / 1000),
+      );
+
+      result.push({
+        orderId: order.id as `0x${string}`,
+        settledAt: Math.floor(order.updatedAt / 1000),
+        direction: order.direction,
+        counterSymbol: order.terms.counterAsset.symbol,
+        counterDecimals: order.terms.counterAsset.decimals,
+        counterAmount: order.terms.counterAmount,
+        bchSymbol: order.terms.bchToken,
+        bchDecimals: 2,
+        bchTokenAmount: order.terms.bchTokenAmount,
+        durationSeconds,
+        baseTxId,
+        bchTxId,
+      });
+    }
+
+    return result;
+  }
+
+  private formatHex32(txId: string): `0x${string}` | null {
+    const clean = txId.trim();
+    const hex = clean.startsWith('0x') ? clean.slice(2) : clean;
+    if (/^[0-9a-fA-F]{64}$/.test(hex)) {
+      return `0x${hex.toLowerCase()}` as `0x${string}`;
+    }
+    return null;
+  }
+
+  private formatBchTxId(txId: string): string | null {
+    const clean = txId.trim();
+    const hex = clean.startsWith('0x') ? clean.slice(2) : clean;
+    if (/^[0-9a-fA-F]{64}$/.test(hex)) {
+      return hex.toLowerCase();
+    }
+    return null;
   }
 
   close(): void {

@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+export const DEFAULT_DEV_EVM_PRIVATE_KEY =
+  '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
+
 export const SolverConfigSchema = z.object({
   port: z.coerce.number().default(8787),
   host: z.string().default('127.0.0.1'),
@@ -23,9 +26,7 @@ export const SolverConfigSchema = z.object({
   solverEvmPrivateKey: z
     .string()
     .regex(/^0x[0-9a-fA-F]{64}$/)
-    .default(
-      '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
-    ),
+    .default(DEFAULT_DEV_EVM_PRIVATE_KEY),
   solverBchWif: z.string().optional(),
   userBchWif: z.string().optional(),
   userEvmPrivateKey: z.string().optional(),
@@ -62,6 +63,7 @@ export const SolverConfigSchema = z.object({
   skewMaxBps: z.coerce.number().default(50),
   tipMaxAgeBchSeconds: z.coerce.number().default(7200),
   tipMaxAgeBaseSeconds: z.coerce.number().default(60),
+  allowMockPaylinkSignatures: z.coerce.boolean().default(false),
 });
 
 export type SolverConfig = z.infer<typeof SolverConfigSchema>;
@@ -103,6 +105,47 @@ export function loadConfigFromEnv(
       env.USDC_ADDRESS ||
       env.BASE_USDC_ADDRESS;
 
+  const rawSolverKey = env.SOLVER_EVM_PRIVATE_KEY;
+  const allowDevKeys =
+    env.ALLOW_DEV_KEYS === '1' ||
+    env.ALLOW_DEV_KEYS === 'true' ||
+    env.FERRY_ALLOW_DEV_KEYS === '1';
+
+  const allowMockPaylinkSignatures =
+    env.ALLOW_MOCK_PAYLINK_SIGNATURES === '1' ||
+    env.ALLOW_MOCK_PAYLINK_SIGNATURES === 'true';
+
+  if (isMainnet && allowMockPaylinkSignatures) {
+    throw new Error(
+      'ALLOW_MOCK_PAYLINK_SIGNATURES is not permitted on mainnet; real BCH signed messages required',
+    );
+  }
+
+  let solverEvmPrivateKey: string;
+  if (!rawSolverKey) {
+    if (isMainnet) {
+      throw new Error(
+        'SOLVER_EVM_PRIVATE_KEY is required on mainnet. Refusing to start.',
+      );
+    }
+    if (!allowDevKeys) {
+      throw new Error(
+        'SOLVER_EVM_PRIVATE_KEY is not set. Refusing to fall back to default dev key on testnet without explicit ALLOW_DEV_KEYS=1 (specify keys via --env-file=.env.local).',
+      );
+    }
+    solverEvmPrivateKey = DEFAULT_DEV_EVM_PRIVATE_KEY;
+  } else {
+    if (
+      isMainnet &&
+      rawSolverKey.toLowerCase() === DEFAULT_DEV_EVM_PRIVATE_KEY.toLowerCase()
+    ) {
+      throw new Error(
+        'Default dev private key cannot be used on mainnet. Refusing to start.',
+      );
+    }
+    solverEvmPrivateKey = rawSolverKey;
+  }
+
   return SolverConfigSchema.parse({
     port: env.PORT,
     host: env.HOST,
@@ -113,7 +156,7 @@ export function loadConfigFromEnv(
     baseChainId: baseChainId || undefined,
     baseHtlcAddress: baseHtlcAddress || undefined,
     baseUsdcAddress: baseUsdcAddress || undefined,
-    solverEvmPrivateKey: env.SOLVER_EVM_PRIVATE_KEY || undefined,
+    solverEvmPrivateKey,
     solverBchWif: env.SOLVER_BCH_WIF || undefined,
     userBchWif: env.USER_BCH_WIF || undefined,
     userEvmPrivateKey: env.USER_EVM_PRIVATE_KEY || undefined,
@@ -157,5 +200,6 @@ export function loadConfigFromEnv(
     skewMaxBps: env.SKEW_MAX_BPS,
     tipMaxAgeBchSeconds: env.TIP_MAX_AGE_BCH_SECONDS,
     tipMaxAgeBaseSeconds: env.TIP_MAX_AGE_BASE_SECONDS,
+    allowMockPaylinkSignatures,
   });
 }

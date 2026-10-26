@@ -13,10 +13,22 @@ import {
   RelayClaimRequestSchema,
   RelayClaimResponseSchema,
   HealthResponseSchema,
+  StatsSummarySchema,
+  RecentSwapsResponseSchema,
+  PegsResponseSchema,
+  CreatePayLinkRequestSchema,
+  CreatePayLinkResponseSchema,
+  GetPayLinkResponseSchema,
+  PayLinkQuoteRequestSchema,
+  ListPayLinksQuerySchema,
+  ListPayLinksResponseSchema,
+  CancelPayLinkRequestSchema,
+  CancelPayLinkResponseSchema,
   parseOrderTerms,
   orderId as computeOrderId,
   signOrderId,
   quoteExactIn,
+  quoteExactOut,
   checkLimits,
   pegGuard,
   invariantF,
@@ -36,6 +48,33 @@ import {
   type PriceSource,
   TestnetStubPriceSource,
 } from '../pricing/price-source.js';
+import type { PayLinkRecord } from '../db/database.js';
+import {
+  createLinkId,
+  verifyPayLinkSignature,
+  verifyPayLinksSignature,
+} from '../paylink/link.js';
+
+function toPayLinkWire(link: PayLinkRecord) {
+  return {
+    id: link.id,
+    kind: link.kind,
+    recipientCashaddr: link.recipientCashaddr,
+    recipientLockingBytecode: link.recipientLockingBytecode,
+    token: link.token,
+    ...(link.amountOut !== undefined ? { amountOut: link.amountOut } : {}),
+    ...(link.minAmountOut !== undefined
+      ? { minAmountOut: link.minAmountOut }
+      : {}),
+    ...(link.memo !== undefined ? { memo: link.memo } : {}),
+    ...(link.reference !== undefined ? { reference: link.reference } : {}),
+    ...(link.expiresAt !== undefined ? { expiresAt: link.expiresAt } : {}),
+    verified: link.verified,
+    status: link.status,
+    createdAt: link.createdAt,
+    ...(link.orderId !== undefined ? { orderId: link.orderId } : {}),
+  };
+}
 
 export interface SolverServerOptions {
   config: SolverConfig;
@@ -664,6 +703,477 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     HealthResponseSchema.parse(response);
     return reply.status(200).send(response);
   });
+
+  // 7. GET /v1/stats
+  app.get('/v1/stats', async (_req, reply) => {
+    const stats = db.getStatsSummary(
+      config.spreadBps,
+      config.fixedFeeUsdMicros,
+    );
+    const validated = StatsSummarySchema.parse(stats);
+    return reply.status(200).send(validated);
+  });
+
+  // 8. GET /v1/orders/recent
+  app.get('/v1/orders/recent', async (_req, reply) => {
+    const swaps = db.getRecentSwaps(50);
+    const validated = RecentSwapsResponseSchema.parse({ swaps });
+    return reply.status(200).send(validated);
+  });
+
+  // 9. GET /v1/pegs
+  app.get('/v1/pegs', async (_req, reply) => {
+    const response = {
+      pegs: [
+        {
+          token: 'PUSD' as const,
+          priceUsdMicros: null,
+          points: [],
+          source: 'testnet-stub',
+          asOf: null,
+        },
+        {
+          token: 'MUSD' as const,
+          priceUsdMicros: null,
+          points: [],
+          source: 'testnet-stub',
+          asOf: null,
+        },
+      ],
+    };
+    const validated = PegsResponseSchema.parse(response);
+    return reply.status(200).send(validated);
+  });
+
+  // 10. POST /v1/links
+  app.post('/v1/links', async (req, reply) => {
+    const parseResult = CreatePayLinkRequestSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        code: 'VALIDATION_ERROR',
+        message: 'Invalid create pay link payload',
+        details: { issues: parseResult.error.issues },
+      });
+    }
+
+    const data = parseResult.data;
+    const now = Math.floor(Date.now() / 1000);
+
+    if (data.expiresAt !== undefined && data.expiresAt <= now) {
+      return reply.status(410).send({
+        code: 'LINK_EXPIRED',
+        message: 'Expiry must be in the future',
+      });
+    }
+
+    const verified = data.verification
+      ? verifyPayLinkSignature(
+          data.verification.challenge,
+          data.verification.signature,
+          data.recipientLockingBytecode,
+          config.allowMockPaylinkSignatures,
+        )
+      : false;
+
+    let id = createLinkId();
+    while (db.getPayLink(id)) {
+      id = createLinkId();
+    }
+
+    const link = {
+      id,
+      kind: data.kind,
+      recipientCashaddr: data.recipientCashaddr,
+      recipientLockingBytecode: data.recipientLockingBytecode,
+      token: data.token,
+      amountOut: data.amountOut,
+      minAmountOut: data.minAmountOut,
+      memo: data.memo,
+      reference: data.reference,
+      expiresAt: data.expiresAt,
+      verified,
+      status: 'open' as const,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    db.savePayLink(link);
+    const validated = CreatePayLinkResponseSchema.parse(toPayLinkWire(link));
+    return reply.status(200).send(validated);
+  });
+
+  // 11. GET /v1/links
+  app.get('/v1/links', async (req, reply) => {
+    const parseResult = ListPayLinksQuerySchema.safeParse(req.query);
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        code: 'VALIDATION_ERROR',
+        message: 'Invalid list pay links query parameters',
+        details: { issues: parseResult.error.issues },
+      });
+    }
+
+    const query = parseResult.data;
+    if (!config.allowMockPaylinkSignatures) {
+      return reply.status(403).send({
+        code: 'MOCK_SIGNATURES_DISABLED',
+        message:
+          'Owner pay-link listing requires real signatures; mock signatures are disabled without ALLOW_MOCK_PAYLINK_SIGNATURES=1',
+      });
+    }
+
+    if (
+      !verifyPayLinksSignature(
+        query.owner,
+        query.challenge,
+        query.sig,
+        config.allowMockPaylinkSignatures,
+      )
+    ) {
+      return reply.status(400).send({
+        code: 'INVALID_SIGNATURE',
+        message: 'Link list challenge is invalid',
+      });
+    }
+
+    const links = db.listPayLinksByRecipient(query.owner);
+    const validated = ListPayLinksResponseSchema.parse({
+      links: links.map(toPayLinkWire),
+    });
+    return reply.status(200).send(validated);
+  });
+
+  // 12. GET /v1/links/:id
+  app.get<{ Params: { id: string } }>('/v1/links/:id', async (req, reply) => {
+    const { id } = req.params;
+    const link = db.getPayLink(id);
+    if (!link) {
+      return reply.status(404).send({
+        code: 'LINK_NOT_FOUND',
+        message: 'Pay link not found',
+      });
+    }
+
+    const validated = GetPayLinkResponseSchema.parse(toPayLinkWire(link));
+    return reply.status(200).send(validated);
+  });
+
+  // 13. POST /v1/links/:id/quotes
+  app.post<{ Params: { id: string } }>(
+    '/v1/links/:id/quotes',
+    async (req, reply) => {
+      const { id } = req.params;
+      const link = db.getPayLink(id);
+      if (!link) {
+        return reply.status(404).send({
+          code: 'LINK_NOT_FOUND',
+          message: 'Pay link not found',
+        });
+      }
+
+      if (link.status === 'reserved') {
+        return reply.status(409).send({
+          code: 'LINK_RESERVED',
+          message: 'This invoice is being paid',
+        });
+      }
+      if (link.status === 'paid') {
+        return reply.status(409).send({
+          code: 'LINK_CLOSED',
+          message: 'This pay link is already paid',
+        });
+      }
+      if (link.status === 'expired') {
+        return reply.status(410).send({
+          code: 'LINK_EXPIRED',
+          message: 'This pay link has expired',
+        });
+      }
+      if (link.status === 'cancelled') {
+        return reply.status(409).send({
+          code: 'LINK_CLOSED',
+          message: 'This pay link was cancelled',
+        });
+      }
+
+      const parseResult = PayLinkQuoteRequestSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return reply.status(400).send({
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid pay link quote request payload',
+          details: { issues: parseResult.error.issues },
+        });
+      }
+
+      const request = parseResult.data;
+      if (link.token !== 'PUSD') {
+        return reply.status(400).send({
+          code: 'UNSUPPORTED_ROUTE',
+          message: 'Only tPUSD is enabled',
+        });
+      }
+      if (request.counterChain !== 'base' || request.counterSymbol !== 'USDC') {
+        return reply.status(400).send({
+          code: 'UNSUPPORTED_ROUTE',
+          message: 'Only Base USDC is enabled',
+        });
+      }
+      if (request.lane === 'fast' && request.fastOptIn !== true) {
+        return reply.status(400).send({
+          code: 'VALIDATION_ERROR',
+          message: 'Fast lane requires explicit opt-in',
+        });
+      }
+
+      const amountOut =
+        link.kind === 'invoice' ? link.amountOut : request.amountOut;
+      if (amountOut === undefined || amountOut <= 0n) {
+        return reply.status(400).send({
+          code: 'AMOUNT_OUT_OF_RANGE',
+          message: 'Enter an amount above zero',
+        });
+      }
+      if (link.minAmountOut !== undefined && amountOut < link.minAmountOut) {
+        return reply.status(400).send({
+          code: 'AMOUNT_OUT_OF_RANGE',
+          message: 'Amount is below this link minimum',
+        });
+      }
+
+      if (!config.quotingEnabled) {
+        return reply.status(503).send({
+          code: 'QUOTING_DISABLED',
+          message: 'Quoting is temporarily disabled',
+        });
+      }
+
+      // Check tip freshness and quorum health
+      const quorum = bchClient.getQuorumStatus();
+      if (
+        !quorum.isQuorumHealthy ||
+        !quorum.quorumTip ||
+        quorum.quorumTip <= 0 ||
+        quorum.ageSeconds > config.tipMaxAgeBchSeconds
+      ) {
+        return reply.status(503).send({
+          code: 'STALE_CHAIN_TIP',
+          message:
+            'BCH quorum is unhealthy or tip is unknown/stale; quoting paused',
+        });
+      }
+
+      // Check peg stability
+      const prices = await priceSource.getPrices(link.token);
+      const pegToleranceMicros = BigInt(Math.round(config.pegTolerance * 1e6));
+      const isPegSafe = pegGuard(prices, pegToleranceMicros);
+      if (!isPegSafe) {
+        return reply.status(503).send({
+          code: 'PEG_DEVIATION',
+          message: 'Underlying peg deviates beyond tolerance; quoting paused',
+        });
+      }
+
+      // Calculate amountIn via quoteExactOut
+      const amountIn = quoteExactOut(amountOut, 6, 2, {
+        spreadBps: config.spreadBps,
+        fixedFeeUsdMicros: config.fixedFeeUsdMicros,
+      });
+
+      const isWithinLimits = checkLimits(amountIn, 6, {
+        minUsdMicros: config.minSwapUsdMicros,
+        maxUsdMicros: config.maxSwapUsdMicros,
+      });
+      if (!isWithinLimits) {
+        return reply.status(400).send({
+          code: 'AMOUNT_OUT_OF_RANGE',
+          message: 'Amount is outside the swap limits',
+        });
+      }
+
+      if (request.lane === 'fast' && amountIn > config.zeroConfMaxUsdMicros) {
+        return reply.status(400).send({
+          code: 'AMOUNT_OUT_OF_RANGE',
+          message: 'Fast lane is limited to $25',
+        });
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      const quoteExpiry =
+        link.expiresAt === undefined
+          ? now + config.quoteTtlSeconds
+          : Math.min(now + config.quoteTtlSeconds, link.expiresAt);
+
+      if (quoteExpiry <= now) {
+        return reply.status(410).send({
+          code: 'LINK_EXPIRED',
+          message: 'This pay link has expired',
+        });
+      }
+
+      // Check Invariant F
+      const bchTipHeight = quorum.quorumTip;
+      const counterDeadline = now + config.fwdEvmDeadlineSeconds;
+      const bchRefundHeight = bchTipHeight + config.fwdBchRefundBlocks;
+
+      const timingDecision = invariantF(
+        { counterDeadline, bchRefundHeight },
+        { unixSeconds: now, bchTipHeight },
+      );
+      if (!timingDecision.allowed) {
+        return reply.status(422).send({
+          code: 'TIMING_INVARIANT_FAILED',
+          message: `Timing invariant F check failed: ${timingDecision.reason}`,
+        });
+      }
+
+      // Solver BCH address & locking bytecode
+      let solverBchLockingBytecode: `0x${string}` =
+        '0x76a914000000000000000000000000000000000000000088ac';
+      if (config.solverBchWif) {
+        const solverKeys = await deriveBchKeyDetails(
+          config.solverBchWif,
+          config.network === 'mainnet' ? 'bitcoincash' : 'bchtest',
+        );
+        solverBchLockingBytecode = (
+          solverKeys.lockingBytecodeHex.startsWith('0x')
+            ? solverKeys.lockingBytecodeHex
+            : `0x${solverKeys.lockingBytecodeHex}`
+        ) as `0x${string}`;
+      }
+
+      const terms: OrderTerms = parseOrderTerms({
+        version: 1,
+        direction: 'COUNTER_TO_BCH',
+        bchToken: link.token,
+        bchTokenCategory: config.tpusdCategory.startsWith('0x')
+          ? (config.tpusdCategory as `0x${string}`)
+          : (`0x${config.tpusdCategory}` as `0x${string}`),
+        bchTokenAmount: amountOut,
+        counterAmount: amountIn,
+        counterChain: 'base',
+        counterNetworkId: config.baseChainId,
+        counterAsset: {
+          symbol: 'USDC',
+          decimals: 6,
+          address: config.baseUsdcAddress,
+        },
+        counterHtlc: config.baseHtlcAddress,
+        userCounterAddress: request.userCounterAddress,
+        solverCounterAddress: solverAddress,
+        userBchLockingBytecode: link.recipientLockingBytecode,
+        solverBchLockingBytecode,
+        hashLock: request.hashLock,
+        counterDeadline,
+        bchRefundHeight,
+        bchCarrySats: config.bchCarrySats,
+        bchMaxFee: config.bchMaxFeeSats,
+        quoteId: `pl-quote-${now}-${Math.random().toString(36).slice(2, 8)}`,
+        quoteExpiry,
+      });
+
+      const orderId = computeOrderId(terms);
+      const signature = await signOrderId(orderId, solverAccount);
+
+      // Save order
+      db.saveOrder({
+        id: orderId,
+        direction: 'COUNTER_TO_BCH',
+        status: 'QUOTED',
+        lane: request.lane,
+        fastOptIn: request.fastOptIn ?? false,
+        terms,
+        hashLock: request.hashLock as `0x${string}`,
+        needsAttention: false,
+        payLinkId: link.id,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      if (link.kind === 'invoice') {
+        db.updatePayLinkStatus(link.id, 'reserved', orderId);
+      }
+
+      const response = {
+        orderId,
+        terms,
+        lane: request.lane,
+        signature,
+        signerAddress: solverAccount.address,
+      };
+
+      return reply.status(200).send(response);
+    },
+  );
+
+  // 14. POST /v1/links/:id/cancel
+  app.post<{ Params: { id: string } }>(
+    '/v1/links/:id/cancel',
+    async (req, reply) => {
+      const { id } = req.params;
+      const parseResult = CancelPayLinkRequestSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return reply.status(400).send({
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid cancel pay link payload',
+          details: { issues: parseResult.error.issues },
+        });
+      }
+
+      const request = parseResult.data;
+      if (!config.allowMockPaylinkSignatures) {
+        return reply.status(403).send({
+          code: 'MOCK_SIGNATURES_DISABLED',
+          message:
+            'Pay-link cancellation requires real signatures; mock signatures are disabled without ALLOW_MOCK_PAYLINK_SIGNATURES=1',
+        });
+      }
+
+      if (
+        !verifyPayLinksSignature(
+          request.owner,
+          request.challenge,
+          request.sig,
+          config.allowMockPaylinkSignatures,
+        )
+      ) {
+        return reply.status(400).send({
+          code: 'INVALID_SIGNATURE',
+          message: 'Cancel challenge is invalid',
+        });
+      }
+
+      const link = db.getPayLink(id);
+      if (!link) {
+        return reply.status(404).send({
+          code: 'LINK_NOT_FOUND',
+          message: 'Pay link not found',
+        });
+      }
+
+      if (
+        link.recipientCashaddr.toLowerCase() !== request.owner.toLowerCase()
+      ) {
+        return reply.status(401).send({
+          code: 'UNAUTHORIZED',
+          message: 'Only the recipient can cancel',
+        });
+      }
+
+      if (link.status !== 'open') {
+        return reply.status(409).send({
+          code: 'LINK_CLOSED',
+          message: 'Only open links can be cancelled',
+        });
+      }
+
+      db.updatePayLinkStatus(link.id, 'cancelled');
+      const updated = db.getPayLink(id)!;
+      const validated = CancelPayLinkResponseSchema.parse(
+        toPayLinkWire(updated),
+      );
+      return reply.status(200).send(validated);
+    },
+  );
 
   return app as unknown as FastifyInstance;
 }

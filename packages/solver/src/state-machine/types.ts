@@ -35,6 +35,7 @@ export interface SolverOrderRecord {
   solverRefundTxId?: string | undefined;
   needsAttention?: boolean | undefined;
   rejectionReason?: string | undefined;
+  payLinkId?: string | undefined;
   createdAt: number;
   updatedAt: number;
 }

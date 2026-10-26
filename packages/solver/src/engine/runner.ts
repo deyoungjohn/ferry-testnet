@@ -545,6 +545,34 @@ export class SolverEngine {
         return;
       }
 
+      // Check pay link invoice reservation collision (PL-02)
+      if (order.payLinkId) {
+        const link = this.db.getPayLink(order.payLinkId);
+        if (link && link.kind === 'invoice') {
+          if (
+            link.status === 'paid' ||
+            (link.status === 'reserved' &&
+              link.orderId &&
+              link.orderId !== order.id)
+          ) {
+            this.logger.warn(
+              {
+                orderId: order.id,
+                payLinkId: order.payLinkId,
+                linkStatus: link.status,
+                reservedOrderId: link.orderId,
+              },
+              'Invoice is already reserved or paid by another order; refusing to counter-lock',
+            );
+            this.applyEvent(order, {
+              type: 'INVALID_TERMS',
+              reason: 'Invoice is already reserved or paid by another order',
+            });
+            return;
+          }
+        }
+      }
+
       // Check Invariant F at counter-lock time t0 (CH-04)
       const quorum = this.bchClient.getQuorumStatus();
       if (
@@ -1258,6 +1286,24 @@ export class SolverEngine {
     }
     order.updatedAt = Date.now();
     this.db.saveOrder(order);
+
+    // Sync pay link status if this order is linked to a pay link
+    if (order.payLinkId) {
+      const payLink = this.db.getPayLink(order.payLinkId);
+      if (payLink) {
+        if (order.status === 'DONE') {
+          this.db.updatePayLinkStatus(payLink.id, 'paid', order.id);
+        } else if (
+          order.status === 'EXPIRED' ||
+          order.status === 'REJECTED' ||
+          order.status === 'SOLVER_REFUNDED'
+        ) {
+          if (payLink.status === 'reserved' && payLink.orderId === order.id) {
+            this.db.updatePayLinkStatus(payLink.id, 'open', null);
+          }
+        }
+      }
+    }
   }
 
   async buildSolverBchLock(
