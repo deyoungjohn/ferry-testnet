@@ -83,4 +83,6 @@ export interface ChainAdapter {
   isFinal(tx: TxRef, lane: Lane): Promise<boolean>;
   /** Read-only, no reservation; repeat calls can reflect changed fees. */
   estimateRelayCostUsd(): Promise<number>;
+  /** Read-only chain tip height and freshness. */
+  getTip?(): Promise<{ height: number; timestamp: number; ageSeconds: number }>;
 }

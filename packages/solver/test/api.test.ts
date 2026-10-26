@@ -12,7 +12,13 @@ describe('Solver API contracts & Secret Privacy Rule', () => {
   let app: FastifyInstance;
   let db: SolverDatabase;
   let fakeBchClient: BchQuorumClient;
-  let fakeEvmAdapter: EvmChainAdapter;
+  let fakeEvmAdapter: EvmChainAdapter & {
+    getTip: () => Promise<{
+      height: number;
+      timestamp: number;
+      ageSeconds: number;
+    }>;
+  };
   let engine: SolverEngine;
   let isMockLocked = false;
 
@@ -75,6 +81,11 @@ describe('Solver API contracts & Secret Privacy Rule', () => {
         txId: '0xmock-refund-tx',
       }),
       estimateRelayCostUsd: async () => 0.002,
+      getTip: async () => ({
+        height: 18500000,
+        timestamp: Math.floor(Date.now() / 1000) - 2,
+        ageSeconds: 2,
+      }),
     } as unknown as EvmChainAdapter;
 
     const sampleWif = 'cPJEAQPn5NYgtNy9HXR1q2q6vw4EghTgjscBFFseT4UT9gbpoDY9';
@@ -442,5 +453,100 @@ describe('Solver API contracts & Secret Privacy Rule', () => {
     expect(validFastRes.statusCode).toBe(200);
     const validFastBody = JSON.parse(validFastRes.payload);
     expect(validFastBody.lane).toBe('fast');
+  });
+
+  it('GET /v1/health reports live Base block height and age, and fails closed when RPC is failing or stale', async () => {
+    // 1. Healthy state
+    const healthRes = await app.inject({
+      method: 'GET',
+      url: '/v1/health',
+    });
+    expect(healthRes.statusCode).toBe(200);
+    const health = JSON.parse(healthRes.payload);
+    expect(health.counterTips.base.height).toBe(18500000);
+    expect(health.counterTips.base.ageSeconds).toBe(2);
+    expect(health.counterTips.base.stale).toBe(false);
+    expect(health.ok).toBe(true);
+    expect(health.quoting).toBe(true);
+
+    // 2. Failing RPC: getTip rejects
+    const originalGetTip = fakeEvmAdapter.getTip;
+    fakeEvmAdapter.getTip = async () => {
+      throw new Error('Connection refused to Base RPC');
+    };
+
+    const failingRpcHealthRes = await app.inject({
+      method: 'GET',
+      url: '/v1/health',
+    });
+    expect(failingRpcHealthRes.statusCode).toBe(200);
+    const failingHealth = JSON.parse(failingRpcHealthRes.payload);
+    expect(failingHealth.counterTips.base.height).toBe(0);
+    expect(failingHealth.counterTips.base.stale).toBe(true);
+    expect(failingHealth.ok).toBe(false);
+    expect(failingHealth.quoting).toBe(false);
+
+    // POST /v1/quotes fails closed with 503 EVM_TIP_UNHEALTHY
+    const quoteFailingRpcRes = await app.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: {
+        direction: 'COUNTER_TO_BCH',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '10000000',
+        lane: 'safe',
+        userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+        userBchLockingBytecode:
+          '0x76a914111111111111111111111111111111111111111188ac',
+        hashLock: sha256(
+          '0x8888888888888888888888888888888888888888888888888888888888888888',
+        ),
+      },
+    });
+    expect(quoteFailingRpcRes.statusCode).toBe(503);
+    expect(JSON.parse(quoteFailingRpcRes.payload).code).toBe(
+      'EVM_TIP_UNHEALTHY',
+    );
+
+    // 3. Stale tip (ageSeconds = 120 > tipMaxAgeBaseSeconds = 60)
+    fakeEvmAdapter.getTip = async () => ({
+      height: 18500000,
+      timestamp: Math.floor(Date.now() / 1000) - 120,
+      ageSeconds: 120,
+    });
+
+    const staleRpcHealthRes = await app.inject({
+      method: 'GET',
+      url: '/v1/health',
+    });
+    const staleHealth = JSON.parse(staleRpcHealthRes.payload);
+    expect(staleHealth.counterTips.base.stale).toBe(true);
+    expect(staleHealth.quoting).toBe(false);
+
+    const quoteStaleRpcRes = await app.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: {
+        direction: 'COUNTER_TO_BCH',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '10000000',
+        lane: 'safe',
+        userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+        userBchLockingBytecode:
+          '0x76a914111111111111111111111111111111111111111188ac',
+        hashLock: sha256(
+          '0x9999999999999999999999999999999999999999999999999999999999999999',
+        ),
+      },
+    });
+    expect(quoteStaleRpcRes.statusCode).toBe(503);
+    expect(JSON.parse(quoteStaleRpcRes.payload).code).toBe('EVM_TIP_UNHEALTHY');
+
+    // Restore original getTip
+    fakeEvmAdapter.getTip = originalGetTip;
   });
 });

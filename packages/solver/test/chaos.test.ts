@@ -78,18 +78,17 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
     }>;
     killTree: (signal?: NodeJS.Signals) => void;
   } {
-    const child = spawn(
-      'pnpm',
-      ['exec', 'tsx', 'test/helpers/chaos-child.ts', ...args],
-      {
-        detached: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          ...envOverrides,
-        },
+    const solverDir = path.resolve(__dirname, '..');
+    const childScript = path.resolve(__dirname, 'helpers/chaos-child.ts');
+    const child = spawn('pnpm', ['exec', 'tsx', childScript, ...args], {
+      cwd: solverDir,
+      detached: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        ...envOverrides,
       },
-    );
+    });
 
     const killTree = (signal: NodeJS.Signals = 'SIGKILL') => {
       try {
@@ -106,6 +105,10 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
     };
 
     let stdoutBuf = '';
+    let stderrBuf = '';
+    child.stderr?.on('data', (data: Buffer) => {
+      stderrBuf += data.toString();
+    });
     const readyPromise = new Promise<void>((resolve, reject) => {
       const onData = (data: Buffer) => {
         stdoutBuf += data.toString();
@@ -120,7 +123,7 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
         if (!stdoutBuf.includes('READY')) {
           reject(
             new Error(
-              `Child process exited before READY signal (code=${code}, sig=${signal})`,
+              `Child process exited before READY signal (code=${code}, sig=${signal}): ${stderrBuf}`,
             ),
           );
         }

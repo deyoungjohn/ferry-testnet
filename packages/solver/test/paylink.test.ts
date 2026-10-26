@@ -57,6 +57,11 @@ describe('Pay Links API (PL-01 to PL-05)', () => {
       address: solverAddress,
       lockId: (sender: `0x${string}`, hashLock: `0x${string}`) =>
         `0xmock-lock-${sender}-${hashLock}`,
+      getTip: async () => ({
+        height: 18500000,
+        timestamp: Math.floor(Date.now() / 1000) - 2,
+        ageSeconds: 2,
+      }),
     } as unknown as EvmChainAdapter;
 
     engine = new SolverEngine(
