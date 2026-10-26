@@ -5,7 +5,7 @@
   "scripts": {
     "build": "forge build && tronbox compile",
     "compile": "tronbox compile",
-    "test": "vitest run",
+    "test": "forge build && vitest run",
     "roundtrip:nile": "tsx scripts/roundtrip-nile.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint test scripts"
