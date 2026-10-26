@@ -4,9 +4,9 @@ import { expect, test } from '@playwright/test';
 test('swap quote refreshes with a new secret and re-arms recovery', async ({
   page,
 }) => {
-  test.setTimeout(45_000);
+  test.setTimeout(75_000);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/?mock=1&quoteTtl=8');
+  await page.goto('/?mock=1&quoteTtl=20');
 
   await page.getByRole('button', { name: 'Connect BCH' }).click();
   await page.getByRole('button', { name: 'Connect Base' }).click();
@@ -31,7 +31,7 @@ test('swap quote refreshes with a new secret and re-arms recovery', async ({
     page.getByRole('button', { name: /recovery file downloaded/i }),
   ).toBeVisible();
 
-  await expect(downloadButton).toBeVisible({ timeout: 25_000 });
+  await expect(downloadButton).toBeVisible({ timeout: 40_000 });
   await expect(page.getByRole('button', { name: /ferry it/i })).toBeDisabled();
 
   const secondDownload = page.waitForEvent('download');
@@ -54,9 +54,9 @@ test('swap quote refreshes with a new secret and re-arms recovery', async ({
 });
 
 test('pay-link exact quote refreshes before expiry', async ({ page }) => {
-  test.setTimeout(45_000);
+  test.setTimeout(75_000);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/p/MockPayLink111111111?mock=1&quoteTtl=8');
+  await page.goto('/p/MockPayLink111111111?mock=1&quoteTtl=20');
 
   await page.getByRole('button', { name: 'Connect Base' }).click();
   await page.getByRole('button', { name: 'Get exact quote' }).click();
@@ -80,7 +80,7 @@ test('pay-link exact quote refreshes before expiry', async ({ page }) => {
   ).toBeVisible();
   await expect(
     page.getByRole('button', { name: /download recovery file first/i }),
-  ).toBeVisible({ timeout: 25_000 });
+  ).toBeVisible({ timeout: 40_000 });
 
   const secondDownload = page.waitForEvent('download');
   await page

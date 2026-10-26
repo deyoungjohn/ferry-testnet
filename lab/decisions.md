@@ -479,3 +479,16 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 
 ### Correction to D-A1-019 · live quote horizon
 - The mock TTL remains 60 seconds, but the web now accepts live quote expiries up to `MAX_QUOTE_FUTURE_S` (300 seconds). The solver’s D-A2-010 policy returns 120 seconds forward and 180 seconds for reverse safe-lane quotes; those are legitimate, not stale quotes.
+
+### D-A1-023 · live page data uses core schemas; pay-link badges stay honest
+- **Decision:** The web re-exports `StatsSummarySchema`, `RecentSwapSchema`, `RecentSwapsResponseSchema`, `PegPointSchema`, `PegSnapshotSchema` and `PegsResponseSchema` from `@ferry/core`; `HttpStatsClient` parses `/v1/stats`, `/v1/orders/recent` and `/v1/pegs` with those exact schemas. Null stays “No data” and zero remains a real reported zero. an earlier change is still open, so endpoint availability is the remaining integration dependency, not a client type fork.
+- **Pay links:** `verified: false` renders an explicit neutral “Unverified” badge. `verified: true` renders an amber “Test-mode signature” badge with “not a real ownership check”; no green Verified badge is shown while the solver only has the mock signature scheme.
+- **Evidence:** Schema-identity unit test plus HTTP parsing tests; badge unit tests; updated Playwright pay-link assertions; clean-clone root/browser gates.
+- **Consequence for rebuild:** Keep wire parsing at one adapter and never promote a test-mode signature to a trust badge. A real badge waits for server-side BCH message verification.
+- **Revisit if:** an earlier change changes endpoint fields, or the solver adds genuine BCH message-signature verification and a trustworthy verified state.
+
+### D-A1-024 · loaded E2E/unit budgets are explicit
+- **Decision:** Lazy wallet surfaces are opened through one helper that waits for the sheet’s dialog role with a 20-second budget; media tests get 60-second test budgets; quote-refresh uses a 20-second TTL so the first download cannot collide with the pre-expiry refresh under load; web unit tests use a 20-second CI timeout and lazy page tests also carry per-test budgets.
+- **Evidence:** Three consecutive clean-clone default Playwright runs with zero retries, plus three clean-clone root unit runs (recorded in the final clean-clone facts).
+- **Consequence for rebuild:** Separate readiness budgets from outer test budgets and always make the outer larger. A suite that passes only on retry is not a gate.
+- **Revisit if:** The suite is split into shards or a preview build removes cold-transform cost.

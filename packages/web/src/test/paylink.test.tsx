@@ -170,7 +170,7 @@ describe('pay link pages', () => {
     );
     expect(url.textContent).not.toContain('bchtest:');
     expect(url.textContent).not.toContain('10.00');
-  });
+  }, 20_000);
 
   it('shows an invoice with its exact amount and test-mode signature label', async () => {
     renderAt(`/p/${MOCK_RESERVED_LINK_ID}`);
@@ -188,7 +188,7 @@ describe('pay link pages', () => {
     expect(screen.getAllByText('Test-mode signature').length).toBeGreaterThan(
       0,
     );
-  });
+  }, 20_000);
 
   it('blocks a reserved invoice before a second payer can quote', async () => {
     renderAt(`/p/${MOCK_RESERVED_LINK_ID}`);
@@ -203,7 +203,7 @@ describe('pay link pages', () => {
     expect(
       screen.getByRole('button', { name: /get exact quote/i }),
     ).toBeDisabled();
-  });
+  }, 20_000);
 
   it('blocks an expired link before quoting', async () => {
     renderAt(`/p/${MOCK_EXPIRED_LINK_ID}`);
@@ -214,7 +214,7 @@ describe('pay link pages', () => {
     expect(
       screen.getByRole('button', { name: /get exact quote/i }),
     ).toBeDisabled();
-  });
+  }, 20_000);
 
   it('quotes an open link for a Base payer without a BCH wallet', async () => {
     renderAt(`/p/${MOCK_PAY_LINK_ID}`);
@@ -228,5 +228,5 @@ describe('pay link pages', () => {
 
     expect(await screen.findByText('You pay')).toBeInTheDocument();
     expect((await screen.findAllByText(/10 tPUSD/)).length).toBeGreaterThan(0);
-  });
+  }, 20_000);
 });

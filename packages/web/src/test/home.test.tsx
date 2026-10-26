@@ -83,7 +83,7 @@ describe('placeholder routes', () => {
         name: /recover a swap/i,
       }),
     ).toBeInTheDocument();
-  });
+  }, 20_000);
 
   it('renders the pay link page for an unknown link', async () => {
     renderAt('/p/link_123');
@@ -95,5 +95,5 @@ describe('placeholder routes', () => {
       }),
     ).toBeInTheDocument();
     expect(await screen.findByText(/pay link not found/i)).toBeInTheDocument();
-  });
+  }, 20_000);
 });

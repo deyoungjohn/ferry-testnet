@@ -77,7 +77,7 @@ test('wallet sheet uses glass, keeps two layers, and opens on mobile', async ({
 test('token picker, network popover, toast and status drawer are glass', async ({
   page,
 }) => {
-  test.setTimeout(45_000);
+  test.setTimeout(90_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?mock=1');
 
@@ -91,7 +91,7 @@ test('token picker, network popover, toast and status drawer are glass', async (
     .click();
   await expect(
     page.getByRole('dialog', { name: 'Select a token' }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20_000 });
   await page.getByRole('button', { name: /tPUSD.*Bitcoin Cash/i }).click();
   const direction = page.getByRole('button', {
     name: 'Switch swap direction',
@@ -129,11 +129,11 @@ test('token picker, network popover, toast and status drawer are glass', async (
   await page.goto(`/swap/${orderId}?mock=1&scenario=refund`);
   await expect(
     page.getByRole('heading', { level: 1, name: /rejected/i }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20_000 });
   await page.getByRole('button', { name: 'Open timeline drawer' }).click();
   await expect(
     page.getByRole('dialog', { name: 'Swap timeline (mock)' }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20_000 });
   expect(await page.locator('.glass:visible').count()).toBeLessThanOrEqual(2);
 });
 
