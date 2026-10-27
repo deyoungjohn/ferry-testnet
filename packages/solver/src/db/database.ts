@@ -308,6 +308,19 @@ export class SolverDatabase {
     return rows.map((r) => this.mapOrderRow(r));
   }
 
+  getOpenExposureUsdMicros(): bigint {
+    const orders = this.listNonTerminalOrders();
+    const now = Math.floor(Date.now() / 1000);
+    let totalMicros = 0n;
+    for (const order of orders) {
+      if (order.status === 'QUOTED' && now > order.terms.quoteExpiry) {
+        continue;
+      }
+      totalMicros += order.terms.counterAmount;
+    }
+    return totalMicros;
+  }
+
   listNeedsAttentionOrders(): SolverOrderRecord[] {
     const stmt = this.db.prepare(`
       SELECT * FROM orders WHERE needs_attention = 1 ORDER BY updated_at DESC

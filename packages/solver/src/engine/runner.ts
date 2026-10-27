@@ -558,10 +558,18 @@ export class SolverEngine {
       return;
     }
 
+    const now = Math.floor(Date.now() / 1000);
+
+    // 0. Forward quote expiry: transition abandoned QUOTED order to EXPIRED
+    if (order.status === 'QUOTED') {
+      if (now > terms.quoteExpiry) {
+        this.applyEvent(order, { type: 'QUOTE_EXPIRED' });
+        return;
+      }
+    }
+
     // USER_LOCK_FINAL -> SOLVER_LOCK_BROADCAST
     if (order.status === 'USER_LOCK_FINAL') {
-      const now = Math.floor(Date.now() / 1000);
-
       // Check quote expiry (CH-03)
       if (now > terms.quoteExpiry) {
         this.logger.warn(

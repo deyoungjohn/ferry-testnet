@@ -549,4 +549,222 @@ describe('Solver API contracts & Secret Privacy Rule', () => {
     // Restore original getTip
     fakeEvmAdapter.getTip = originalGetTip;
   });
+
+  it(': enforces maxExposureUsdMicros cap on POST /v1/quotes and returns 503 EXPOSURE_LIMIT_EXCEEDED', async () => {
+    const initialExposure = db.getOpenExposureUsdMicros();
+    const testSecret =
+      '0x1234123412341234123412341234123412341234123412341234123412341234' as const;
+    const testHashLock = sha256(testSecret);
+
+    // Save active order bringing exposure close to cap (leaving $5 margin)
+    const fillerAmount = 250_000_000n - initialExposure - 5_000_000n;
+    const baseTerms = {
+      version: 1 as const,
+      direction: 'COUNTER_TO_BCH' as const,
+      bchToken: 'PUSD' as const,
+      bchTokenCategory:
+        '0xec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac' as `0x${string}`,
+      bchTokenAmount: 24000n,
+      counterAmount: fillerAmount,
+      counterChain: 'base' as const,
+      counterNetworkId: 84532,
+      counterAsset: {
+        symbol: 'USDC' as const,
+        decimals: 6,
+        address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      },
+      counterHtlc: '0x5A0C062f4B7b8fF2263530e12bc15De9C836a641' as const,
+      userCounterAddress: '0x1111111111111111111111111111111111111111',
+      userBchLockingBytecode:
+        '0x76a914111111111111111111111111111111111111111188ac' as const,
+      solverCounterAddress: solverAddress,
+      solverBchLockingBytecode:
+        '0x76a914000000000000000000000000000000000000000088ac' as const,
+      hashLock: testHashLock,
+      counterDeadline: Math.floor(Date.now() / 1000) + 86400,
+      bchRefundHeight: 330036,
+      bchCarrySats: 3000n,
+      bchMaxFee: 1500n,
+      quoteId: 'quote-exposure-test',
+      quoteExpiry: Math.floor(Date.now() / 1000) + 120,
+    };
+
+    db.saveOrder({
+      id: '0xexposure_test_order_1',
+      direction: 'COUNTER_TO_BCH',
+      status: 'USER_LOCK_FINAL',
+      lane: 'safe',
+      fastOptIn: false,
+      terms: baseTerms,
+      hashLock: testHashLock,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    expect(db.getOpenExposureUsdMicros()).toBe(initialExposure + fillerAmount);
+
+    // 2. Request a quote for $20 (20,000,000 micros). (250 - 5) + 20 = 265 > maxExposure (250).
+    const overCapRes = await app.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: {
+        direction: 'COUNTER_TO_BCH',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '20000000', // $20.00
+        lane: 'safe',
+        userCounterAddress: '0x2222222222222222222222222222222222222222',
+        userBchLockingBytecode:
+          '0x76a914222222222222222222222222222222222222222288ac',
+        hashLock: sha256(
+          '0x5555555555555555555555555555555555555555555555555555555555555555',
+        ),
+      },
+    });
+
+    expect(overCapRes.statusCode).toBe(503);
+    const overCapBody = JSON.parse(overCapRes.payload);
+    expect(overCapBody.code).toBe('EXPOSURE_LIMIT_EXCEEDED');
+
+    // 3. Complete the order to DONE -> exposure drops back to initialExposure
+    const o = db.getOrder('0xexposure_test_order_1')!;
+    db.saveOrder({ ...o, status: 'DONE' });
+    expect(db.getOpenExposureUsdMicros()).toBe(initialExposure);
+
+    // 4. Requesting $20 quote now succeeds
+    const underCapRes = await app.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: {
+        direction: 'COUNTER_TO_BCH',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '20000000', // $20.00
+        lane: 'safe',
+        userCounterAddress: '0x2222222222222222222222222222222222222222',
+        userBchLockingBytecode:
+          '0x76a914222222222222222222222222222222222222222288ac',
+        hashLock: sha256(
+          '0x6666666666666666666666666666666666666666666666666666666666666666',
+        ),
+      },
+    });
+    expect(underCapRes.statusCode).toBe(200);
+  });
+
+  it(': transitions abandoned forward QUOTED orders to EXPIRED when quoteExpiry passes', async () => {
+    const testSecret =
+      '0x9999999999999999999999999999999999999999999999999999999999999999' as const;
+    const testHashLock = sha256(testSecret);
+    const expiredTerms = {
+      version: 1 as const,
+      direction: 'COUNTER_TO_BCH' as const,
+      bchToken: 'PUSD' as const,
+      bchTokenCategory:
+        '0xec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac' as `0x${string}`,
+      bchTokenAmount: 1000n,
+      counterAmount: 10_000_000n,
+      counterChain: 'base' as const,
+      counterNetworkId: 84532,
+      counterAsset: {
+        symbol: 'USDC' as const,
+        decimals: 6,
+        address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      },
+      counterHtlc: '0x5A0C062f4B7b8fF2263530e12bc15De9C836a641' as const,
+      userCounterAddress: '0x3333333333333333333333333333333333333333',
+      userBchLockingBytecode:
+        '0x76a914333333333333333333333333333333333333333388ac' as const,
+      solverCounterAddress: solverAddress,
+      solverBchLockingBytecode:
+        '0x76a914000000000000000000000000000000000000000088ac' as const,
+      hashLock: testHashLock,
+      counterDeadline: Math.floor(Date.now() / 1000) + 86400,
+      bchRefundHeight: 330036,
+      bchCarrySats: 3000n,
+      bchMaxFee: 1500n,
+      quoteId: 'quote-fwd-expiry-test',
+      quoteExpiry: Math.floor(Date.now() / 1000) - 10, // Expired 10s ago
+    };
+
+    const orderRecord = {
+      id: '0xfwd_expiry_test_order',
+      direction: 'COUNTER_TO_BCH' as const,
+      status: 'QUOTED' as const,
+      lane: 'safe' as const,
+      fastOptIn: false,
+      terms: expiredTerms,
+      hashLock: testHashLock,
+      createdAt: Date.now() - 20000,
+      updatedAt: Date.now() - 20000,
+    };
+    db.saveOrder(orderRecord);
+
+    await engine.processOrder(orderRecord);
+
+    const updated = db.getOrder('0xfwd_expiry_test_order');
+    expect(updated?.status).toBe('EXPIRED');
+  });
+
+  it(': rejects relay-claim on terminal orders with 409 ORDER_TERMINAL', async () => {
+    const testSecret =
+      '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
+    const testHashLock = sha256(testSecret);
+    const terminalTerms = {
+      version: 1 as const,
+      direction: 'BCH_TO_COUNTER' as const,
+      bchToken: 'PUSD' as const,
+      bchTokenCategory:
+        '0xec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac' as `0x${string}`,
+      bchTokenAmount: 1000n,
+      counterAmount: 10_000_000n,
+      counterChain: 'base' as const,
+      counterNetworkId: 84532,
+      counterAsset: {
+        symbol: 'USDC' as const,
+        decimals: 6,
+        address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      },
+      counterHtlc: '0x5A0C062f4B7b8fF2263530e12bc15De9C836a641' as const,
+      userCounterAddress: '0x4444444444444444444444444444444444444444',
+      userBchLockingBytecode:
+        '0x76a914444444444444444444444444444444444444444488ac' as const,
+      solverCounterAddress: solverAddress,
+      solverBchLockingBytecode:
+        '0x76a914000000000000000000000000000000000000000088ac' as const,
+      hashLock: testHashLock,
+      counterDeadline: Math.floor(Date.now() / 1000) + 21600,
+      bchRefundHeight: 330144,
+      bchCarrySats: 3000n,
+      bchMaxFee: 1500n,
+      quoteId: 'quote-terminal-test',
+      quoteExpiry: Math.floor(Date.now() / 1000) + 120,
+    };
+
+    db.saveOrder({
+      id: '0xterminal_order_1',
+      direction: 'BCH_TO_COUNTER',
+      status: 'REJECTED',
+      lane: 'safe',
+      fastOptIn: false,
+      terms: terminalTerms,
+      hashLock: testHashLock,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/orders/0xterminal_order_1/relay-claim',
+      payload: {
+        secret: testSecret,
+      },
+    });
+
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.payload);
+    expect(body.code).toBe('ORDER_TERMINAL');
+  });
 });

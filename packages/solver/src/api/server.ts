@@ -255,6 +255,16 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       });
     }
 
+    // Check open exposure cap
+    const currentExposure = db.getOpenExposureUsdMicros();
+    const requestedExposure = isReverse ? amountIn * 10_000n : amountIn;
+    if (currentExposure + requestedExposure > config.maxExposureUsdMicros) {
+      return reply.status(503).send({
+        code: 'EXPOSURE_LIMIT_EXCEEDED',
+        message: 'The solver’s open exposure limit has been reached',
+      });
+    }
+
     // Fast lane validations (opt-in and cap)
     if (request.lane === 'fast') {
       if (!request.fastOptIn) {
@@ -729,6 +739,17 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       return reply.status(400).send({
         code: 'UNSUPPORTED_ROUTE',
         message: 'Relay claim is only supported for BCH_TO_COUNTER orders',
+      });
+    }
+
+    if (
+      order.status === 'REJECTED' ||
+      order.status === 'EXPIRED' ||
+      order.status === 'SOLVER_REFUNDED'
+    ) {
+      return reply.status(409).send({
+        code: 'ORDER_TERMINAL',
+        message: `Order is in terminal state ${order.status}`,
       });
     }
 
@@ -1217,6 +1238,15 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
         return reply.status(400).send({
           code: 'AMOUNT_OUT_OF_RANGE',
           message: 'Amount is outside the swap limits',
+        });
+      }
+
+      // Check open exposure cap
+      const currentExposure = db.getOpenExposureUsdMicros();
+      if (currentExposure + amountIn > config.maxExposureUsdMicros) {
+        return reply.status(503).send({
+          code: 'EXPOSURE_LIMIT_EXCEEDED',
+          message: 'The solver’s open exposure limit has been reached',
         });
       }
 
