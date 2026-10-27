@@ -30,6 +30,7 @@ export function ReverseFundingPanel({
   const { bch } = useWallets();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   let target: ReturnType<typeof assertReverseFundingTarget> | null = null;
@@ -48,9 +49,17 @@ export function ReverseFundingPanel({
 
   async function handleSign(): Promise<void> {
     if (!target) return;
+    if (bch.status !== 'connected') {
+      setNotice(
+        `Open ${bch.walletName ?? 'your BCH wallet'} to approve the funding request, then press Sign with BCH wallet again.`,
+      );
+      if (bch.status !== 'connecting') bch.connect();
+      return;
+    }
     onFundingStart?.();
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const utxos = await bch.listUtxos();
       const build = buildReverseLock({
@@ -177,6 +186,11 @@ export function ReverseFundingPanel({
         </>
       )}
 
+      {notice ? (
+        <p role="status" className="mt-2 text-[11px] leading-5 text-warn">
+          {notice}
+        </p>
+      ) : null}
       {error ? (
         <p role="alert" className="mt-2 text-[11px] leading-5 text-danger">
           {error}

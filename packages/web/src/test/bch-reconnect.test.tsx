@@ -36,15 +36,16 @@ describe('BCH restored-session timeout', () => {
     expect(disconnect).toHaveBeenCalledTimes(1);
   });
 
-  it('does not cancel a fresh QR connection', async () => {
+  it('times out a connecting state too', async () => {
     const disconnect = vi.fn(async () => undefined);
-    renderHook(() =>
-      useBchReconnectTimeout('connecting', disconnect, undefined, false),
+    const { result } = renderHook(() =>
+      useBchReconnectTimeout('connecting', disconnect),
     );
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(BCH_RECONNECT_TIMEOUT_MS * 2);
+      await vi.advanceTimersByTimeAsync(BCH_RECONNECT_TIMEOUT_MS);
     });
-    expect(disconnect).not.toHaveBeenCalled();
+    expect(result.current).toBe(true);
+    expect(disconnect).toHaveBeenCalledTimes(1);
   });
 
   it('clears the timeout once the wallet connects', async () => {

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { keccak256, sha256, toBytes } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Hex, TypedDataDefinition } from 'viem';
@@ -35,8 +35,14 @@ export function MockWalletProvider({
 }: {
   readonly children: ReactNode;
 }) {
+  const initialQuery =
+    typeof window === 'undefined'
+      ? null
+      : new URLSearchParams(window.location.search);
   const [evmStatus, setEvmStatus] = useState<WalletStatus>('disconnected');
-  const [bchStatus, setBchStatus] = useState<WalletStatus>('disconnected');
+  const [bchStatus, setBchStatus] = useState<WalletStatus>(
+    initialQuery?.get('bchOffline') === '1' ? 'offline' : 'disconnected',
+  );
   const [evmPending, setEvmPending] = useState<string | null>(null);
   const query =
     typeof window === 'undefined'
@@ -44,6 +50,13 @@ export function MockWalletProvider({
       : new URLSearchParams(window.location.search);
   const rejectSigning = query?.get('walletReject') === '1';
   const signingDelayMs = Number(query?.get('walletDelayMs') ?? 0);
+  const claimBroadcastDelayMs = Number(
+    query?.get('claimBroadcastDelayMs') ?? 0,
+  );
+  const claimBroadcastDuplicate = query?.get('claimBroadcastDuplicate') === '1';
+  const claimConflict = query?.get('claimConflict') === '1';
+  const claimSpentButKnown = query?.get('claimSpentButKnown') === '1';
+  const broadcastCount = useRef(0);
 
   const evm = useMemo<EvmWallet>(
     () => ({
@@ -87,9 +100,11 @@ export function MockWalletProvider({
   const bch = useMemo<BchWallet>(
     () => ({
       status: bchStatus,
-      address: bchStatus === 'connected' ? mockBch : null,
+      address:
+        bchStatus === 'connected' || bchStatus === 'offline' ? mockBch : null,
       error: null,
-      walletName: bchStatus === 'connected' ? 'Mock BCH wallet' : null,
+      walletName:
+        bchStatus === 'connected' || bchStatus === 'offline' ? 'Paytaca' : null,
       pendingRequest: null,
       connect: () => {
         setBchStatus('connected');
@@ -99,6 +114,9 @@ export function MockWalletProvider({
       },
       setAddress: () => {
         setBchStatus('connected');
+      },
+      forget: () => {
+        setBchStatus('disconnected');
       },
       listUtxos: async () => MOCK_BCH_UTXOS,
       signTransaction: async (
@@ -111,11 +129,31 @@ export function MockWalletProvider({
             : `0x${request.transaction}`) as Hex,
         ),
       }),
-      broadcastTransaction: async (txHex: string) =>
-        sha256((txHex.startsWith('0x') ? txHex : `0x${txHex}`) as Hex),
+      broadcastTransaction: async (txHex: string) => {
+        if (claimBroadcastDelayMs > 0) {
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, claimBroadcastDelayMs),
+          );
+        }
+        broadcastCount.current += 1;
+        if (claimConflict || claimSpentButKnown) {
+          throw new Error('bad-txns-inputs-missingorspent');
+        }
+        if (claimBroadcastDuplicate && broadcastCount.current === 1) {
+          throw new Error('transaction already in block chain');
+        }
+        return sha256((txHex.startsWith('0x') ? txHex : `0x${txHex}`) as Hex);
+      },
+      transactionExists: async () => claimSpentButKnown,
       signMessage: async (message: string) => sha256(toBytes(message)),
     }),
-    [bchStatus],
+    [
+      bchStatus,
+      claimBroadcastDelayMs,
+      claimBroadcastDuplicate,
+      claimConflict,
+      claimSpentButKnown,
+    ],
   );
 
   return (

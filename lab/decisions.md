@@ -527,3 +527,28 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** Health unit tests cover ready and unavailable states; mock-honesty E2E checks the visible line; full local E2E is 34/34.
 - **Consequence for rebuild:** Health needs a stable, always-visible home with explicit wording. Test processes must opt into live endpoints explicitly.
 - **Revisit if:** Health polling becomes expensive or the solver adds a push health channel.
+
+### D-A1-027 · auto-claim is keyless, idempotent and visible
+- **Decision:** While a forward status page is open, the first observation of `SOLVER_LOCK_SEEN` starts one claim from the vault secret. The claim no longer checks for a BCH wallet; the recipient comes from signed terms. A ref prevents concurrent claims and one auto attempt is recorded per order.
+- **Broadcast:** `broadcastClaimIdempotent` treats already-in-blockchain, txn-already-known, txn-mempool-conflict and missing/duplicate-input errors as success using the locally built txid, then continues to `submitSecret` and refresh. A solver notification failure does not hide the on-chain claim.
+- **States:** The page shows “Claiming your tPUSD…”, “Claim on chain, waiting for the solver to release your USDC”, and after 90 seconds a stall message with the Recovery next step. Polling is 3 seconds while claiming/waiting. Manual Claim remains as fallback.
+- **Evidence:** Unit tests cover every duplicate/error string; Playwright covers auto-claim with a duplicate response, no live BCH wallet, and the 90-second stall.
+- **Consequence for rebuild:** Never gate a keyless covenant spend on wallet connectivity. Make broadcast retries convergent and surface public-chain success even when solver notification fails.
+- **Revisit if:** The covenant adds a user signature or Electrum returns ambiguous spend errors that cannot identify our own claim.
+
+### D-A1-028 · remembered BCH identity is separate from session liveness
+- **Decision:** Persist `{walletName, tokenAware address, lockingBytecode}` in local storage. A remembered wallet is status `offline`, not disconnected: the address remains usable for quotes/claims/refunds, while reverse funding asks the user to open the wallet and approve. An 8-second timeout applies to every connecting/reconnecting state. “Forget wallet” clears local identity and disconnects.
+- **UX:** Wallet panel shows “Paytaca (offline) · bchtest:…”, a Reconnect action, Forget wallet, and one sentence explaining that browser/mobile wallets cannot stay connected in the background.
+- **Evidence:** Storage round-trip tests; unit tests for timeout and offline panel; Playwright for remembered/offline/forget. Reverse funding shows “Open … to approve” instead of requiring a connection up front.
+- **Consequence for rebuild:** Treat wallet identity as cacheable user data, transport as ephemeral. Only signature-producing actions require liveness.
+- **Revisit if:** WizardConnect exposes a push session status that makes offline/online detection reliable without polling.
+
+### D-A1-029 · relay proof uses the real DappConnectionManager
+- **Decision:** The serialization test instantiates the real `DappConnectionManager` with a fake relay client, sends a sign request using the production `sourceOutputToRelay` shape, JSON-serializes the exact relayed request, and parses it back with WizardConnect `parseExtendedJson`/`toUint8Array`. This proves both the dapp request and a Paytaca-style wallet can round-trip bytes and bigint values.
+- **Evidence:** `wizard-relay-serialization.test.ts` passes; request includes bigint values parsed back as bigint and hex bytes converted back to the original Uint8Array.
+- **Consequence for rebuild:** Test the real protocol manager and the wallet parser, not just a local helper. A relay test that never crosses JSON would miss BigInt serialization defects.
+- **Revisit if:** WizardConnect changes its extended JSON format or exposes the relay serializer directly.
+
+### Correction to D-A1-027 · ambiguous spends require txid proof
+- Only explicit already-known/confirmed broadcast errors are accepted without lookup. Missing-input, mempool-conflict and “already spent” answers are ambiguous; `broadcastClaimIdempotent` calls the wallet’s Electrum-backed `transactionExists(expectedClaimTxid)`. Success requires that exact txid. A refund or any other spend therefore produces `ClaimSpentError` and no `submitSecret`, preventing secret disclosure and Base-fund loss.
+- Playwright covers a conflicting spend (abort with Recovery next step) and an ambiguous spend whose expected txid exists (continue to DONE).

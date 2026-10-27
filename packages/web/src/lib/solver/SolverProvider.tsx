@@ -39,6 +39,11 @@ function quoteFailureFromLocation():
     : undefined;
 }
 
+function holdClaimFromLocation(): boolean {
+  if (typeof window === 'undefined') return false;
+  return new URLSearchParams(window.location.search).get('holdClaim') === '1';
+}
+
 function quoteTtlFromLocation(): number | undefined {
   if (typeof window === 'undefined') return undefined;
   const value = Number(
@@ -61,6 +66,7 @@ export function SolverProvider({ children }: { readonly children: ReactNode }) {
           ...(quoteFailureFromLocation() !== undefined
             ? { quoteFailure: quoteFailureFromLocation() }
             : {}),
+          ...(holdClaimFromLocation() ? { holdClaimStatus: true } : {}),
         });
   }, []);
   return (

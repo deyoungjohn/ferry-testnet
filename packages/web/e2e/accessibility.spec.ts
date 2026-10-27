@@ -106,14 +106,9 @@ test('keyboard-only swap reaches DONE', async ({ page }) => {
   await tabTo(page, ferry);
   await page.keyboard.press('Enter');
 
-  const claim = page.getByRole('button', { name: 'Claim tPUSD' });
-  await expect(claim).toBeVisible({ timeout: 20_000 });
-  await tabTo(page, claim);
-  await page.keyboard.press('Enter');
-
   await expect(
     page.getByRole('heading', { level: 1, name: /done/i }),
-  ).toBeVisible({ timeout: 30_000 });
+  ).toBeVisible({ timeout: 40_000 });
 });
 
 test('prefers-reduced-motion keeps the wallet dialog usable', async ({

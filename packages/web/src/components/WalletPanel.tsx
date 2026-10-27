@@ -29,7 +29,7 @@ export function WalletPanel() {
           </p>
           <p className="mt-0.5 truncate text-xs text-text">
             {bch.address
-              ? `${bch.walletName ?? 'BCH wallet'} · ${truncateAddress(bch.address.address, 12, 6)}`
+              ? `${bch.walletName ?? 'BCH wallet'}${bch.status === 'offline' ? ' (offline)' : ''} · ${truncateAddress(bch.address.address, 12, 6)}`
               : 'Connect Selene, Paytaca or paste an address'}
           </p>
         </div>
@@ -48,7 +48,9 @@ export function WalletPanel() {
             ? 'Disconnect BCH'
             : bch.status === 'connecting'
               ? 'Reconnecting BCH…'
-              : 'Connect BCH'}
+              : bch.status === 'offline'
+                ? 'Reconnect BCH'
+                : 'Connect BCH'}
         </button>
       </div>
       {bch.error ? (
@@ -56,6 +58,20 @@ export function WalletPanel() {
           {bch.error}
         </p>
       ) : null}
+      {bch.address && bch.forget ? (
+        <button
+          type="button"
+          onClick={() => bch.forget?.()}
+          className="mt-1 text-[10px] text-text-muted underline decoration-hairline underline-offset-2 hover:text-danger"
+        >
+          Forget wallet
+        </button>
+      ) : null}
+      <p className="mt-1 text-[10px] leading-4 text-text-muted">
+        A mobile wallet cannot stay connected in the background. The saved
+        address stays usable; Ferry only opens the wallet when a signature is
+        needed.
+      </p>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-hairline pt-3">
         <div className="min-w-0">

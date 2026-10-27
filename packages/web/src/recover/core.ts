@@ -299,6 +299,19 @@ export class ElectrumClient {
     ]);
   }
 
+  async transactionGet(txid: string): Promise<string> {
+    return this.request<string>('blockchain.transaction.get', [txid, false]);
+  }
+
+  async transactionExists(txid: string): Promise<boolean> {
+    try {
+      await this.transactionGet(txid);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   close(): void {
     this.#socket?.close();
     this.#socket = null;

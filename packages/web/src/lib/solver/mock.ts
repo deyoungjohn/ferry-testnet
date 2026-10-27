@@ -131,6 +131,7 @@ export interface MockSolverOptions {
   readonly direction?: Direction;
   readonly bchTipHeight?: number;
   readonly quoteTtlSeconds?: number | undefined;
+  readonly holdClaimStatus?: boolean | undefined;
   readonly quoteFailure?:
     | 'rejected'
     | 'unavailable'
@@ -182,6 +183,7 @@ export class MockSolverClient implements SolverClient {
   readonly #direction: Direction;
   readonly #bchTipHeight: number;
   readonly #quoteTtlSeconds: number;
+  readonly #holdClaimStatus: boolean;
   readonly #quoteFailure:
     | 'rejected'
     | 'unavailable'
@@ -197,6 +199,7 @@ export class MockSolverClient implements SolverClient {
     this.#direction = options.direction ?? 'COUNTER_TO_BCH';
     this.#bchTipHeight = options.bchTipHeight ?? 329_315;
     this.#quoteTtlSeconds = options.quoteTtlSeconds ?? QUOTE_TTL_S;
+    this.#holdClaimStatus = options.holdClaimStatus ?? false;
     this.#quoteFailure = options.quoteFailure;
     this.#linkIdFactory = options.linkIdFactory ?? createLinkId;
     this.#seedLinks();
@@ -677,7 +680,18 @@ export class MockSolverClient implements SolverClient {
         throw new Error('Order not found');
       }
     }
-    this.#advance(order);
+    const holdAtClaim =
+      this.#holdClaimStatus &&
+      [
+        'SOLVER_LOCK_SEEN',
+        'SECRET_KNOWN',
+        'USER_CLAIM_SEEN',
+        'SOLVER_CLAIM_BROADCAST',
+        'SOLVER_CLAIM_FINAL',
+      ].includes(order.status);
+    if (!holdAtClaim) {
+      this.#advance(order);
+    }
     return this.#view(id, order);
   }
 
