@@ -597,3 +597,6 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 
 ### Correction to D-A1-033 · rebase
 - The final implementation uses main's `buildInputPaths` in `relay-format.ts` and main's `lib/bch/balance.ts`; the earlier branch-local helper files were removed. `D-A1-034` adds the fresh-scan host behavior.
+
+### Correction to D-A1-033 · final implementation
+- Final code uses main's `buildInputPaths` and Paytaca's wallet-side parser as the source of truth; the branch-local helper was removed. The local check remains the structured `WalletSignedTransactionError` diagnostic implemented here.
