@@ -16,7 +16,11 @@ import {
   explorerTxUrl,
 } from '../lib/config';
 import { addressFromLockingBytecode } from '../lib/bch/address';
-import { broadcastClaimIdempotent } from '../lib/bch/claim-broadcast';
+import {
+  ClaimSpentError,
+  ClaimVerificationError,
+  broadcastClaimIdempotent,
+} from '../lib/bch/claim-broadcast';
 import { loadSecret } from '../lib/vault';
 import {
   buildRecoveryFile,
@@ -217,11 +221,16 @@ export function SwapStatusPage() {
         },
         feeSats: 500n,
       });
-      const result = await broadcastClaimIdempotent(
-        (txHex) => bch.broadcastTransaction(txHex),
-        built.txHex,
-        built.txid,
-      );
+      const result = await broadcastClaimIdempotent({
+        broadcast: (txHex: string) => bch.broadcastTransaction(txHex),
+        transactionExists: bch.transactionExists
+          ? (txid) => bch.transactionExists!(txid)
+          : async () => {
+              throw new Error('BCH transaction lookup is unavailable');
+            },
+        txHex: built.txHex,
+        expectedTxid: built.txid,
+      });
       setClaimPhase('onchain');
       setActionMessage(
         result.already
@@ -239,7 +248,23 @@ export function SwapStatusPage() {
     } catch (cause) {
       setClaimPhase('idle');
       setClaimStartedAt(null);
-      showActionFailure(cause, 'Could not submit the claim');
+      if (cause instanceof ClaimSpentError) {
+        setActionError({
+          sentence: cause.message,
+          nextStep: cause.nextStep,
+          code: null,
+          kind: 'local',
+        });
+      } else if (cause instanceof ClaimVerificationError) {
+        setActionError({
+          sentence: cause.message,
+          nextStep: cause.nextStep,
+          code: null,
+          kind: 'local',
+        });
+      } else {
+        showActionFailure(cause, 'Could not submit the claim');
+      }
     } finally {
       claimInFlight.current = false;
       setBusy(false);

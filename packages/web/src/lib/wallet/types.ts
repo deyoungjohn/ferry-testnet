@@ -73,6 +73,7 @@ export interface BchWallet {
     request: BchSignTransactionRequest,
   ): Promise<BchSignedTransaction>;
   broadcastTransaction(txHex: string): Promise<string>;
+  transactionExists?(txid: string): Promise<boolean>;
 }
 
 export interface WalletSet {

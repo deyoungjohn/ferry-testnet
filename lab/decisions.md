@@ -548,3 +548,7 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** `wizard-relay-serialization.test.ts` passes; request includes bigint values parsed back as bigint and hex bytes converted back to the original Uint8Array.
 - **Consequence for rebuild:** Test the real protocol manager and the wallet parser, not just a local helper. A relay test that never crosses JSON would miss BigInt serialization defects.
 - **Revisit if:** WizardConnect changes its extended JSON format or exposes the relay serializer directly.
+
+### Correction to D-A1-027 · ambiguous spends require txid proof
+- Only explicit already-known/confirmed broadcast errors are accepted without lookup. Missing-input, mempool-conflict and “already spent” answers are ambiguous; `broadcastClaimIdempotent` calls the wallet’s Electrum-backed `transactionExists(expectedClaimTxid)`. Success requires that exact txid. A refund or any other spend therefore produces `ClaimSpentError` and no `submitSecret`, preventing secret disclosure and Base-fund loss.
+- Playwright covers a conflicting spend (abort with Recovery next step) and an ambiguous spend whose expected txid exists (continue to DONE).

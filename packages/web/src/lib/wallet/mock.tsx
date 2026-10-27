@@ -54,6 +54,8 @@ export function MockWalletProvider({
     query?.get('claimBroadcastDelayMs') ?? 0,
   );
   const claimBroadcastDuplicate = query?.get('claimBroadcastDuplicate') === '1';
+  const claimConflict = query?.get('claimConflict') === '1';
+  const claimSpentButKnown = query?.get('claimSpentButKnown') === '1';
   const broadcastCount = useRef(0);
 
   const evm = useMemo<EvmWallet>(
@@ -134,14 +136,24 @@ export function MockWalletProvider({
           );
         }
         broadcastCount.current += 1;
+        if (claimConflict || claimSpentButKnown) {
+          throw new Error('bad-txns-inputs-missingorspent');
+        }
         if (claimBroadcastDuplicate && broadcastCount.current === 1) {
           throw new Error('transaction already in block chain');
         }
         return sha256((txHex.startsWith('0x') ? txHex : `0x${txHex}`) as Hex);
       },
+      transactionExists: async () => claimSpentButKnown,
       signMessage: async (message: string) => sha256(toBytes(message)),
     }),
-    [bchStatus, claimBroadcastDelayMs, claimBroadcastDuplicate],
+    [
+      bchStatus,
+      claimBroadcastDelayMs,
+      claimBroadcastDuplicate,
+      claimConflict,
+      claimSpentButKnown,
+    ],
   );
 
   return (

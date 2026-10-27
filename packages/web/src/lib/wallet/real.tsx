@@ -323,6 +323,15 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
         electrum.close();
       }
     },
+    transactionExists: async (txid: string) => {
+      const electrum = new ElectrumClient(BCH_ELECTRUM_URL);
+      try {
+        await electrum.connect();
+        return await electrum.transactionExists(txid);
+      } finally {
+        electrum.close();
+      }
+    },
   };
 
   const dialog =

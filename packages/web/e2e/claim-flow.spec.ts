@@ -83,3 +83,24 @@ test('auto-claim needs no live BCH wallet', async ({ page }) => {
   ).toBeVisible({ timeout: 40_000 });
   await expect(page.getByText(/both sides settled/i)).toBeVisible();
 });
+
+test('a different spend aborts before revealing the secret', async ({
+  page,
+}) => {
+  test.setTimeout(75_000);
+  await reachStatus(page, '&claimConflict=1');
+  await expect(
+    page.getByText(/BCH lock was spent by a different transaction/i),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/Do not reveal your secret/i)).toBeVisible();
+});
+
+test('an ambiguous spend succeeds when our claim txid exists', async ({
+  page,
+}) => {
+  test.setTimeout(75_000);
+  await reachStatus(page, '&claimSpentButKnown=1');
+  await expect(
+    page.getByRole('heading', { level: 1, name: /done/i }),
+  ).toBeVisible({ timeout: 40_000 });
+});
