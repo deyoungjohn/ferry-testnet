@@ -64,6 +64,12 @@ export const SolverConfigSchema = z.object({
   tipMaxAgeBchSeconds: z.coerce.number().default(7200),
   tipMaxAgeBaseSeconds: z.coerce.number().default(60),
   allowMockPaylinkSignatures: z.coerce.boolean().default(false),
+  trustedProxy: z.coerce.boolean().default(false),
+  quoteRateLimitWindowMs: z.coerce.number().default(60_000),
+  quoteRateLimitMaxPerAddress: z.coerce.number().default(30),
+  quoteRateLimitMaxPerIp: z.coerce.number().default(60),
+  maxUnfundedQuotesPerAddress: z.coerce.number().default(10),
+  maxGlobalUnfundedQuotes: z.coerce.number().default(500),
 });
 
 export type SolverConfig = z.infer<typeof SolverConfigSchema>;
@@ -201,5 +207,24 @@ export function loadConfigFromEnv(
     tipMaxAgeBchSeconds: env.TIP_MAX_AGE_BCH_SECONDS,
     tipMaxAgeBaseSeconds: env.TIP_MAX_AGE_BASE_SECONDS,
     allowMockPaylinkSignatures,
+    trustedProxy:
+      env.TRUSTED_PROXY === '1' || env.TRUSTED_PROXY === 'true'
+        ? true
+        : undefined,
+    quoteRateLimitWindowMs: env.QUOTE_RATE_LIMIT_WINDOW_MS
+      ? Number(env.QUOTE_RATE_LIMIT_WINDOW_MS)
+      : undefined,
+    quoteRateLimitMaxPerAddress: env.QUOTE_RATE_LIMIT_MAX_PER_ADDRESS
+      ? Number(env.QUOTE_RATE_LIMIT_MAX_PER_ADDRESS)
+      : undefined,
+    quoteRateLimitMaxPerIp: env.QUOTE_RATE_LIMIT_MAX_PER_IP
+      ? Number(env.QUOTE_RATE_LIMIT_MAX_PER_IP)
+      : undefined,
+    maxUnfundedQuotesPerAddress: env.MAX_UNFUNDED_QUOTES_PER_ADDRESS
+      ? Number(env.MAX_UNFUNDED_QUOTES_PER_ADDRESS)
+      : undefined,
+    maxGlobalUnfundedQuotes: env.MAX_GLOBAL_UNFUNDED_QUOTES
+      ? Number(env.MAX_GLOBAL_UNFUNDED_QUOTES)
+      : undefined,
   });
 }

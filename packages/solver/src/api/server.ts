@@ -29,6 +29,7 @@ import {
   signOrderId,
   quoteExactIn,
   quoteExactOut,
+  convertCeil,
   checkLimits,
   pegGuard,
   invariantF,
@@ -43,6 +44,7 @@ import type { SolverDatabase } from '../db/database.js';
 import type { BchQuorumClient } from '../bch/quorum-client.js';
 import type { SolverConfig } from '../config.js';
 import type { SolverEngine } from '../engine/runner.js';
+import { QuoteRateLimiter, extractClientIp } from './rate-limiter.js';
 import type { SolverOrderRecord } from '../state-machine/types.js';
 import {
   type PriceSource,
@@ -112,6 +114,7 @@ export interface SolverServerOptions {
   engine: SolverEngine;
   priceSource?: PriceSource;
   logger?: pino.Logger;
+  rateLimiter?: QuoteRateLimiter;
 }
 
 export function buildServer(options: SolverServerOptions): FastifyInstance {
@@ -196,6 +199,13 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
 
   const { config, db, evmAdapter, bchClient, engine } = options;
   const priceSource = options.priceSource ?? new TestnetStubPriceSource(logger);
+  const rateLimiter =
+    options.rateLimiter ||
+    new QuoteRateLimiter({
+      windowMs: config.quoteRateLimitWindowMs,
+      maxPerAddress: config.quoteRateLimitMaxPerAddress,
+      maxPerIp: config.quoteRateLimitMaxPerIp,
+    });
   const solverAccount = privateKeyToAccount(
     config.solverEvmPrivateKey as `0x${string}`,
   );
@@ -213,6 +223,37 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     }
 
     const request = parseResult.data;
+
+    // Rate limit per client address and per IP
+    const clientIp = extractClientIp(req, config.trustedProxy);
+    const clientAddress = request.userCounterAddress;
+    const rateCheck = rateLimiter.check(clientAddress, clientIp);
+    if (!rateCheck.allowed) {
+      return reply.status(429).send({
+        code: 'RATE_LIMITED',
+        message:
+          'Too many quote requests. Please wait before requesting another quote.',
+      });
+    }
+
+    // Bound unfunded quotes per address and globally
+    const unfundedForAddress = db.countUnfundedQuotesByAddress(clientAddress);
+    if (unfundedForAddress >= config.maxUnfundedQuotesPerAddress) {
+      return reply.status(429).send({
+        code: 'RATE_LIMITED',
+        message:
+          'Too many unfunded quotes for this address. Please fund an existing quote or wait for expiry.',
+      });
+    }
+
+    const globalUnfunded = db.countGlobalUnfundedQuotes();
+    if (globalUnfunded >= config.maxGlobalUnfundedQuotes) {
+      return reply.status(429).send({
+        code: 'RATE_LIMITED',
+        message:
+          'Solver quote capacity temporarily reached. Please retry shortly.',
+      });
+    }
 
     if (!config.quotingEnabled) {
       return reply.status(503).send({
@@ -243,7 +284,11 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     // Check limits
     const isReverse = request.direction === 'BCH_TO_COUNTER';
     const amountIn = request.amountIn;
-    const inDecimals = isReverse ? 2 : 6;
+    const counterDecimals =
+      request.counterChain === 'bsc' && request.counterSymbol === 'USDT'
+        ? 18
+        : 6;
+    const inDecimals = isReverse ? 2 : counterDecimals;
     const isWithinLimits = checkLimits(amountIn, inDecimals, {
       minUsdMicros: config.minSwapUsdMicros,
       maxUsdMicros: config.maxSwapUsdMicros,
@@ -257,7 +302,9 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
 
     // Check open exposure cap
     const currentExposure = db.getOpenExposureUsdMicros();
-    const requestedExposure = isReverse ? amountIn * 10_000n : amountIn;
+    const requestedExposure = isReverse
+      ? convertCeil(amountIn, 2, 6)
+      : convertCeil(amountIn, counterDecimals, 6);
     if (currentExposure + requestedExposure > config.maxExposureUsdMicros) {
       return reply.status(503).send({
         code: 'EXPOSURE_LIMIT_EXCEEDED',
@@ -273,7 +320,9 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
           message: 'Fast lane requires explicit fastOptIn=true',
         });
       }
-      const amountUsdMicros = isReverse ? amountIn * 10_000n : amountIn;
+      const amountUsdMicros = isReverse
+        ? convertCeil(amountIn, 2, 6)
+        : convertCeil(amountIn, counterDecimals, 6);
       if (amountUsdMicros > DEFAULT_REVEAL_CONFIG.zeroConfMaxUsdMicros) {
         return reply.status(400).send({
           code: 'FAST_LANE_CAP_EXCEEDED',
@@ -322,13 +371,13 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     let counterAmount: bigint;
     if (isReverse) {
       bchTokenAmount = amountIn;
-      counterAmount = quoteExactIn(amountIn, 2, 6, {
+      counterAmount = quoteExactIn(amountIn, 2, counterDecimals, {
         spreadBps: config.spreadBps,
         fixedFeeUsdMicros: config.fixedFeeUsdMicros,
       });
     } else {
       counterAmount = amountIn;
-      bchTokenAmount = quoteExactIn(amountIn, 6, 2, {
+      bchTokenAmount = quoteExactIn(amountIn, counterDecimals, 2, {
         spreadBps: config.spreadBps,
         fixedFeeUsdMicros: config.fixedFeeUsdMicros,
       });
@@ -400,7 +449,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       counterNetworkId: config.baseChainId,
       counterAsset: {
         symbol: request.counterSymbol,
-        decimals: 6,
+        decimals: counterDecimals,
         address: config.baseUsdcAddress,
       },
       counterHtlc: config.baseHtlcAddress,
@@ -1135,6 +1184,37 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       }
 
       const request = parseResult.data;
+
+      // Rate limit per client address and per IP
+      const clientIp = extractClientIp(req, config.trustedProxy);
+      const clientAddress = request.userCounterAddress;
+      const rateCheck = rateLimiter.check(clientAddress, clientIp);
+      if (!rateCheck.allowed) {
+        return reply.status(429).send({
+          code: 'RATE_LIMITED',
+          message:
+            'Too many quote requests. Please wait before requesting another quote.',
+        });
+      }
+
+      // Bound unfunded quotes per address and globally
+      const unfundedForAddress = db.countUnfundedQuotesByAddress(clientAddress);
+      if (unfundedForAddress >= config.maxUnfundedQuotesPerAddress) {
+        return reply.status(429).send({
+          code: 'RATE_LIMITED',
+          message:
+            'Too many unfunded quotes for this address. Please fund an existing quote or wait for expiry.',
+        });
+      }
+
+      const globalUnfunded = db.countGlobalUnfundedQuotes();
+      if (globalUnfunded >= config.maxGlobalUnfundedQuotes) {
+        return reply.status(429).send({
+          code: 'RATE_LIMITED',
+          message:
+            'Solver quote capacity temporarily reached. Please retry shortly.',
+        });
+      }
 
       if (!config.quotingEnabled) {
         return reply.status(503).send({
