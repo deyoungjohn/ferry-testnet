@@ -10,10 +10,12 @@ import { z } from 'zod';
 import { ferryHtlcAbi } from '@ferry/htlc-evm/abi';
 import { FERRY_HTLC_DEPLOYED_BYTECODE } from './contract-bytecode';
 import {
-  BASE_SEPOLIA_CHAIN_ID,
+  BASE_CHAIN_ID,
   BCH_NETWORK,
   FERRY_HTLC_ADDRESS,
   FERRY_HTLC_CODE_HASH,
+  NETWORK_CONFIG_ERRORS,
+  NETWORK_LABEL,
 } from './config';
 
 const hex32 = z
@@ -65,6 +67,24 @@ export function bchParametersFromTerms(terms: OrderTerms) {
   return encodeHtlcParameters(terms);
 }
 
+export function assertRecoveryNetwork(file: RecoveryFile): void {
+  if (NETWORK_CONFIG_ERRORS.length > 0) {
+    throw new Error(
+      `The ${NETWORK_LABEL} network profile is incomplete; recovery actions are disabled.`,
+    );
+  }
+  if (file.contracts.bch.network !== BCH_NETWORK) {
+    throw new Error(
+      `This recovery file is for ${file.contracts.bch.network}, but this build is ${BCH_NETWORK}. Refusing to claim on the wrong network.`,
+    );
+  }
+  if (file.contracts.evm.chainId !== BASE_CHAIN_ID) {
+    throw new Error(
+      `This recovery file is for EVM chain ${file.contracts.evm.chainId.toString()}, but this build is chain ${BASE_CHAIN_ID.toString()}. Refusing to claim on the wrong network.`,
+    );
+  }
+}
+
 export function buildRecoveryFile(
   orderId: Hex32,
   terms: OrderTerms,
@@ -86,7 +106,7 @@ export function buildRecoveryFile(
     createdAt,
     contracts: {
       evm: {
-        chainId: BASE_SEPOLIA_CHAIN_ID,
+        chainId: BASE_CHAIN_ID,
         address: FERRY_HTLC_ADDRESS,
         codeHash: FERRY_HTLC_CODE_HASH,
         bytecode: FERRY_HTLC_DEPLOYED_BYTECODE,

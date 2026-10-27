@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { BASE_CHAIN_NAME, BCH_PREFIX } from '../lib/config';
 import { useWallets } from '../lib/wallet/context';
 import { truncateAddress } from '../lib/swap';
 
@@ -82,8 +83,8 @@ export function WalletPanel() {
             {evm.status === 'unavailable'
               ? 'Wallet connect needs a Reown project ID'
               : evm.address
-                ? `Base Sepolia · ${truncateAddress(evm.address)}`
-                : 'Connect a Base Sepolia wallet'}
+                ? `${BASE_CHAIN_NAME} · ${truncateAddress(evm.address)}`
+                : `Connect a ${BASE_CHAIN_NAME} wallet`}
           </p>
         </div>
         <button
@@ -113,7 +114,7 @@ export function WalletPanel() {
           <input
             value={paste}
             onChange={(event) => setPaste(event.target.value)}
-            placeholder="bchtest:z…"
+            placeholder={`${BCH_PREFIX}:z…`}
             aria-label="BCH token-aware address"
             className="min-w-0 flex-1 rounded-pill border border-hairline bg-surface-1 px-3 py-1.5 font-mono text-[11px] text-text outline-none focus:border-lime/50"
           />

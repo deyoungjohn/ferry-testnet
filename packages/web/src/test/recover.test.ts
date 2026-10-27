@@ -129,6 +129,29 @@ describe('recovery validation', () => {
     );
   });
 
+  it('carries the active network and refuses a file from another network', async () => {
+    const file = await recoveryFile();
+    expect(file.contracts.bch.network).toBe('chipnet');
+    const wrongBchNetwork = {
+      ...file,
+      contracts: {
+        ...file.contracts,
+        bch: { ...file.contracts.bch, network: 'mainnet' as const },
+      },
+    };
+    expect(() => validateRecoveryFile(wrongBchNetwork)).toThrow(
+      /wrong network/,
+    );
+    const wrongEvmChain = {
+      ...file,
+      contracts: {
+        ...file.contracts,
+        evm: { ...file.contracts.evm, chainId: 8453 },
+      },
+    };
+    expect(() => validateRecoveryFile(wrongEvmChain)).toThrow(/wrong network/);
+  });
+
   it('rejects unknown fields and malformed JSON', async () => {
     const file = await recoveryFile();
     expect(() => parseRecoveryFile({ ...file, unexpected: true })).toThrow();

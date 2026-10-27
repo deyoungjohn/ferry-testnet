@@ -14,10 +14,8 @@ import {
   type RecoverySnapshot,
 } from '../recover/core';
 import type { RecoveryFile } from '../lib/recovery';
+import { BASE_RPC_URL, BCH_ELECTRUM_URL, NETWORK_LABEL } from '../lib/config';
 import { formatPusd, formatUsdc, truncateAddress } from '../lib/swap';
-
-const CHIPNET_ELECTRUM = 'wss://chipnet.imaginary.cash:50004';
-const BASE_SEPOLIA_RPC = 'https://sepolia.base.org';
 
 type Notice = { readonly kind: 'info' | 'ok' | 'error'; readonly text: string };
 
@@ -35,8 +33,8 @@ export function RecoverPage() {
   const [recovery, setRecovery] = useState<RecoveryFile | null>(null);
   const [snapshot, setSnapshot] = useState<RecoverySnapshot | null>(null);
   const [endpoints, setEndpoints] = useState<RecoveryEndpoints>({
-    electrumUrl: CHIPNET_ELECTRUM,
-    baseRpcUrl: BASE_SEPOLIA_RPC,
+    electrumUrl: BCH_ELECTRUM_URL,
+    baseRpcUrl: BASE_RPC_URL,
   });
   const [fileNotice, setFileNotice] = useState<Notice | null>(null);
   const [chainNotice, setChainNotice] = useState<Notice | null>(null);
@@ -196,7 +194,7 @@ export function RecoverPage() {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-16">
       <p className="text-xs font-medium tracking-[0.16em] text-text-muted uppercase">
-        Recovery
+        Recovery · {NETWORK_LABEL}
       </p>
       <h1 className="mt-1 font-serif text-4xl italic text-text sm:text-5xl">
         Recover a swap

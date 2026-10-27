@@ -16,6 +16,7 @@ import {
   type Hex,
 } from 'viem';
 import {
+  assertRecoveryNetwork,
   bchParametersFromTerms,
   RecoveryFileSchema,
   type RecoveryFile,
@@ -90,6 +91,7 @@ export function parseRecoveryJson(json: string): RecoveryFile {
 }
 
 export function validateRecoveryFile(file: RecoveryFile): RecoveryFile {
+  assertRecoveryNetwork(file);
   if (computeOrderId(file.terms) !== file.orderId) {
     throw new Error('Recovery file order id does not match its terms');
   }
@@ -444,6 +446,7 @@ export async function broadcastBchClaim(
   utxo: ElectrumUtxo,
   electrumUrl: string,
 ): Promise<string> {
+  assertRecoveryNetwork(file);
   const built = buildClaimTransaction({
     params: bchParametersFromTerms(file.terms),
     network: file.contracts.bch.network,
@@ -469,6 +472,7 @@ export async function broadcastBchRefund(
   utxo: ElectrumUtxo,
   electrumUrl: string,
 ): Promise<string> {
+  assertRecoveryNetwork(file);
   const built = buildRefundTransaction({
     params: bchParametersFromTerms(file.terms),
     network: file.contracts.bch.network,

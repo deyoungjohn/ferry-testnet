@@ -12,7 +12,7 @@ import {
   type Address,
 } from 'viem';
 import {
-  BASE_SEPOLIA_CHAIN_ID,
+  BASE_CHAIN_ID,
   FERRY_HTLC_ADDRESS,
   SOLVER_COUNTER_ADDRESS,
   MAX_SWAP_USD_MICROS,
@@ -128,7 +128,7 @@ export function buildPermitTypedData(
 export function buildIntentTypedData(terms: OrderTerms) {
   return lockIntentTypedData(
     {
-      chainId: BASE_SEPOLIA_CHAIN_ID,
+      chainId: BASE_CHAIN_ID,
       verifyingContract: FERRY_HTLC_ADDRESS,
     },
     {

@@ -1,4 +1,4 @@
-import { BCH_ELECTRUM_URL } from '../config';
+import { BCH_ELECTRUM_URLS } from '../config';
 
 export interface BchTip {
   readonly height: number;
@@ -18,11 +18,7 @@ export interface BchTipReader {
 }
 
 export function bchElectrumUrls(): readonly string[] {
-  const configured = [
-    BCH_ELECTRUM_URL,
-    (import.meta.env?.VITE_BCH_ELECTRUM_URL_2 ?? '').trim(),
-  ];
-  return [...new Set(configured.filter((url) => url.length > 0))];
+  return BCH_ELECTRUM_URLS;
 }
 
 export function bchQuoteConfigError(

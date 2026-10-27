@@ -1,26 +1,36 @@
 import { createAppKit } from '@reown/appkit/react';
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi';
 import { createConfig, http } from 'wagmi';
-import { baseSepolia } from 'wagmi/chains';
+import { base, baseSepolia } from 'wagmi/chains';
 import type { ChainAdapter } from '@reown/appkit';
 import type { AppKitNetwork } from '@reown/appkit/networks';
 import {
-  BASE_SEPOLIA_RPC_URL,
+  BASE_CHAIN_ID,
+  BASE_RPC_URL,
   FERRY_HTLC_ADDRESS,
+  IS_MAINNET,
   REOWN_PROJECT_ID,
 } from '../config';
 
-const networks = [baseSepolia] as unknown as [
+const activeChain = IS_MAINNET ? base : baseSepolia;
+const transport = BASE_RPC_URL ? http(BASE_RPC_URL) : http();
+const networks = [activeChain] as unknown as [
   AppKitNetwork,
   ...AppKitNetwork[],
 ];
+
+if (activeChain.id !== BASE_CHAIN_ID) {
+  throw new Error(
+    `Wallet chain ${activeChain.id.toString()} does not match the ${IS_MAINNET ? 'mainnet' : 'testnet'} profile (${BASE_CHAIN_ID.toString()})`,
+  );
+}
 
 export const wagmiAdapter = REOWN_PROJECT_ID
   ? new WagmiAdapter({
       networks,
       projectId: REOWN_PROJECT_ID,
       transports: {
-        [baseSepolia.id]: http(BASE_SEPOLIA_RPC_URL),
+        [activeChain.id]: transport,
       },
     })
   : null;
@@ -36,7 +46,7 @@ if (wagmiAdapter) {
       url: 'https://ferry.local',
       icons: [],
     },
-    defaultNetwork: baseSepolia,
+    defaultNetwork: activeChain,
     features: {
       analytics: false,
       email: false,
@@ -55,10 +65,10 @@ if (wagmiAdapter) {
 export const wagmiConfig =
   wagmiAdapter?.wagmiConfig ??
   createConfig({
-    chains: [baseSepolia],
+    chains: [activeChain] as never,
     transports: {
-      [baseSepolia.id]: http(BASE_SEPOLIA_RPC_URL),
-    },
+      [activeChain.id]: transport,
+    } as never,
   });
 
 export const ferryHtlcAddress = FERRY_HTLC_ADDRESS;

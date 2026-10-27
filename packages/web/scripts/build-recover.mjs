@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import process from 'node:process';
+import { loadEnv } from 'vite';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const entry = fileURLToPath(
@@ -12,6 +13,10 @@ const cssPath = fileURLToPath(
   new URL('../src/recover/recover.css', import.meta.url),
 );
 
+const env = loadEnv('production', root, 'VITE_');
+const network = (process.env.VITE_NETWORK ?? env.VITE_NETWORK ?? 'testnet')
+  .trim()
+  .toLowerCase();
 const result = await build({
   entryPoints: [entry],
   bundle: true,
@@ -23,7 +28,7 @@ const result = await build({
   minify: true,
   legalComments: 'none',
   define: {
-    'import.meta.env': '{}',
+    'import.meta.env': JSON.stringify({ VITE_NETWORK: network }),
     'process.env.NODE_ENV': '"production"',
   },
 });

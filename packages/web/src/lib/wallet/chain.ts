@@ -1,3 +1,5 @@
+import { BASE_CHAIN_NAME } from '../config';
+
 export function isWrongEvmChain(
   chainId: number | undefined,
   expectedChainId: number,
@@ -6,5 +8,5 @@ export function isWrongEvmChain(
 }
 
 export function wrongEvmChainMessage(expectedChainId: number): string {
-  return `Switch your wallet to Base Sepolia (chain ${expectedChainId.toString()}).`;
+  return `Switch your wallet to ${BASE_CHAIN_NAME} (chain ${expectedChainId.toString()}).`;
 }
