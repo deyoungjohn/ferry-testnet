@@ -48,14 +48,15 @@ describe(' wallet panel with the Base wallet already connected', () => {
     expect(set.bch.connect).toHaveBeenCalledTimes(1);
   });
 
-  it('shows a cancel action while the BCH wallet is connecting, and cancelling disconnects', () => {
+  it('starts a fresh scan while a stale reconnect is in progress', () => {
     const set = walletSet({ status: 'connecting' }, {});
     renderPanel(set);
     expect(
       screen.queryByRole('button', { name: 'Connect BCH' }),
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /reconnecting bch/i }));
-    expect(set.bch.disconnect).toHaveBeenCalledTimes(1);
+    expect(set.bch.connect).toHaveBeenCalledTimes(1);
+    expect(set.bch.disconnect).not.toHaveBeenCalled();
   });
 
   it('shows a remembered offline identity and can forget it', () => {

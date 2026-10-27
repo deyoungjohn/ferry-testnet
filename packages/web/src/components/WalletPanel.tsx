@@ -37,7 +37,7 @@ export function WalletPanel() {
         <button
           type="button"
           onClick={() => {
-            if (bch.status === 'connected' || bch.status === 'connecting') {
+            if (bch.status === 'connected') {
               void bch.disconnect();
             } else {
               bch.connect();

@@ -1,8 +1,9 @@
 import { ferryHtlcAbi } from '@ferry/htlc-evm/abi';
 import { useAppKit } from '@reown/appkit/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { clearSession } from '@wizardconnect/dapp';
 import { WizardConnectQRDialog, useWizardConnect } from '@wizardconnect/react';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   bytesToHex,
   hexToBytes,
@@ -31,7 +32,10 @@ import { ElectrumClient } from '../../recover/core';
 import { WalletContext } from './context';
 import { wagmiConfig } from './evm-config';
 import { buildInputPaths, sourceOutputToRelay } from './relay-format';
-import { inspectSignedTransaction } from './signed-check';
+import {
+  WalletSignedTransactionError,
+  inspectSignedTransaction,
+} from './signed-check';
 import { wizardConnectTheme } from './wizard-theme';
 import { useBchReconnectTimeout } from './reconnect-timeout';
 import { isWrongEvmChain, wrongEvmChainMessage } from './chain';
@@ -158,8 +162,22 @@ function txidOf(txHex: string): string {
   return bytesToHex(second).slice(2);
 }
 
-function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
+function useRealBchWallet(
+  onRestart: () => void,
+  startFresh: boolean,
+): { wallet: BchWallet; dialog: ReactNode } {
   const wizard = useWizardConnect({ dappName: 'Ferry' });
+  const connectRef = useRef(wizard.connect);
+  const startedFresh = useRef(false);
+  useEffect(() => {
+    connectRef.current = wizard.connect;
+  }, [wizard.connect]);
+  useEffect(() => {
+    if (!startFresh || startedFresh.current) return;
+    startedFresh.current = true;
+    const timer = window.setTimeout(() => connectRef.current(), 0);
+    return () => window.clearTimeout(timer);
+  }, [startFresh]);
   const reconnectTimedOut = useBchReconnectTimeout(wizard.state, () =>
     wizard.disconnect(),
   );
@@ -208,14 +226,10 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
     pendingRequest,
     walletName: wizard.walletName ?? remembered?.name ?? null,
     connect: () => {
-      // A pairing left in "connecting" or "reconnecting" ignores a second
-      // connect(); reset it first so the click always opens a fresh QR dialog.
-      void (async () => {
-        if (wizard.state === 'connecting' || wizard.state === 'reconnecting') {
-          await wizard.disconnect();
-        }
-        wizard.connect();
-      })();
+      // A fresh pairing must supersede a stale restored attempt without waiting
+      // for its relay disconnect. Clear the stored session and remount the
+      // WizardConnect hook; the new mount opens a fresh QR dialog.
+      onRestart();
     },
     disconnect: async () => {
       setManualAddress(null);
@@ -305,15 +319,9 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
         if (!report.ok) {
           console.error(
             'Wallet returned a transaction that fails the local check',
-            {
-              problems: report.problems,
-              unsignedHex: request.transaction,
-              signedHex: txHex,
-            },
+            report.diagnostic,
           );
-          throw new Error(
-            `The wallet's signed transaction failed the local check, so it was not broadcast. ${report.problems.join(' ')}`,
-          );
+          throw new WalletSignedTransactionError(report);
         }
         return { txHex, txid: txidOf(txHex) };
       } finally {
@@ -379,9 +387,18 @@ const unavailableEvm: EvmWallet = {
   },
 };
 
-function ConfiguredWalletSet({ children }: { readonly children: ReactNode }) {
-  const evm = useRealEvmWallet();
-  const { wallet: bch, dialog } = useRealBchWallet();
+function BchWalletSession({
+  evm,
+  startFresh,
+  onRestart,
+  children,
+}: {
+  readonly evm: EvmWallet;
+  readonly startFresh: boolean;
+  readonly onRestart: () => void;
+  readonly children: ReactNode;
+}) {
+  const { wallet: bch, dialog } = useRealBchWallet(onRestart, startFresh);
 
   return (
     <WalletContext.Provider value={{ evm, bch, usingMocks: false }}>
@@ -391,17 +408,41 @@ function ConfiguredWalletSet({ children }: { readonly children: ReactNode }) {
   );
 }
 
-function UnconfiguredWalletSet({ children }: { readonly children: ReactNode }) {
-  const { wallet: bch, dialog } = useRealBchWallet();
+export function BchWalletHost({
+  evm,
+  children,
+}: {
+  readonly evm: EvmWallet;
+  readonly children: ReactNode;
+}) {
+  const [nonce, setNonce] = useState(0);
+  const [startFresh, setStartFresh] = useState(false);
+  const restart = () => {
+    clearSession();
+    setStartFresh(true);
+    setNonce((current) => current + 1);
+  };
 
   return (
-    <WalletContext.Provider
-      value={{ evm: unavailableEvm, bch, usingMocks: false }}
+    <BchWalletSession
+      key={nonce}
+      evm={evm}
+      startFresh={startFresh}
+      onRestart={restart}
     >
       {children}
-      {dialog}
-    </WalletContext.Provider>
+    </BchWalletSession>
   );
+}
+
+function ConfiguredWalletSet({ children }: { readonly children: ReactNode }) {
+  const evm = useRealEvmWallet();
+
+  return <BchWalletHost evm={evm}>{children}</BchWalletHost>;
+}
+
+function UnconfiguredWalletSet({ children }: { readonly children: ReactNode }) {
+  return <BchWalletHost evm={unavailableEvm}>{children}</BchWalletHost>;
 }
 
 export function RealWalletProvider({

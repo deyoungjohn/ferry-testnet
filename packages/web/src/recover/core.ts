@@ -305,6 +305,15 @@ export class ElectrumClient {
     return this.request<string>('blockchain.transaction.get', [txid, false]);
   }
 
+  async transactionGetVerbose(
+    txid: string,
+  ): Promise<{ readonly confirmations?: number }> {
+    return this.request<{ readonly confirmations?: number }>(
+      'blockchain.transaction.get',
+      [txid, true],
+    );
+  }
+
   async transactionExists(txid: string): Promise<boolean> {
     try {
       await this.transactionGet(txid);

@@ -16,6 +16,7 @@ import {
   explorerTxUrl,
 } from '../lib/config';
 import { addressFromLockingBytecode } from '../lib/bch/address';
+import { bchClaimConfirmationCopy } from '../lib/bch/confirmations';
 import {
   ClaimSpentError,
   ClaimVerificationError,
@@ -128,6 +129,54 @@ export function SwapStatusPage() {
     [order, now],
   );
   const reverse = order?.terms.direction === 'BCH_TO_COUNTER';
+  const bchClaimTxid = useMemo(
+    () =>
+      order?.transactions.find((tx) => tx.label === 'BCH claim')?.hash ?? null,
+    [order],
+  );
+  const isDone = order?.status === 'DONE';
+  const [bchClaimConfirmations, setBchClaimConfirmations] = useState<
+    number | null
+  >(null);
+  const [bchClaimCheckError, setBchClaimCheckError] = useState<string | null>(
+    null,
+  );
+  const bchClaimCopy = bchClaimConfirmationCopy(bchClaimConfirmations);
+
+  useEffect(() => {
+    if (!bchClaimTxid || !isDone || !solverIsLive()) {
+      setBchClaimConfirmations(null);
+      setBchClaimCheckError(null);
+      return;
+    }
+    let active = true;
+    const read = async () => {
+      const electrum = new ElectrumClient(BCH_ELECTRUM_URL);
+      try {
+        await electrum.connect();
+        const details = await electrum.transactionGetVerbose(bchClaimTxid);
+        if (!active) return;
+        setBchClaimConfirmations(details.confirmations ?? 0);
+        setBchClaimCheckError(null);
+      } catch (cause) {
+        if (!active) return;
+        setBchClaimCheckError(
+          cause instanceof Error
+            ? cause.message
+            : 'Could not read BCH confirmations',
+        );
+      } finally {
+        electrum.close();
+      }
+    };
+    void read();
+    const timer = window.setInterval(() => void read(), 5_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [bchClaimTxid, isDone]);
+
   const bchUserAddress = useMemo(
     () =>
       order
@@ -715,6 +764,33 @@ export function SwapStatusPage() {
               ))}
             </ol>
           </section>
+
+          {isDone && solverIsLive() && bchClaimTxid ? (
+            <section
+              aria-live="polite"
+              className={[
+                'mt-5 rounded-card border p-5 text-[11px] leading-5 sm:p-6',
+                bchClaimCopy.confirmed
+                  ? 'border-ok/25 bg-ok/5 text-ok'
+                  : 'border-warn/25 bg-warn/5 text-warn',
+              ].join(' ')}
+            >
+              <p className="text-sm font-medium">
+                {bchClaimCheckError
+                  ? 'BCH claim confirmation unavailable'
+                  : bchClaimCopy.title}
+              </p>
+              <p className="mt-1">{bchClaimCheckError ?? bchClaimCopy.body}</p>
+              <a
+                href={explorerTxUrl('bch', bchClaimTxid)}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-block font-mono text-[10px] underline decoration-hairline underline-offset-2"
+              >
+                {truncateAddress(bchClaimTxid, 12, 8)}
+              </a>
+            </section>
+          ) : null}
 
           <section className="mt-5 rounded-card border border-hairline bg-surface-1 p-5 sm:p-6">
             {view.claimAvailable ? (

@@ -621,3 +621,25 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** Integration tests in `packages/solver/test/metrics-api.test.ts` verifying 404 on unset token, 401 on bad/missing token, 200 with valid bearer token, and asserting that public endpoints (`/v1/metrics`, `/v1/health`, `/v1/stats`, `/v1/orders/recent`, `/v1/pegs`) never contain order IDs. Mainnet config validation tests in `test/self-check.test.ts`.
 - **Consequence for rebuild:** Operator triage APIs must use constant-time bearer token auth with stealth 404 fallbacks; public telemetry endpoints must never expose order or user identifiers.
 
+
+### D-A1-033 · wallet signing requests carry per-input paths and diagnostics
+- **Decision:** Reverse funding builds `inputPaths` from `(sourceIndex, receive|change, addressIndex)`. The wallet's first tuple element is the transaction input index; repeating `[0, 'receive', 0]` for every source silently leaves later inputs unsigned.
+- **Diagnostics:** Every wallet-signed transaction is decoded and checked before broadcast: input outpoints, output bytes, non-empty unlocking scripts, then the BCH VM against the source outputs (including tokens). A failure throws `WalletSignedTransactionError` with per-input data and the unsigned/signed hex; the funding panel shows the failed input and a no-secret **Copy diagnostic** action.
+- **Balance preflight:** Before asking for a signature, the panel sums the quoted tPUSD category and spendable sats. It fails with human amounts (“You need 5.00 tPUSD; this wallet has 1.88.”) and required sats before starting funding or cancelling quote refresh.
+- **Done semantics:** On a live `DONE`, the status page polls the BCH claim txid and states whether it is in the mempool or confirmed, with the wallet-visible-after-one-confirmation explanation.
+- **Evidence:** `real-wallet-input.test.ts`, `signed-check.test.ts`, `funding-confirmations.test.ts`, `reverse-funding-diagnostic.test.tsx`; Paytaca wallet `signRequest` source confirms the tuple semantics.
+- **Consequence for rebuild:** Build multi-input wallet requests with explicit input indices and verify them through the wallet-side parser. Never trust a wallet-signed transaction until the local VM and output comparison pass.
+- **Revisit if:** WizardConnect changes the `inputPaths` shape or a wallet cannot sign token-bearing P2PKH inputs even with correct paths; that is the trigger for the QR/manual-send fallback.
+
+### D-A1-034 · a fresh BCH scan supersedes a stale restored session
+- **Decision:** BCH pairing is hosted by a keyed `BchWalletHost`. A user-requested connect clears the persisted WizardConnect session, remounts the hook with a fresh-scan intent, and starts a new QR relay; it never waits for the old relay's `disconnect()` to settle. A restored session that cannot complete is dropped by the existing 8-second timeout and returns to a clean offline/disconnected state.
+- **UI:** while a reconnect is visibly in progress, clicking “Reconnecting BCH…” starts the fresh scan instead of cancelling; the old stale attempt is discarded by the remount cleanup.
+- **Evidence:** Paytaca `signRequest` source confirms the wallet-side `inputPaths` tuple; `real-wallet-input.test.ts` round-trips two inputs; `bch-fresh-scan.test.tsx` uses a fake manager whose disconnect never resolves and proves the remount/fresh connect; `wallet-panel.test.tsx` covers the connecting action.
+- **Consequence for rebuild:** Treat a restored relay as untrusted until a live handshake completes. A new scan is a new session, not a retry on the same relay.
+- **Revisit if:** WizardConnect exposes a reliable cancel/probe API that can invalidate the old relay before remount.
+
+### Correction to D-A1-033 · rebase
+- The final implementation uses main's `buildInputPaths` in `relay-format.ts` and main's `lib/bch/balance.ts`; the earlier branch-local helper files were removed. `D-A1-034` adds the fresh-scan host behavior.
+
+### Correction to D-A1-033 · final implementation
+- Final code uses main's `buildInputPaths` and Paytaca's wallet-side parser as the source of truth; the branch-local helper was removed. The local check remains the structured `WalletSignedTransactionError` diagnostic implemented here.
