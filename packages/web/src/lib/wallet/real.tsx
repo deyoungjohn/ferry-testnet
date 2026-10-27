@@ -30,7 +30,7 @@ import {
 import { ElectrumClient } from '../../recover/core';
 import { WalletContext } from './context';
 import { wagmiConfig } from './evm-config';
-import { sourceOutputToRelay } from './relay-format';
+import { buildInputPaths, sourceOutputToRelay } from './relay-format';
 import { inspectSignedTransaction } from './signed-check';
 import { wizardConnectTheme } from './wizard-theme';
 import { useBchReconnectTimeout } from './reconnect-timeout';
@@ -290,21 +290,11 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
               ? { userPrompt: request.userPrompt }
               : {}),
           },
-          inputPaths: request.sourceOutputs.map((output) => {
-            const bytecode = bytesToHex(output.lockingBytecode).toLowerCase();
-            if (derived && bytecode === derived.lockingBytecode.toLowerCase()) {
-              return [0, 'receive', 0] as [number, 'receive', number];
-            }
-            if (
-              derivedChange &&
-              bytecode === derivedChange.lockingBytecode.toLowerCase()
-            ) {
-              return [1, 'change', 0] as [number, 'change', number];
-            }
-            throw new Error(
-              'A BCH input does not belong to the connected wallet receive or change path',
-            );
-          }),
+          inputPaths: buildInputPaths(
+            request.sourceOutputs,
+            derived?.lockingBytecode,
+            derivedChange?.lockingBytecode,
+          ),
         });
         const txHex = response.signedTransaction;
         const report = inspectSignedTransaction(

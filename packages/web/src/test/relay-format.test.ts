@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { sourceOutputToRelay } from '../lib/wallet/relay-format';
+import {
+  buildInputPaths,
+  sourceOutputToRelay,
+} from '../lib/wallet/relay-format';
 
 describe('WizardConnect relay wire format', () => {
   it('serializes bigint and bytes without throwing', () => {
@@ -34,5 +37,32 @@ describe('WizardConnect relay wire format', () => {
       lockingBytecode: new Uint8Array(),
     }) as Record<string, unknown>;
     expect('token' in wire).toBe(false);
+  });
+});
+
+describe('inputPaths', () => {
+  const out = (bytes: number[]) => ({
+    outpointIndex: 0,
+    outpointTransactionHash: new Uint8Array(32),
+    sequenceNumber: 0,
+    unlockingBytecode: new Uint8Array(),
+    valueSatoshis: 1n,
+    lockingBytecode: Uint8Array.from(bytes),
+  });
+
+  it('uses the input position as the first element, even on one address', () => {
+    expect(
+      buildInputPaths([out([1]), out([1]), out([2])], '0x01', '0x02'),
+    ).toEqual([
+      [0, 'receive', 0],
+      [1, 'receive', 0],
+      [2, 'change', 0],
+    ]);
+  });
+
+  it('refuses an input that is not the wallet receive or change address', () => {
+    expect(() => buildInputPaths([out([9])], '0x01', '0x02')).toThrow(
+      /does not belong/,
+    );
   });
 });

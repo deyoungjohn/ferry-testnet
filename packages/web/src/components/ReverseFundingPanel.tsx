@@ -1,9 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { OrderTerms } from '@ferry/core';
 import { PUSD_SYMBOL, SOLVER_BCH_ADDRESS } from '../lib/config';
 import { assertReverseFundingTarget, buildReverseLock } from '../lib/bch/lock';
 import { parseBchAddress } from '../lib/bch/address';
+import {
+  describeShortfall,
+  formatBch,
+  friendlyBuildError,
+  summarizeBalance,
+  type WalletBalance,
+} from '../lib/bch/balance';
 import { formatPusd, truncateAddress } from '../lib/swap';
 import { useWallets } from '../lib/wallet/context';
 import { CheckIcon } from './icons';
@@ -28,6 +35,28 @@ export function ReverseFundingPanel({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [balance, setBalance] = useState<WalletBalance | null>(null);
+  const walletAddress = bch.address?.address ?? null;
+
+  useEffect(() => {
+    let active = true;
+    setBalance(null);
+    if (!walletAddress) return;
+    bch
+      .listUtxos()
+      .then((utxos) => {
+        if (active) {
+          setBalance(summarizeBalance(utxos, terms.bchTokenCategory));
+        }
+      })
+      .catch(() => {
+        if (active) setBalance(null);
+      });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, terms.bchTokenCategory]);
 
   let target: ReturnType<typeof assertReverseFundingTarget> | null = null;
   let targetError: string | null = null;
@@ -60,6 +89,14 @@ export function ReverseFundingPanel({
     setNotice(null);
     try {
       const utxos = await bch.listUtxos();
+      const have = summarizeBalance(utxos, terms.bchTokenCategory);
+      setBalance(have);
+      const shortfall = describeShortfall(have, {
+        tokenAmount: terms.bchTokenAmount,
+        carrySats: terms.bchCarrySats,
+        symbol: PUSD_SYMBOL,
+      });
+      if (shortfall) throw new Error(shortfall);
       const build = buildReverseLock({
         terms,
         utxos,
@@ -70,7 +107,9 @@ export function ReverseFundingPanel({
       onFunded(txid);
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : 'Could not fund the BCH lock',
+        cause instanceof Error
+          ? friendlyBuildError(cause.message, PUSD_SYMBOL)
+          : 'Could not fund the BCH lock',
       );
     } finally {
       setBusy(false);
@@ -98,6 +137,12 @@ export function ReverseFundingPanel({
             Send {formatPusd(terms.bchTokenAmount)} {PUSD_SYMBOL} +{' '}
             {terms.bchCarrySats.toString()} sats carry into the HTLC.
           </p>
+          {balance ? (
+            <p className="mt-0.5 text-[11px] text-text-muted">
+              Wallet balance: {formatPusd(balance.tokenAmount)} {PUSD_SYMBOL} ·{' '}
+              {formatBch(balance.satoshis)} BCH
+            </p>
+          ) : null}
         </div>
         <span className="rounded-pill bg-olive-soft px-2 py-0.5 text-[9px] font-medium tracking-[0.14em] text-lime uppercase ring-1 ring-lime/15">
           Reverse

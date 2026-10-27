@@ -33,3 +33,30 @@ export function sourceOutputToRelay(output: SourceOutput): unknown {
       : {}),
   };
 }
+
+/**
+ * `inputPaths` entries are `[inputIndex, pathName, addressIndex]`: the first
+ * number is the position of the input in the transaction, so two inputs on the
+ * same address need two different entries. Sending the child index here left
+ * input 1 unsigned.
+ */
+export function buildInputPaths(
+  sourceOutputs: readonly BchSourceOutput[],
+  receiveLockingBytecode: string | undefined,
+  changeLockingBytecode: string | undefined,
+): [number, 'receive' | 'change', number][] {
+  const receive = receiveLockingBytecode?.toLowerCase();
+  const change = changeLockingBytecode?.toLowerCase();
+  return sourceOutputs.map((output, inputIndex) => {
+    const bytecode = `0x${toHex(output.lockingBytecode)}`;
+    if (receive && bytecode === receive) {
+      return [inputIndex, 'receive', 0] as [number, 'receive', number];
+    }
+    if (change && bytecode === change) {
+      return [inputIndex, 'change', 0] as [number, 'change', number];
+    }
+    throw new Error(
+      'A BCH input does not belong to the connected wallet receive or change path',
+    );
+  });
+}
