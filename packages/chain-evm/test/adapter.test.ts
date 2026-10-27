@@ -312,6 +312,25 @@ describe('EvmChainAdapter on local anvil', () => {
       expect(state2.secret).toBe(secret);
     }
 
+    // Test fallback when logs cannot be read or are unavailable
+    // Clear in-memory secret cache
+    // @ts-expect-error accessing private cache for test
+    adapter.lastSeenSecretByLock.clear();
+    // Temporarily stub getLogs to return empty (simulating RPC log lag/failure)
+    const originalGetLogs = adapter['client'].getLogs;
+    adapter['client'].getLogs = async () => [];
+
+    const stateWithoutLog = await adapter.getLock(lockId);
+    expect(stateWithoutLog.status).toBe('claimed');
+    if (stateWithoutLog.status === 'claimed') {
+      // Must be null, strictly NEVER 0x00...00!
+      expect(stateWithoutLog.secret).toBeNull();
+      expect(stateWithoutLog.secret).not.toBe(`0x${'00'.repeat(32)}`);
+    }
+
+    // Restore getLogs
+    adapter['client'].getLogs = originalGetLogs;
+
     unsubscribe();
   });
 

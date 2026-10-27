@@ -1,6 +1,6 @@
 import { createPublicClient, getAddress, http, parseAbi } from 'viem';
 import type { Address, Hash, PublicClient, WalletClient } from 'viem';
-import { evmLockId, lockIntentTypedData } from '@ferry/core';
+import { evmLockId, lockIntentTypedData, isValidSecret } from '@ferry/core';
 import type {
   ChainAdapter,
   CounterAsset,
@@ -424,11 +424,14 @@ export class EvmChainAdapter implements ChainAdapter {
           // ignore log fetch error
         }
       }
+      if (claimSecret && !isValidSecret(claimSecret, lockData.hashLock)) {
+        claimSecret = undefined;
+      }
       return {
         status: 'claimed',
         lockTx,
         claimTx: { chain: this.id, txId: cachedClaimTx },
-        secret: claimSecret ?? (`0x${'00'.repeat(32)}` as Hex32),
+        secret: claimSecret ?? null,
         ...lockData,
       };
     }
@@ -628,6 +631,25 @@ export class EvmChainAdapter implements ChainAdapter {
       }
 
       return confirmations >= this.confirmations;
+    } catch {
+      return false;
+    }
+  }
+
+  async isTxMinedOrPending(txId: string): Promise<boolean> {
+    try {
+      const receipt = await this.client.getTransactionReceipt({
+        hash: txId as Hash,
+      });
+      if (receipt) return true;
+    } catch {
+      // not mined yet
+    }
+    try {
+      const tx = await this.client.getTransaction({
+        hash: txId as Hash,
+      });
+      return tx !== null && tx !== undefined;
     } catch {
       return false;
     }
