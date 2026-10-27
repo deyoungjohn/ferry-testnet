@@ -7,4 +7,5 @@ export * from './reveal.js';
 export * from './adapter.js';
 export * from './evm.js';
 export * from './category.js';
+export * from './secret.js';
 export * from './api/index.js';

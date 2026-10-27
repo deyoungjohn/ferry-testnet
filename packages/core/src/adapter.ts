@@ -37,7 +37,7 @@ export type LockState =
       status: 'claimed';
       lockTx: TxRef;
       claimTx: TxRef;
-      secret: Hex32;
+      secret: Hex32 | null;
     } & LockData)
   | ({ status: 'refunded'; lockTx: TxRef; refundTx: TxRef } & LockData);
 /** Deduplicate eventId; removed=true retracts a reorged observation.
