@@ -587,3 +587,13 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** `real-wallet-input.test.ts`, `signed-check.test.ts`, `funding-confirmations.test.ts`, `reverse-funding-diagnostic.test.tsx`; Paytaca wallet `signRequest` source confirms the tuple semantics.
 - **Consequence for rebuild:** Build multi-input wallet requests with explicit input indices and verify them through the wallet-side parser. Never trust a wallet-signed transaction until the local VM and output comparison pass.
 - **Revisit if:** WizardConnect changes the `inputPaths` shape or a wallet cannot sign token-bearing P2PKH inputs even with correct paths; that is the trigger for the QR/manual-send fallback.
+
+### D-A1-034 · a fresh BCH scan supersedes a stale restored session
+- **Decision:** BCH pairing is hosted by a keyed `BchWalletHost`. A user-requested connect clears the persisted WizardConnect session, remounts the hook with a fresh-scan intent, and starts a new QR relay; it never waits for the old relay's `disconnect()` to settle. A restored session that cannot complete is dropped by the existing 8-second timeout and returns to a clean offline/disconnected state.
+- **UI:** while a reconnect is visibly in progress, clicking “Reconnecting BCH…” starts the fresh scan instead of cancelling; the old stale attempt is discarded by the remount cleanup.
+- **Evidence:** Paytaca `signRequest` source confirms the wallet-side `inputPaths` tuple; `real-wallet-input.test.ts` round-trips two inputs; `bch-fresh-scan.test.tsx` uses a fake manager whose disconnect never resolves and proves the remount/fresh connect; `wallet-panel.test.tsx` covers the connecting action.
+- **Consequence for rebuild:** Treat a restored relay as untrusted until a live handshake completes. A new scan is a new session, not a retry on the same relay.
+- **Revisit if:** WizardConnect exposes a reliable cancel/probe API that can invalidate the old relay before remount.
+
+### Correction to D-A1-033 · rebase
+- The final implementation uses main's `buildInputPaths` in `relay-format.ts` and main's `lib/bch/balance.ts`; the earlier branch-local helper files were removed. `D-A1-034` adds the fresh-scan host behavior.
