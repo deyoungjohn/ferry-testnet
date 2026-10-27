@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "hygiene": "tsx check-repo-hygiene.ts",
+    "fulcrum:quorum": "tsx verify-fulcrum-quorum.ts",
     "keys:generate": "tsx keys/generate.ts",
     "keys:addresses": "tsx keys/addresses.ts",
     "balances": "tsx balances/index.ts"
