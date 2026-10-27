@@ -3,7 +3,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { bchElectrumUrls, bchQuoteConfigError } from '../lib/bch/tip';
 import {
-  BASE_SEPOLIA_CHAIN_ID,
+  BASE_CHAIN_ID,
   BCH_CARRY_SATS,
   BCH_MAX_FEE_SATS,
   BCH_NETWORK,
@@ -216,7 +216,7 @@ export function SwapCard() {
       }
       const checkConfig: TermsCheckConfig = {
         counterChain: 'base',
-        counterNetworkId: BASE_SEPOLIA_CHAIN_ID,
+        counterNetworkId: BASE_CHAIN_ID,
         counterSymbol: nextRequest.counterSymbol,
         counterAssetAddress: USDC_ADDRESS,
         counterAssetDecimals: USDC_DECIMALS,

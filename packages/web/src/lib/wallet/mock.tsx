@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { keccak256, sha256, toBytes } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Hex, TypedDataDefinition } from 'viem';
-import { parseBchAddress } from '../bch/address';
+import { parseBchAddress, parseBchAddressAnyNetwork } from '../bch/address';
 import { MOCK_BCH_USER_ADDRESS, PUSD_CATEGORY } from '../config';
 import { WalletContext } from './context';
 import { sourceOutputToRelay } from './relay-format';
@@ -18,7 +18,7 @@ import type {
 
 const mockUser = privateKeyToAccount(keccak256(toBytes('ferry.mock.user.v1')));
 
-const mockBchResult = parseBchAddress(MOCK_BCH_USER_ADDRESS);
+const mockBchResult = parseBchAddressAnyNetwork(MOCK_BCH_USER_ADDRESS);
 if (!mockBchResult.ok) throw new Error(mockBchResult.error);
 const mockBch = mockBchResult.value;
 

@@ -6,7 +6,7 @@ import {
   hash160,
   lockingBytecodeToCashAddress,
 } from '@bitauth/libauth';
-import { BCH_PREFIX } from '../config';
+import { BCH_CHAIN_NAME, BCH_PREFIX } from '../config';
 
 export interface BchAddressInfo {
   readonly address: string;
@@ -24,7 +24,7 @@ export function parseBchAddress(input: string): BchAddressResult {
   if (!address.toLowerCase().startsWith(`${BCH_PREFIX}:`)) {
     return {
       ok: false,
-      error: `Use a ${BCH_PREFIX}: chipnet address`,
+      error: `Use a ${BCH_PREFIX}: address on ${BCH_CHAIN_NAME}`,
     };
   }
 
@@ -38,7 +38,7 @@ export function parseBchAddress(input: string): BchAddressResult {
   if (decoded.type !== 'p2pkhWithTokens') {
     return {
       ok: false,
-      error: 'Use the token-aware address (it starts with bchtest:z)',
+      error: `Use the token-aware address (it starts with ${BCH_PREFIX}:z)`,
     };
   }
 
@@ -47,6 +47,30 @@ export function parseBchAddress(input: string): BchAddressResult {
     return { ok: false, error: 'Could not decode that address' };
   }
 
+  return {
+    ok: true,
+    value: {
+      address,
+      lockingBytecode: `0x${binToHex(locking.bytecode)}`,
+      tokenAware: locking.tokenSupport,
+    },
+  };
+}
+
+export function parseBchAddressAnyNetwork(input: string): BchAddressResult {
+  const address = input.trim();
+  if (!address) return { ok: false, error: 'Paste a BCH address' };
+  const decoded = decodeCashAddress(address);
+  if (typeof decoded === 'string') {
+    return { ok: false, error: 'That address checksum is not valid' };
+  }
+  if (decoded.type !== 'p2pkh' && decoded.type !== 'p2pkhWithTokens') {
+    return { ok: false, error: 'Use a P2PKH address that can receive tokens' };
+  }
+  const locking = cashAddressToLockingBytecode(address);
+  if (typeof locking === 'string') {
+    return { ok: false, error: 'Could not decode that address' };
+  }
   return {
     ok: true,
     value: {

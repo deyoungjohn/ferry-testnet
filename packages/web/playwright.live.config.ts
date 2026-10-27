@@ -55,6 +55,7 @@ export default defineConfig({
         VITE_SOLVER_BCH_ADDRESS: solverBch,
         VITE_REOWN_PROJECT_ID: '',
         VITE_USE_MOCKS: '',
+        VITE_NETWORK: 'testnet',
       },
     },
   ],

@@ -1,6 +1,11 @@
 import { lazy, Suspense, useState } from 'react';
 import { Link } from 'react-router';
-import { NETWORK_LABEL } from '../lib/config';
+import {
+  BASE_CHAIN_NAME,
+  BCH_CHAIN_NAME,
+  IS_MAINNET,
+  NETWORK_LABEL,
+} from '../lib/config';
 import { truncateAddress } from '../lib/swap';
 import { useWallets } from '../lib/wallet/context';
 import { GlassNav } from './GlassNav';
@@ -83,10 +88,13 @@ export function NavBar() {
               </button>
             }
           >
-            <p className="font-medium text-text">BCH chipnet + Base Sepolia</p>
+            <p className="font-medium text-text">
+              {BCH_CHAIN_NAME} + {BASE_CHAIN_NAME}
+            </p>
             <p className="mt-1">
-              This lab runs on test networks only. Balances and addresses here
-              are not real funds.
+              {IS_MAINNET
+                ? 'Mainnet. Balances, signatures and transactions use real funds and cannot be reversed.'
+                : 'This lab runs on test networks only. Balances and addresses here are not real funds.'}
             </p>
           </GlassPopover>
           <button

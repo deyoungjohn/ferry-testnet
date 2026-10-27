@@ -38,7 +38,8 @@ import { describeSolverError, type SolverFailure } from '../lib/solver/errors';
 import { solverIsLive } from '../lib/solver/kind';
 import { useWallets } from '../lib/wallet/context';
 import {
-  BASE_SEPOLIA_CHAIN_ID,
+  BASE_CHAIN_ID,
+  BASE_CHAIN_NAME,
   BCH_CARRY_SATS,
   BCH_NETWORK,
   BCH_MAX_FEE_SATS,
@@ -216,7 +217,7 @@ export function PayLinkPage() {
       }
       const config: TermsCheckConfig = {
         counterChain: 'base',
-        counterNetworkId: BASE_SEPOLIA_CHAIN_ID,
+        counterNetworkId: BASE_CHAIN_ID,
         counterSymbol: request.counterSymbol,
         counterAssetAddress: USDC_ADDRESS,
         counterAssetDecimals: USDC_DECIMALS,
@@ -474,8 +475,8 @@ export function PayLinkPage() {
                   {evm.status === 'unavailable'
                     ? 'Wallet connect needs a Reown project ID'
                     : evm.address
-                      ? `Base Sepolia · ${truncateAddress(evm.address)}`
-                      : 'Connect a Base Sepolia wallet'}
+                      ? `${BASE_CHAIN_NAME} · ${truncateAddress(evm.address)}`
+                      : `Connect a ${BASE_CHAIN_NAME} wallet`}
                 </p>
               </div>
             </div>

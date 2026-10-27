@@ -10,6 +10,7 @@ import {
 import { Link } from 'react-router';
 import { LinkVerificationBadge } from '../components/LinkVerificationBadge';
 import { parseBchAddress, type BchAddressInfo } from '../lib/bch/address';
+import { BCH_PREFIX } from '../lib/config';
 import {
   chunkCashaddr,
   createChallenge,
@@ -350,7 +351,7 @@ export function PayLinksPage() {
                       handlePaste();
                     }
                   }}
-                  placeholder="bchtest:z…"
+                  placeholder={`${BCH_PREFIX}:z…`}
                   className="min-w-0 flex-1 rounded-pill bg-surface-1 px-3 py-2 font-mono text-[11px] ring-1 ring-hairline outline-none"
                 />
                 <button

@@ -23,7 +23,7 @@ import {
 } from '@ferry/core';
 import { keccak256, sha256, toBytes, type Address } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { parseBchAddress } from '../bch/address';
+import { parseBchAddressAnyNetwork } from '../bch/address';
 import { SolverError } from './errors';
 import {
   createLinkId,
@@ -75,11 +75,11 @@ if (
   throw new Error('Mock solver signing address does not match config');
 }
 
-const solverBchResult = parseBchAddress(MOCK_BCH_SOLVER_ADDRESS);
+const solverBchResult = parseBchAddressAnyNetwork(MOCK_BCH_SOLVER_ADDRESS);
 if (!solverBchResult.ok) throw new Error(solverBchResult.error);
 const solverBch = solverBchResult.value;
 
-const userBchResult = parseBchAddress(MOCK_BCH_USER_ADDRESS);
+const userBchResult = parseBchAddressAnyNetwork(MOCK_BCH_USER_ADDRESS);
 if (!userBchResult.ok) throw new Error(userBchResult.error);
 const userBch = userBchResult.value;
 

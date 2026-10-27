@@ -1,6 +1,9 @@
 import { Outlet } from 'react-router';
 import { GlassLayerProvider } from './GlassLayerProvider';
 import { BannerBar } from './BannerBar';
+import { NetworkBanner } from './NetworkBanner';
+import { NetworkBlockedPage } from './NetworkBlockedPage';
+import { NETWORK_CONFIG_ERRORS } from '../lib/config';
 import { Footer } from './Footer';
 import { ToastProvider } from './GlassToast';
 import { WalletActivityBanner } from './WalletActivityBanner';
@@ -17,11 +20,16 @@ export function AppShell() {
           >
             Skip to content
           </a>
+          <NetworkBanner />
           <BannerBar />
           <WalletActivityBanner />
           <NavBar />
           <main id="main" className="flex-1">
-            <Outlet />
+            {NETWORK_CONFIG_ERRORS.length > 0 ? (
+              <NetworkBlockedPage />
+            ) : (
+              <Outlet />
+            )}
           </main>
           <Footer />
         </div>

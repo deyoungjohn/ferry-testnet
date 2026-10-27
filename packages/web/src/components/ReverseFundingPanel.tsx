@@ -8,10 +8,6 @@ import { formatPusd, truncateAddress } from '../lib/swap';
 import { useWallets } from '../lib/wallet/context';
 import { CheckIcon } from './icons';
 
-const solverBch = parseBchAddress(SOLVER_BCH_ADDRESS);
-if (!solverBch.ok) throw new Error(solverBch.error);
-const solverBchLockingBytecode = solverBch.value.lockingBytecode;
-
 export interface ReverseFundingPanelProps {
   readonly terms: OrderTerms;
   readonly onFunded: (txid: string) => void;
@@ -37,10 +33,12 @@ export function ReverseFundingPanel({
   let targetError: string | null = null;
   try {
     if (!bch.address) throw new Error('Connect the BCH wallet first');
+    const solverBch = parseBchAddress(SOLVER_BCH_ADDRESS);
+    if (!solverBch.ok) throw new Error(solverBch.error);
     target = assertReverseFundingTarget(
       terms,
       bch.address.lockingBytecode,
-      solverBchLockingBytecode,
+      solverBch.value.lockingBytecode,
     );
   } catch (cause) {
     targetError =

@@ -21,7 +21,7 @@ import {
 } from 'wagmi';
 import { addressFromPubkey } from '../bch/address';
 import {
-  BASE_SEPOLIA_CHAIN_ID,
+  BASE_CHAIN_ID,
   BCH_ELECTRUM_URL,
   FERRY_HTLC_ADDRESS,
   REOWN_PROJECT_ID,
@@ -63,8 +63,7 @@ const noncesAbi = [
 function useRealEvmWallet(): EvmWallet {
   const { address, chainId, isConnected, isConnecting, isReconnecting } =
     useAccount();
-  const wrongChain =
-    isConnected && isWrongEvmChain(chainId, BASE_SEPOLIA_CHAIN_ID);
+  const wrongChain = isConnected && isWrongEvmChain(chainId, BASE_CHAIN_ID);
   const { disconnectAsync } = useDisconnect();
   const { open } = useAppKit();
   const { signTypedDataAsync } = useSignTypedData();
@@ -84,9 +83,7 @@ function useRealEvmWallet(): EvmWallet {
             ? 'connecting'
             : 'disconnected',
     address: wrongChain ? null : (address ?? null),
-    error:
-      error ??
-      (wrongChain ? wrongEvmChainMessage(BASE_SEPOLIA_CHAIN_ID) : null),
+    error: error ?? (wrongChain ? wrongEvmChainMessage(BASE_CHAIN_ID) : null),
     pendingRequest,
     connect: () => {
       if (!REOWN_PROJECT_ID) {
