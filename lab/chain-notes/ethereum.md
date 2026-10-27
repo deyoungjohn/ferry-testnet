@@ -44,3 +44,17 @@ Per-chain quirks: RPC behaviour, confirmation times, fees, faucets, explorers, m
    - Refund Tx: `0xa0bf1b735adca98f60dd9fbf8420ac26e8dceb5e063fc5ebb00b84952b6646d8` (block 11988172, gas used: 71,666).
    - Lock ID: `0xc4fd1e9e66305ee2d105120a9a428fcf9fff9be0e81aab336535e8677f8fc4ac`.
    - Final state: `Refunded` (3). Full 1 USDC returned to user.
+
+---
+
+## 2026-10-27 · S-14 Mainnet Fork Suite Isolation & Pinned Block
+
+### S-14 Mainnet Fork Suite (`test/S14UsdtMainnetFork.t.sol`)
+- **Opt-In Guard:** Guarded behind `FERRY_FORK_TESTS=1`. Default `forge test` skips the fork suite completely (execution time: 5.9 ms vs 45-92 seconds previously), preventing public RPC latency or downtime from blocking local builds and offline CI.
+- **Pinned Block:** Pinned to block `26,285,600` on Ethereum Mainnet (`https://ethereum-rpc.publicnode.com`). Public full nodes prune state beyond ~10,000 blocks (`error code 4444: pruned history unavailable`); pinning within the recent unpruned window ensures stable fork creation. Overridable via `MAINNET_FORK_BLOCK`.
+- **Verified Offline Execution:** Proved that default `forge test` runs 100% offline in a network namespace with loopback isolation (`unshare -r -n bash -c "ip link set lo up && forge test"`): all 46 core tests pass, 3 fork tests skip.
+- **Verified Opt-In Execution (`FERRY_FORK_TESTS=1`):**
+  - `test_s14_usdt_noPermitSupport`: PASS (gas: 46,088) — verifies `DOMAIN_SEPARATOR()` and `permit()` revert on Mainnet USDT (`0xdAC17F958D2ee523a2206206994597C13D831ec7`).
+  - `test_s14_usdt_noReturnValue_lockAndClaim`: PASS (gas: 422,776) — verifies OpenZeppelin `SafeERC20` correctly handles void-return `transfer` / `transferFrom` in `lock()` and `claim()`.
+  - `test_s14_usdt_noReturnValue_lockAndRefund`: PASS (gas: 403,027) — verifies void-return `transfer` in `refund()` after deadline.
+

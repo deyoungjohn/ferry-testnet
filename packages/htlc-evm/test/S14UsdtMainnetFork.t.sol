@@ -9,6 +9,7 @@ import { FerryHTLC } from "../src/FerryHTLC.sol";
 contract S14UsdtMainnetForkTest is Test {
     address public constant MAINNET_USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
     string public constant DEFAULT_MAINNET_RPC = "https://ethereum-rpc.publicnode.com";
+    uint256 public constant DEFAULT_PINNED_BLOCK = 26_285_600;
 
     FerryHTLC public htlc;
     address public user = makeAddr("user");
@@ -21,12 +22,20 @@ contract S14UsdtMainnetForkTest is Test {
     uint64 public deadline;
 
     function setUp() public {
+        uint256 forkOptIn = vm.envOr("FERRY_FORK_TESTS", uint256(0));
+        if (forkOptIn != 1) {
+            console2.log("Skipping S14 mainnet fork tests: set FERRY_FORK_TESTS=1 to enable");
+            return;
+        }
+
         string memory rpcUrl = vm.envOr("MAINNET_RPC_URL", DEFAULT_MAINNET_RPC);
-        try vm.createSelectFork(rpcUrl) {
-        // fork created
+        uint256 forkBlock = vm.envOr("MAINNET_FORK_BLOCK", DEFAULT_PINNED_BLOCK);
+
+        try vm.createSelectFork(rpcUrl, forkBlock) {
+        // fork created and block pinned
         }
         catch {
-            // Offline / RPC unavailable: skip fork tests gracefully
+            console2.log("Skipping S14 mainnet fork tests: RPC connection failed");
             return;
         }
 
@@ -36,7 +45,7 @@ contract S14UsdtMainnetForkTest is Test {
     }
 
     function test_s14_usdt_noReturnValue_lockAndClaim() public {
-        if (block.chainid != 1) {
+        if (vm.envOr("FERRY_FORK_TESTS", uint256(0)) != 1 || block.chainid != 1) {
             vm.skip(true);
             return;
         }
@@ -65,7 +74,7 @@ contract S14UsdtMainnetForkTest is Test {
     }
 
     function test_s14_usdt_noReturnValue_lockAndRefund() public {
-        if (block.chainid != 1) {
+        if (vm.envOr("FERRY_FORK_TESTS", uint256(0)) != 1 || block.chainid != 1) {
             vm.skip(true);
             return;
         }
@@ -94,7 +103,7 @@ contract S14UsdtMainnetForkTest is Test {
     }
 
     function test_s14_usdt_noPermitSupport() public {
-        if (block.chainid != 1) {
+        if (vm.envOr("FERRY_FORK_TESTS", uint256(0)) != 1 || block.chainid != 1) {
             vm.skip(true);
             return;
         }
