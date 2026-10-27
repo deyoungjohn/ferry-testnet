@@ -44,7 +44,7 @@ export interface BuildClaimTxOptions {
   network?: CashAddressNetwork;
   provider?: NetworkProvider;
   overrideDisplayCategory?: string;
-  skipVmVerify?: boolean;
+  verifyWithVm?: boolean;
 }
 
 export interface BuildRefundTxOptions {
@@ -54,7 +54,7 @@ export interface BuildRefundTxOptions {
   network?: CashAddressNetwork;
   provider?: NetworkProvider;
   overrideDisplayCategory?: string;
-  skipVmVerify?: boolean;
+  verifyWithVm?: boolean;
 }
 
 /**
@@ -240,7 +240,7 @@ export function buildClaimTransaction(
     },
   };
 
-  if (!options.skipVmVerify) {
+  if (options.verifyWithVm) {
     const vmResult = verifyBchTransactionWithVm({
       transaction: libauthTx,
       sourceOutputs: [sourceOutput],
@@ -335,7 +335,7 @@ export function buildRefundTransaction(
     },
   };
 
-  if (!options.skipVmVerify) {
+  if (options.verifyWithVm) {
     const vmResult = verifyBchTransactionWithVm({
       transaction: libauthTx,
       sourceOutputs: [sourceOutput],

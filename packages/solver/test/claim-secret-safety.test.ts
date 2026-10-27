@@ -225,6 +225,7 @@ describe('Claim Secret Safety & Action Rebuild', () => {
             satoshis: terms.bchCarrySats,
           },
           network: 'chipnet',
+          verifyWithVm: true,
         });
       }).toThrow(/VM verification failed.*OP_VERIFY/);
     });
@@ -255,13 +256,12 @@ describe('Claim Secret Safety & Action Rebuild', () => {
       });
       expect(checkValid).toBe(true);
 
-      // 2. Build claim tx with invalid secret using skipVmVerify to simulate stored bad action
+      // 2. Build claim tx with invalid secret (without verifyWithVm) to simulate stored bad action
       const badTx = buildClaimTransaction({
         params: bchParams,
         secret: zeroSecret,
         utxo,
         network: 'chipnet',
-        skipVmVerify: true,
       });
 
       // Verification fails
@@ -288,6 +288,7 @@ describe('Claim Secret Safety & Action Rebuild', () => {
         params: bchParams,
         utxo,
         network: 'chipnet',
+        verifyWithVm: true,
       });
 
       const check = verifyRefundTransactionHex({

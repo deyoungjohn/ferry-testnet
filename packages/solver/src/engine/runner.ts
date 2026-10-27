@@ -1120,6 +1120,7 @@ export class SolverEngine {
                     satoshis: order.terms.bchCarrySats,
                   },
                   network: this.bchNetwork,
+                  verifyWithVm: true,
                 });
                 return { txid: refundResult.txid, txHex: refundResult.txHex };
               },
@@ -1675,6 +1676,7 @@ export class SolverEngine {
           utxo: claimUtxo,
           secret: order.secret!,
           network: this.bchNetwork,
+          verifyWithVm: true,
         });
         return { txid: claimResult.txid, txHex: claimResult.txHex };
       },
