@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
 import { createHttpSolverClient } from './http';
+import type { OrderStatus } from '@ferry/core';
 import { createMockSolverClient } from './mock';
 import { SolverContext } from './context';
 
@@ -39,6 +40,35 @@ function quoteFailureFromLocation():
     : undefined;
 }
 
+function holdStatusFromLocation(): OrderStatus | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const value = new URLSearchParams(window.location.search).get('holdStatus');
+  const statuses: readonly OrderStatus[] = [
+    'QUOTED',
+    'USER_LOCK_SEEN',
+    'USER_LOCK_FINAL',
+    'SOLVER_LOCK_BROADCAST',
+    'SOLVER_LOCK_SEEN',
+    'SECRET_KNOWN',
+    'USER_CLAIM_SEEN',
+    'SOLVER_CLAIM_BROADCAST',
+    'SOLVER_CLAIM_FINAL',
+    'DONE',
+    'EXPIRED',
+    'REJECTED',
+    'SOLVER_REFUND_BROADCAST',
+    'SOLVER_REFUNDED',
+  ];
+  return statuses.find((status) => status === value);
+}
+
+function holdAfterUserClaimFromLocation(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    new URLSearchParams(window.location.search).get('holdAfterClaim') === '1'
+  );
+}
+
 function holdClaimFromLocation(): boolean {
   if (typeof window === 'undefined') return false;
   return new URLSearchParams(window.location.search).get('holdClaim') === '1';
@@ -67,6 +97,12 @@ export function SolverProvider({ children }: { readonly children: ReactNode }) {
             ? { quoteFailure: quoteFailureFromLocation() }
             : {}),
           ...(holdClaimFromLocation() ? { holdClaimStatus: true } : {}),
+          ...(holdAfterUserClaimFromLocation()
+            ? { holdAfterUserClaim: true }
+            : {}),
+          ...(holdStatusFromLocation()
+            ? { holdStatus: holdStatusFromLocation() }
+            : {}),
         });
   }, []);
   return (

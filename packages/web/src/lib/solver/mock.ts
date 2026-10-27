@@ -120,6 +120,7 @@ interface MockOrder {
   readonly direction: Direction;
   readonly tipHeight: number;
   status: OrderStatus;
+  updatedAt: number;
   polls: number;
   transactions: OrderTransaction[];
 }
@@ -132,6 +133,8 @@ export interface MockSolverOptions {
   readonly bchTipHeight?: number;
   readonly quoteTtlSeconds?: number | undefined;
   readonly holdClaimStatus?: boolean | undefined;
+  readonly holdStatus?: OrderStatus | undefined;
+  readonly holdAfterUserClaim?: boolean | undefined;
   readonly quoteFailure?:
     | 'rejected'
     | 'unavailable'
@@ -184,6 +187,8 @@ export class MockSolverClient implements SolverClient {
   readonly #bchTipHeight: number;
   readonly #quoteTtlSeconds: number;
   readonly #holdClaimStatus: boolean;
+  readonly #holdStatus: OrderStatus | undefined;
+  readonly #holdAfterUserClaim: boolean;
   readonly #quoteFailure:
     | 'rejected'
     | 'unavailable'
@@ -200,6 +205,8 @@ export class MockSolverClient implements SolverClient {
     this.#bchTipHeight = options.bchTipHeight ?? 329_315;
     this.#quoteTtlSeconds = options.quoteTtlSeconds ?? QUOTE_TTL_S;
     this.#holdClaimStatus = options.holdClaimStatus ?? false;
+    this.#holdStatus = options.holdStatus;
+    this.#holdAfterUserClaim = options.holdAfterUserClaim ?? false;
     this.#quoteFailure = options.quoteFailure;
     this.#linkIdFactory = options.linkIdFactory ?? createLinkId;
     this.#seedLinks();
@@ -434,6 +441,7 @@ export class MockSolverClient implements SolverClient {
       direction: request.direction,
       tipHeight: this.#bchTipHeight,
       status: 'QUOTED',
+      updatedAt: now,
       polls: 0,
       transactions: [],
     });
@@ -603,6 +611,7 @@ export class MockSolverClient implements SolverClient {
       direction: 'COUNTER_TO_BCH',
       tipHeight: this.#bchTipHeight,
       status: 'QUOTED',
+      updatedAt: now,
       polls: 0,
       transactions: [],
     });
@@ -680,6 +689,16 @@ export class MockSolverClient implements SolverClient {
         throw new Error('Order not found');
       }
     }
+    if (this.#holdStatus && order.status === this.#holdStatus) {
+      return this.#view(id, order);
+    }
+    if (
+      this.#holdAfterUserClaim &&
+      (order.status === 'SOLVER_LOCK_SEEN' ||
+        order.status === 'USER_CLAIM_SEEN')
+    ) {
+      return this.#view(id, order);
+    }
     const holdAtClaim =
       this.#holdClaimStatus &&
       [
@@ -725,8 +744,21 @@ export class MockSolverClient implements SolverClient {
     if (sha256(secret) !== order.quote.terms.hashLock) {
       throw new Error('Secret does not match the hash lock');
     }
-    order.status = 'SECRET_KNOWN';
-    order.polls = REVERSE_PATH.indexOf('SECRET_KNOWN') + 1;
+    order.status = this.#holdAfterUserClaim
+      ? 'USER_CLAIM_SEEN'
+      : 'SECRET_KNOWN';
+    if (
+      this.#holdAfterUserClaim &&
+      !order.transactions.some((tx) => tx.label === 'Base claim')
+    ) {
+      order.transactions.push(
+        transaction('Base claim', 'base', `0x${'33'.repeat(32)}`),
+      );
+    }
+    order.updatedAt = Math.floor(Date.now() / 1000);
+    order.polls = this.#holdAfterUserClaim
+      ? REVERSE_PATH.indexOf('USER_CLAIM_SEEN') + 1
+      : REVERSE_PATH.indexOf('SECRET_KNOWN') + 1;
   }
 
   #advance(order: MockOrder): void {
@@ -734,7 +766,10 @@ export class MockSolverClient implements SolverClient {
     const path = pathFor(order);
     const index = Math.min(order.polls - 1, path.length - 1);
     const next = path[index];
-    if (next) order.status = next;
+    if (next) {
+      order.status = next;
+      order.updatedAt = Math.floor(Date.now() / 1000);
+    }
     this.#syncLink(order);
 
     if (next === 'USER_LOCK_SEEN' && order.transactions.length === 0) {
@@ -801,7 +836,7 @@ export class MockSolverClient implements SolverClient {
       lane: order.quote.lane,
       bchTipHeight: order.tipHeight,
       bchTipError: null,
-      updatedAt: Math.floor(Date.now() / 1000),
+      updatedAt: order.updatedAt,
       transactions: order.transactions,
       bchLockUtxo: reverse
         ? order.status === 'QUOTED'
@@ -868,6 +903,7 @@ export class MockSolverClient implements SolverClient {
       direction: this.#direction,
       tipHeight: reverse ? terms.bchRefundHeight : this.#bchTipHeight,
       status: 'REJECTED',
+      updatedAt: now,
       polls: REFUND_PATH.length,
       transactions: [
         reverse

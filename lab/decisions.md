@@ -658,3 +658,11 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Consequence for rebuild:** Never broadcast an unverified script spend; strictly validate preimages at all boundaries; self-heal unconfirmed broadcast actions on restart.
 
 
+
+### D-A1-035 · every wait names the expected confirmation; user and solver steps are separate
+- **Decision:** A reverse safe-lane `USER_LOCK_SEEN` order shows “Waiting for 1 BCH confirmation (0 of 1)”, the lock txid, elapsed time, chipnet block expectations and a fast-lane explanation when the amount qualifies. The elapsed timer is based on the order’s last status transition, not the quote expiry.
+- **Solver separation:** Once the reverse user claim is seen, the page shows “Your USDC arrived” with the Base claim link; the solver’s BCH claim is a separate final step with its own link when available. A solver-side delay therefore cannot make the user’s side look pending.
+- **Stall:** Any non-terminal state older than three minutes shows a generic stall hint with an Open Recovery link.
+- **Evidence:** `wait-states.spec.ts` and `wait-state.test.ts`; mock status timing now records the transition time so elapsed/stall behavior is deterministic.
+- **Consequence for rebuild:** Define wait copy from the state machine and expected chain confirmation, not from a generic spinner; display user completion and solver completion independently.
+- **Revisit if:** The solver exposes a per-step expected duration or the BCH confirmation target changes.
