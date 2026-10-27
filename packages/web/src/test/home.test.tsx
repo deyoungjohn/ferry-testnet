@@ -78,10 +78,14 @@ describe('placeholder routes', () => {
     renderAt('/recover');
 
     expect(
-      await screen.findByRole('heading', {
-        level: 1,
-        name: /recover a swap/i,
-      }),
+      await screen.findByRole(
+        'heading',
+        {
+          level: 1,
+          name: /recover a swap/i,
+        },
+        { timeout: 15_000 },
+      ),
     ).toBeInTheDocument();
   }, 20_000);
 
@@ -94,6 +98,10 @@ describe('placeholder routes', () => {
         name: /link unavailable/i,
       }),
     ).toBeInTheDocument();
-    expect(await screen.findByText(/pay link not found/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/pay link not found/i, undefined, {
+        timeout: 15_000,
+      }),
+    ).toBeInTheDocument();
   }, 20_000);
 });

@@ -34,6 +34,12 @@ import { useSolver } from '../lib/solver/context';
 import { describeSolverError, type SolverFailure } from '../lib/solver/errors';
 import { solverIsLive } from '../lib/solver/kind';
 import type { OrderView } from '../lib/solver/types';
+import {
+  BCH_CONFIRMATIONS_REQUIRED,
+  WAIT_STALL_SECONDS,
+  formatElapsed,
+  isFastLaneEligible,
+} from '../lib/solver/wait';
 import { buildOrderViewModel, formatDuration } from '../lib/solver/view';
 import { formatPusd, formatUsdc, truncateAddress } from '../lib/swap';
 import { useWallets } from '../lib/wallet/context';
@@ -142,6 +148,37 @@ export function SwapStatusPage() {
     null,
   );
   const bchClaimCopy = bchClaimConfirmationCopy(bchClaimConfirmations);
+  const bchLockTx = useMemo(
+    () => order?.transactions.find((tx) => tx.label === 'BCH lock') ?? null,
+    [order],
+  );
+  const baseClaimTx = useMemo(
+    () => order?.transactions.find((tx) => tx.label === 'Base claim') ?? null,
+    [order],
+  );
+  const solverBchClaimTx = useMemo(
+    () => order?.transactions.find((tx) => tx.label === 'BCH claim') ?? null,
+    [order],
+  );
+  const waitingForBchConfirmation =
+    reverse &&
+    order?.lane === 'safe' &&
+    order?.status === 'USER_LOCK_SEEN' &&
+    Boolean(bchLockTx);
+  const elapsedSinceUpdate = Math.max(0, now - (order?.updatedAt ?? now));
+  const waitStalled = Boolean(
+    order && view && !view.terminal && elapsedSinceUpdate >= WAIT_STALL_SECONDS,
+  );
+  const userSideDone = Boolean(
+    reverse &&
+    order &&
+    [
+      'USER_CLAIM_SEEN',
+      'SOLVER_CLAIM_BROADCAST',
+      'SOLVER_CLAIM_FINAL',
+      'DONE',
+    ].includes(order.status),
+  );
 
   useEffect(() => {
     if (!bchClaimTxid || !isDone || !solverIsLive()) {
@@ -646,6 +683,97 @@ export function SwapStatusPage() {
               </p>
             ) : null}
           </section>
+
+          {waitingForBchConfirmation ? (
+            <section
+              aria-live="polite"
+              className="mt-5 rounded-card border border-warn/25 bg-warn/5 p-5 text-[11px] leading-5 text-warn sm:p-6"
+            >
+              <p className="text-sm font-medium">
+                Waiting for {BCH_CONFIRMATIONS_REQUIRED} BCH confirmation (0 of{' '}
+                {BCH_CONFIRMATIONS_REQUIRED})
+              </p>
+              <p className="mt-1">
+                The safe lane waits for one BCH confirmation before the solver
+                locks USDC. Chipnet blocks can take several minutes.
+              </p>
+              <p className="mt-1 tabular-nums">
+                Elapsed: {formatElapsed(elapsedSinceUpdate)}
+              </p>
+              {bchLockTx ? (
+                <a
+                  href={explorerTxUrl('bch', bchLockTx.hash)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-block font-mono text-[10px] underline decoration-hairline underline-offset-2"
+                >
+                  BCH lock · {truncateAddress(bchLockTx.hash, 12, 8)}
+                </a>
+              ) : null}
+              {order && isFastLaneEligible(order.terms.bchTokenAmount) ? (
+                <p className="mt-2">
+                  This amount qualifies for the fast lane, which would
+                  counter-lock USDC without waiting for a BCH confirmation.
+                </p>
+              ) : null}
+            </section>
+          ) : null}
+
+          {userSideDone && order ? (
+            <section
+              aria-live="polite"
+              className="mt-5 rounded-card border border-ok/25 bg-ok/5 p-5 text-[11px] leading-5 text-ok sm:p-6"
+            >
+              <p className="text-sm font-medium">Your USDC arrived</p>
+              {baseClaimTx ? (
+                <a
+                  href={explorerTxUrl('base', baseClaimTx.hash)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-block font-mono text-[10px] underline decoration-hairline underline-offset-2"
+                >
+                  Base claim · {truncateAddress(baseClaimTx.hash, 12, 8)}
+                </a>
+              ) : null}
+              <p className="mt-2">
+                {order.status === 'DONE'
+                  ? 'The solver has finished its BCH claim.'
+                  : 'Your side is complete. The solver is finishing its BCH claim separately.'}
+              </p>
+              {solverBchClaimTx ? (
+                <a
+                  href={explorerTxUrl('bch', solverBchClaimTx.hash)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-block font-mono text-[10px] underline decoration-hairline underline-offset-2"
+                >
+                  Solver BCH claim ·{' '}
+                  {truncateAddress(solverBchClaimTx.hash, 12, 8)}
+                </a>
+              ) : null}
+            </section>
+          ) : null}
+
+          {waitStalled ? (
+            <section
+              role="status"
+              className="mt-5 rounded-card border border-warn/25 bg-warn/5 p-5 text-[11px] leading-5 text-warn sm:p-6"
+            >
+              <p className="text-sm font-medium">
+                This step is taking longer than expected.
+              </p>
+              <p className="mt-1">
+                If it has not moved after a few minutes, open Recovery for the
+                refund or claim path, or check the solver health in the footer.
+              </p>
+              <Link
+                to="/recover"
+                className="mt-2 inline-block font-medium underline underline-offset-2"
+              >
+                Open Recovery
+              </Link>
+            </section>
+          ) : null}
 
           {!reverse && claimPhase !== 'idle' ? (
             <section
