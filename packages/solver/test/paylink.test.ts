@@ -305,7 +305,7 @@ describe('Pay Links API (PL-01 to PL-05)', () => {
     const link = CreatePayLinkResponseSchema.parse(JSON.parse(createRes.body));
 
     // Wait for expiry
-    const msRemaining = link.expiresAt * 1000 - Date.now();
+    const msRemaining = link.expiresAt! * 1000 - Date.now();
     if (msRemaining >= 0) {
       await new Promise((resolve) => setTimeout(resolve, msRemaining + 150));
     }
