@@ -578,3 +578,31 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** Network profile tests cover the default, mixed-value fingerprints, mainnet missing values, FACT citations and the mainnet banner/block page; an active-mainnet test renders the app shell and asserts no Swap region; recovery tests reject wrong BCH network and EVM chain; the standard unit, UI and recovery suites are green.
 - **Consequence for rebuild:** Never duplicate network constants in components or tests. Select a profile once, carry the network in every recovery artifact, and fail closed before any network or signing path when a value is empty.
 - **Revisit if:** Base mainnet RPC/explorer/HTLC/domain values or mainnet solver addresses are verified, or the human confirms the mainnet PUSD/MUSD categories.
+---
+
+### D-A2-012 · Rate Limiter In-Memory Bucket Pruning, Map Size Capping, and Mainnet Fail-Closed Proxy Policy
+- **Context:** added `QuoteRateLimiter` to defend against quote spam, bounding requests per client address and per IP. noted that in-memory bucket maps never dropped idle keys (allowing memory exhaustion via key rotation) and that behind a proxy without `trustedProxy` all clients share one socket IP.
+- **Decision:**
+  1. *Bucket TTL Pruning:* `QuoteRateLimiter.prune(now)` iterates `addressBuckets` and `ipBuckets`, filtering timestamps older than `now - windowMs` and explicitly deleting empty map entries. A background interval timer (default 60s, `unref()`) periodically triggers pruning.
+  2. *Map Size Cap & LRU Eviction:* Both maps are capped to `maxEntries` (default 10,000). If size reaches capacity before inserting a new key, pruning runs immediately; if still at capacity, the oldest key in insertion order is evicted.
+  3. *Mainnet Forwarding Header Fail-Closed:* On `mainnet`, if `trustedProxy` is false or unset, any request arriving with `X-Forwarded-For` or `X-Real-IP` is rejected with HTTP 400 `UNTRUSTED_PROXY_HEADER`. This prevents rate limit evasion via spoofed headers and alerts operators if their proxy configuration would cause all public users to share a single internal gateway IP.
+- **Evidence:** Unit tests in `packages/solver/test/rate-limiter.test.ts` verifying idle key deletion, `maxEntries` cap enforcement, timer-based pruning, and mainnet fail-closed header rejection.
+- **Consequence for rebuild:** In-memory rate limiters must manage memory bounds deterministically and reject untrusted proxy headers on production networks.
+
+---
+
+### D-A2-013 · Solver Operations Architecture: /v1/metrics, Operator Alerts, and Pre-Flight Startup Self-Check
+- **Context:** hardening for mainnet operations: the solver daemon required automated on-chain pre-flight checks and standardized monitoring telemetry.
+- **Decision:**
+  1. *Startup Pre-Flight Self-Check (`src/ops/self-check.ts`):* Before starting the HTTP server or chain watchers, Ferryman queries the live EVM and BCH networks to verify:
+     - EVM Chain ID matches `config.baseChainId`.
+     - BCH Genesis Hash matches the expected network genesis (`chipnet` vs `mainnet`).
+     - Contract bytecode exists and is non-empty at `baseHtlcAddress` and `baseUsdcAddress`, computing keccak256 code hashes.
+     - Liquid hot wallet balances (gas ETH, USDC, BCH sats, CashTokens).
+     - Signer addresses (EVM and CashAddress derived from WIF).
+     - The daemon formats a diagnostic report banner and *refuses to start* on any mismatch.
+     - Strictly asserts that private keys and WIFs never appear in printed output.
+  2. *Operational Telemetry (`GET /v1/metrics`):* Exposes order counts by status, oldest non-terminal order age, open exposure (USD micros and formatted USD), unfunded quote count and caps, last confirmed tip times for EVM and BCH, error counts by code, and rate limiter status. Strictly omits preimage secrets.
+  3. *Alert-Style Operator Surfacing (`GET /v1/operator/needs-attention` and `GET /v1/operator/alerts`):* Lists all orders with `needs_attention: 1` including rejection reason, terms, and transaction IDs, with zero raw secret exposure.
+- **Evidence:** Unit test suites in `packages/solver/test/self-check.test.ts` and `packages/solver/test/metrics-api.test.ts`.
+- **Consequence for rebuild:** Market maker daemons must run automated on-chain sanity checks before quoting and provide comprehensive metrics and operator alert endpoints.

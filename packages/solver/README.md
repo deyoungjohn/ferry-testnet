@@ -85,6 +85,9 @@ tsx --env-file=../../.env.local src/main.ts
 >
 > 1. **Fail-Closed EVM Keys:** `SOLVER_EVM_PRIVATE_KEY` is required. If missing or left as the default dev key, the solver refuses startup unless running on `NETWORK=testnet` with an explicit `ALLOW_DEV_KEYS=1` flag. On `mainnet`, dev keys are strictly rejected.
 > 2. **Fulcrum Genesis Verification:** At startup, `BchQuorumClient` verifies `server.features.genesis_hash` across every configured Fulcrum endpoint. If any server returns a mismatched genesis (e.g. mainnet tip `974561` on `wss://blackie.c3-soft.com:50004` instead of chipnet `wss://blackie.c3-soft.com:64004`), the solver refuses to connect and halts startup immediately.
+> 3. **Startup Pre-Flight Self-Check (`src/ops/self-check.ts`):** At daemon startup, Ferryman queries the live EVM and BCH networks to verify chain IDs, network genesis hashes, contract bytecodes at configured HTLC and token addresses, and hot wallet balances. If any check fails, the daemon prints a diagnostic report and refuses to start.
+> 4. **Untrusted Proxy Header Rejection:** On mainnet, if `TRUSTED_PROXY` is unset or false, any request arriving with forwarding headers (`X-Forwarded-For` or `X-Real-IP`) is rejected with HTTP 400 `UNTRUSTED_PROXY_HEADER` to prevent IP spoofing or unintentional rate limit sharing behind proxies.
+> 5. **Rate Limiter Memory Bounds:** Address and IP buckets are pruned on a timer and capped to `maxEntries` (10,000) with LRU eviction, preventing memory exhaustion attacks via client address rotation.
 
 Run test suite:
 

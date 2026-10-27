@@ -68,6 +68,8 @@ export const SolverConfigSchema = z.object({
   quoteRateLimitWindowMs: z.coerce.number().default(60_000),
   quoteRateLimitMaxPerAddress: z.coerce.number().default(30),
   quoteRateLimitMaxPerIp: z.coerce.number().default(60),
+  quoteRateLimitMaxEntries: z.coerce.number().default(10_000),
+  quoteRateLimitPruneIntervalMs: z.coerce.number().default(60_000),
   maxUnfundedQuotesPerAddress: z.coerce.number().default(10),
   maxGlobalUnfundedQuotes: z.coerce.number().default(500),
 });
@@ -219,6 +221,12 @@ export function loadConfigFromEnv(
       : undefined,
     quoteRateLimitMaxPerIp: env.QUOTE_RATE_LIMIT_MAX_PER_IP
       ? Number(env.QUOTE_RATE_LIMIT_MAX_PER_IP)
+      : undefined,
+    quoteRateLimitMaxEntries: env.QUOTE_RATE_LIMIT_MAX_ENTRIES
+      ? Number(env.QUOTE_RATE_LIMIT_MAX_ENTRIES)
+      : undefined,
+    quoteRateLimitPruneIntervalMs: env.QUOTE_RATE_LIMIT_PRUNE_INTERVAL_MS
+      ? Number(env.QUOTE_RATE_LIMIT_PRUNE_INTERVAL_MS)
       : undefined,
     maxUnfundedQuotesPerAddress: env.MAX_UNFUNDED_QUOTES_PER_ADDRESS
       ? Number(env.MAX_UNFUNDED_QUOTES_PER_ADDRESS)

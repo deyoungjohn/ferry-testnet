@@ -8,6 +8,7 @@ import { BchQuorumClient } from './bch/quorum-client.js';
 import { SolverEngine } from './engine/runner.js';
 import { buildServer } from './api/server.js';
 import { TestnetStubPriceSource } from './pricing/price-source.js';
+import { runStartupSelfCheck } from './ops/self-check.js';
 
 async function main(): Promise<void> {
   const logger = pino({
@@ -88,7 +89,18 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // 5. Initialize Engine
+  // 5. Run startup self-check ( ops hardening)
+  const selfCheck = await runStartupSelfCheck({
+    config,
+    publicClient,
+    bchClient,
+    solverEvmAddress: solverAccount.address,
+    solverBchWif: config.solverBchWif,
+    logger,
+  });
+  console.log(selfCheck.report);
+
+  // 6. Initialize Engine
   const engine = new SolverEngine(
     db,
     evmAdapter,

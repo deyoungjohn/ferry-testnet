@@ -44,7 +44,11 @@ import type { SolverDatabase } from '../db/database.js';
 import type { BchQuorumClient } from '../bch/quorum-client.js';
 import type { SolverConfig } from '../config.js';
 import type { SolverEngine } from '../engine/runner.js';
-import { QuoteRateLimiter, extractClientIp } from './rate-limiter.js';
+import {
+  QuoteRateLimiter,
+  extractClientIp,
+  UntrustedProxyHeaderError,
+} from './rate-limiter.js';
 import type { SolverOrderRecord } from '../state-machine/types.js';
 import {
   type PriceSource,
@@ -106,6 +110,40 @@ function toPayLinkWire(link: PayLinkRecord) {
   };
 }
 
+export class ErrorMetricsTracker {
+  private totalErrors = 0;
+  private byCode: Record<string, number> = {};
+  private lastError: {
+    code: string;
+    message: string;
+    timestamp: number;
+  } | null = null;
+
+  record(code: string, message: string): void {
+    this.totalErrors++;
+    this.byCode[code] = (this.byCode[code] || 0) + 1;
+    this.lastError = {
+      code,
+      message,
+      timestamp: Math.floor(Date.now() / 1000),
+    };
+  }
+
+  getMetrics() {
+    return {
+      total: this.totalErrors,
+      byCode: { ...this.byCode },
+      lastError: this.lastError ? { ...this.lastError } : null,
+    };
+  }
+
+  reset(): void {
+    this.totalErrors = 0;
+    this.byCode = {};
+    this.lastError = null;
+  }
+}
+
 export interface SolverServerOptions {
   config: SolverConfig;
   db: SolverDatabase;
@@ -115,6 +153,7 @@ export interface SolverServerOptions {
   priceSource?: PriceSource;
   logger?: pino.Logger;
   rateLimiter?: QuoteRateLimiter;
+  errorTracker?: ErrorMetricsTracker;
 }
 
 export function buildServer(options: SolverServerOptions): FastifyInstance {
@@ -179,6 +218,19 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       });
     }
 
+    if (
+      err instanceof UntrustedProxyHeaderError ||
+      err.code === 'UNTRUSTED_PROXY_HEADER' ||
+      err.name === 'UntrustedProxyHeaderError'
+    ) {
+      return reply.status(400).send({
+        code: 'UNTRUSTED_PROXY_HEADER',
+        message:
+          err.message ||
+          'Untrusted forwarding headers present on mainnet without TRUSTED_PROXY',
+      });
+    }
+
     const statusCode =
       typeof err.statusCode === 'number' &&
       err.statusCode >= 400 &&
@@ -199,13 +251,41 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
 
   const { config, db, evmAdapter, bchClient, engine } = options;
   const priceSource = options.priceSource ?? new TestnetStubPriceSource(logger);
+  const errorTracker = options.errorTracker || new ErrorMetricsTracker();
   const rateLimiter =
     options.rateLimiter ||
     new QuoteRateLimiter({
       windowMs: config.quoteRateLimitWindowMs,
       maxPerAddress: config.quoteRateLimitMaxPerAddress,
       maxPerIp: config.quoteRateLimitMaxPerIp,
+      maxEntries: config.quoteRateLimitMaxEntries,
+      pruneIntervalMs: config.quoteRateLimitPruneIntervalMs,
     });
+
+  // Track all error responses for ops metrics
+  app.addHook('onSend', async (_request, reply, payload) => {
+    if (reply.statusCode >= 400 && typeof payload === 'string') {
+      try {
+        const body = JSON.parse(payload);
+        if (body && typeof body.code === 'string') {
+          errorTracker.record(body.code, body.message || 'Error response');
+        } else {
+          errorTracker.record(`HTTP_${reply.statusCode}`, 'Error response');
+        }
+      } catch {
+        errorTracker.record(
+          `HTTP_${reply.statusCode}`,
+          'Non-JSON error response',
+        );
+      }
+    }
+    return payload;
+  });
+
+  app.addHook('onClose', async () => {
+    rateLimiter.stop();
+  });
+
   const solverAccount = privateKeyToAccount(
     config.solverEvmPrivateKey as `0x${string}`,
   );
@@ -225,7 +305,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     const request = parseResult.data;
 
     // Rate limit per client address and per IP
-    const clientIp = extractClientIp(req, config.trustedProxy);
+    const clientIp = extractClientIp(req, config.trustedProxy, config.network);
     const clientAddress = request.userCounterAddress;
     const rateCheck = rateLimiter.check(clientAddress, clientIp);
     if (!rateCheck.allowed) {
@@ -1023,6 +1103,145 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     return reply.status(200).send(validated);
   });
 
+  // 10. GET /v1/metrics (Ops hardening & monitoring)
+  app.get('/v1/metrics', async (_req, reply) => {
+    const orderCounts = db.getOrderCountsByStatus();
+    const oldestNonTerminalAge = db.getOldestNonTerminalOrderAgeSeconds();
+    const openExposureMicros = db.getOpenExposureUsdMicros();
+    const globalUnfunded = db.countGlobalUnfundedQuotes();
+    const needsAttentionCount = db.countNeedsAttentionOrders();
+    const quorum = bchClient.getQuorumStatus();
+    const bchHealth = evaluateBchHealth(quorum, config);
+
+    let baseTipStatus: {
+      height: number;
+      ageSeconds: number;
+      stale: boolean;
+    };
+    try {
+      const tip = await evmAdapter.getTip();
+      baseTipStatus = {
+        height: tip.height,
+        ageSeconds: Math.max(0, tip.ageSeconds),
+        stale: tip.ageSeconds > config.tipMaxAgeBaseSeconds,
+      };
+    } catch {
+      baseTipStatus = {
+        height: 0,
+        ageSeconds: config.tipMaxAgeBaseSeconds + 1,
+        stale: true,
+      };
+    }
+
+    const bchAge = Math.max(
+      0,
+      quorum.ageSeconds === Infinity ? 0 : quorum.ageSeconds,
+    );
+    const now = Math.floor(Date.now() / 1000);
+
+    const metrics = {
+      orderCounts,
+      oldestNonTerminalOrderAgeSeconds: oldestNonTerminalAge,
+      exposure: {
+        usdMicros: openExposureMicros.toString(),
+        usdFormatted: `$${(Number(openExposureMicros) / 1e6).toFixed(2)}`,
+        capUsdMicros: config.maxExposureUsdMicros.toString(),
+        capUsdFormatted: `$${(Number(config.maxExposureUsdMicros) / 1e6).toFixed(2)}`,
+      },
+      unfundedQuotes: {
+        count: globalUnfunded,
+        capGlobal: config.maxGlobalUnfundedQuotes,
+        capPerAddress: config.maxUnfundedQuotesPerAddress,
+      },
+      lastConfirmedTipTimes: {
+        base: {
+          height: baseTipStatus.height,
+          ageSeconds: baseTipStatus.ageSeconds,
+          stale: baseTipStatus.stale,
+        },
+        bch: {
+          height: quorum.quorumTip,
+          ageSeconds: bchAge,
+          lastConfirmedAt:
+            quorum.lastConfirmedAt ?? (bchAge > 0 ? now - bchAge : now),
+          stale: bchHealth.stale,
+          quorum: quorum.isQuorumHealthy,
+        },
+      },
+      errorCounts: errorTracker.getMetrics(),
+      needsAttention: {
+        count: needsAttentionCount,
+        orders: db.getNeedsAttentionOrdersSummary(),
+      },
+      rateLimiter: {
+        addressBuckets: rateLimiter.getAddressBucketCount(),
+        ipBuckets: rateLimiter.getIpBucketCount(),
+        maxEntries: rateLimiter.getMaxEntries(),
+      },
+      timestamp: now,
+    };
+
+    return reply.status(200).send(metrics);
+  });
+
+  // 11. GET /v1/operator/needs-attention (Alert-style operator listing)
+  const getNeedsAttentionHandler = async (
+    _req: unknown,
+    reply: {
+      status: (code: number) => { send: (payload: unknown) => unknown };
+    },
+  ) => {
+    const orders = db.getNeedsAttentionOrdersSummary();
+    const quorum = bchClient.getQuorumStatus();
+    const bchHealth = evaluateBchHealth(quorum, config);
+    let baseStale: boolean;
+    try {
+      const tip = await evmAdapter.getTip();
+      baseStale = tip.ageSeconds > config.tipMaxAgeBaseSeconds;
+    } catch {
+      baseStale = true;
+    }
+
+    const systemAlerts: Array<{
+      code: string;
+      message: string;
+      severity: 'warning' | 'critical';
+    }> = [];
+
+    if (bchHealth.stale || !quorum.isQuorumHealthy) {
+      systemAlerts.push({
+        code: 'BCH_TIP_UNHEALTHY',
+        message: `BCH quorum is ${quorum.isQuorumHealthy ? 'healthy' : 'degraded'}, tip age is ${quorum.ageSeconds}s`,
+        severity: 'critical',
+      });
+    }
+    if (baseStale) {
+      systemAlerts.push({
+        code: 'EVM_TIP_UNHEALTHY',
+        message: 'Base EVM chain tip is stale or RPC unreachable',
+        severity: 'critical',
+      });
+    }
+    if (orders.length > 0) {
+      systemAlerts.push({
+        code: 'ORDERS_NEED_ATTENTION',
+        message: `${orders.length} order(s) require manual operator intervention`,
+        severity: 'critical',
+      });
+    }
+
+    return reply.status(200).send({
+      count: orders.length,
+      orders,
+      systemAlerts,
+      timestamp: Math.floor(Date.now() / 1000),
+    });
+  };
+
+  app.get('/v1/operator/needs-attention', getNeedsAttentionHandler);
+  app.get('/v1/operator/alerts', getNeedsAttentionHandler);
+  app.get('/v1/alerts', getNeedsAttentionHandler);
+
   // 10. POST /v1/links
   app.post('/v1/links', async (req, reply) => {
     const parseResult = CreatePayLinkRequestSchema.safeParse(req.body);
@@ -1186,7 +1405,11 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       const request = parseResult.data;
 
       // Rate limit per client address and per IP
-      const clientIp = extractClientIp(req, config.trustedProxy);
+      const clientIp = extractClientIp(
+        req,
+        config.trustedProxy,
+        config.network,
+      );
       const clientAddress = request.userCounterAddress;
       const rateCheck = rateLimiter.check(clientAddress, clientIp);
       if (!rateCheck.allowed) {

@@ -373,6 +373,122 @@ export class SolverDatabase {
     return rows.map((r) => this.mapOrderRow(r));
   }
 
+  getOrderCountsByStatus(): Record<ForwardOrderStatus, number> {
+    const counts: Record<ForwardOrderStatus, number> = {
+      QUOTED: 0,
+      USER_LOCK_SEEN: 0,
+      USER_LOCK_FINAL: 0,
+      SOLVER_LOCK_BROADCAST: 0,
+      SOLVER_LOCK_SEEN: 0,
+      SECRET_KNOWN: 0,
+      USER_CLAIM_SEEN: 0,
+      SOLVER_CLAIM_BROADCAST: 0,
+      SOLVER_CLAIM_FINAL: 0,
+      DONE: 0,
+      EXPIRED: 0,
+      REJECTED: 0,
+      SOLVER_REFUNDED: 0,
+    };
+
+    const stmt = this.db.prepare(`
+      SELECT status, COUNT(*) as count FROM orders GROUP BY status
+    `);
+    const rows = stmt.all() as Array<{ status: string; count: number }>;
+    for (const r of rows) {
+      if (r.status in counts) {
+        counts[r.status as ForwardOrderStatus] = r.count;
+      }
+    }
+    return counts;
+  }
+
+  getOldestNonTerminalOrderAgeSeconds(
+    nowMs: number = Date.now(),
+  ): number | null {
+    const stmt = this.db.prepare(`
+      SELECT MIN(created_at) as oldest_created_at
+      FROM orders
+      WHERE status NOT IN ('DONE', 'EXPIRED', 'REJECTED', 'SOLVER_REFUNDED')
+    `);
+    const row = stmt.get() as { oldest_created_at: number | null } | undefined;
+    if (
+      !row ||
+      row.oldest_created_at === null ||
+      row.oldest_created_at === undefined
+    ) {
+      return null;
+    }
+    return Math.max(0, Math.floor((nowMs - row.oldest_created_at) / 1000));
+  }
+
+  countNeedsAttentionOrders(): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) as count FROM orders WHERE needs_attention = 1')
+      .get() as { count: number } | undefined;
+    return row?.count ?? 0;
+  }
+
+  getNeedsAttentionOrdersSummary(nowMs: number = Date.now()): Array<{
+    orderId: string;
+    direction: 'BCH_TO_COUNTER' | 'COUNTER_TO_BCH';
+    status: ForwardOrderStatus;
+    lane?: 'safe' | 'fast' | undefined;
+    createdAt: number;
+    updatedAt: number;
+    ageSeconds: number;
+    rejectionReason?: string | undefined;
+    terms: {
+      counterAsset: { symbol: string; decimals: number };
+      counterAmount: bigint;
+      bchToken: 'PUSD' | 'MUSD';
+      bchTokenAmount: bigint;
+      userCounterAddress: string;
+      userBchLockingBytecode: string;
+      hashLock: `0x${string}`;
+    };
+    txIds: {
+      userLockTxId?: string | undefined;
+      solverLockTxId?: string | undefined;
+      userClaimTxId?: string | undefined;
+      solverClaimTxId?: string | undefined;
+      solverRefundTxId?: string | undefined;
+    };
+  }> {
+    const orders = this.listNeedsAttentionOrders();
+    return orders.map((order) => {
+      // STRICT PRIVACY: secret is NEVER included in operator listing
+      return {
+        orderId: order.id,
+        direction: order.direction,
+        status: order.status,
+        lane: order.lane,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+        ageSeconds: Math.max(0, Math.floor((nowMs - order.createdAt) / 1000)),
+        rejectionReason: order.rejectionReason,
+        terms: {
+          counterAsset: {
+            symbol: order.terms.counterAsset.symbol,
+            decimals: order.terms.counterAsset.decimals,
+          },
+          counterAmount: order.terms.counterAmount,
+          bchToken: order.terms.bchToken,
+          bchTokenAmount: order.terms.bchTokenAmount,
+          userCounterAddress: order.terms.userCounterAddress,
+          userBchLockingBytecode: order.terms.userBchLockingBytecode,
+          hashLock: order.terms.hashLock,
+        },
+        txIds: {
+          userLockTxId: order.userLockTxId,
+          solverLockTxId: order.solverLockTxId,
+          userClaimTxId: order.userClaimTxId,
+          solverClaimTxId: order.solverClaimTxId,
+          solverRefundTxId: order.solverRefundTxId,
+        },
+      };
+    });
+  }
+
   recordActionIntent(
     orderId: string,
     action: string,
