@@ -12,6 +12,8 @@ import {
   type WalletBalance,
 } from '../lib/bch/balance';
 import { formatPusd, truncateAddress } from '../lib/swap';
+import type { SignedTransactionDiagnostic } from '../lib/wallet/signed-check';
+import { WalletSignedTransactionError } from '../lib/wallet/signed-check';
 import { useWallets } from '../lib/wallet/context';
 import { CheckIcon } from './icons';
 
@@ -36,6 +38,9 @@ export function ReverseFundingPanel({
   const [notice, setNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [balance, setBalance] = useState<WalletBalance | null>(null);
+  const [diagnostic, setDiagnostic] =
+    useState<SignedTransactionDiagnostic | null>(null);
+  const [diagnosticCopied, setDiagnosticCopied] = useState(false);
   const walletAddress = bch.address?.address ?? null;
 
   useEffect(() => {
@@ -87,6 +92,8 @@ export function ReverseFundingPanel({
     setBusy(true);
     setError(null);
     setNotice(null);
+    setDiagnostic(null);
+    setDiagnosticCopied(false);
     try {
       const utxos = await bch.listUtxos();
       const have = summarizeBalance(utxos, terms.bchTokenCategory);
@@ -106,6 +113,9 @@ export function ReverseFundingPanel({
       const txid = await bch.broadcastTransaction(signed.txHex);
       onFunded(txid);
     } catch (cause) {
+      if (cause instanceof WalletSignedTransactionError) {
+        setDiagnostic(cause.diagnostic);
+      }
       setError(
         cause instanceof Error
           ? friendlyBuildError(cause.message, PUSD_SYMBOL)
@@ -113,6 +123,16 @@ export function ReverseFundingPanel({
       );
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function copyDiagnostic(): Promise<void> {
+    if (!diagnostic) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(diagnostic, null, 2));
+      setDiagnosticCopied(true);
+    } catch {
+      setError('Could not copy the diagnostic; select it manually');
     }
   }
 
@@ -238,6 +258,31 @@ export function ReverseFundingPanel({
         <p role="alert" className="mt-2 text-[11px] leading-5 text-danger">
           {error}
         </p>
+      ) : null}
+      {diagnostic ? (
+        <div className="mt-2 rounded-well border border-danger/25 bg-danger/5 p-3 text-[11px] leading-5 text-danger">
+          <p>
+            Signed transaction diagnostic
+            {diagnostic.failedInput !== null
+              ? ` · input ${diagnostic.failedInput.toString()}`
+              : ''}
+          </p>
+          <details className="mt-2">
+            <summary className="cursor-pointer text-text-muted">
+              Show unsigned/signed hex and source outputs
+            </summary>
+            <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] text-text-muted">
+              {JSON.stringify(diagnostic, null, 2)}
+            </pre>
+          </details>
+          <button
+            type="button"
+            onClick={() => void copyDiagnostic()}
+            className="mt-2 rounded-pill bg-surface-3 px-3 py-1.5 font-semibold text-text"
+          >
+            {diagnosticCopied ? 'Diagnostic copied' : 'Copy diagnostic'}
+          </button>
+        </div>
       ) : null}
     </div>
   );

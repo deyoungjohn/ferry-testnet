@@ -9,9 +9,56 @@ import {
 } from '@bitauth/libauth';
 import type { BchSourceOutput } from './types';
 
+export interface SignedInputDiagnostic {
+  readonly index: number;
+  readonly outpoint: string;
+  readonly unlockingBytecodeLength: number;
+  readonly signed: boolean;
+  readonly sourceValueSatoshis: string;
+  readonly sourceLockingBytecode: string;
+  readonly token: {
+    readonly category: string;
+    readonly amount: string;
+  } | null;
+  readonly scriptError: string | null;
+}
+
+export interface SignedTransactionDiagnostic {
+  readonly unsignedHex: string;
+  readonly signedHex: string;
+  readonly problems: readonly string[];
+  readonly failedInput: number | null;
+  readonly inputs: readonly SignedInputDiagnostic[];
+  readonly sourceOutputs: readonly {
+    readonly outpoint: string;
+    readonly valueSatoshis: string;
+    readonly lockingBytecode: string;
+    readonly token: {
+      readonly category: string;
+      readonly amount: string;
+    } | null;
+  }[];
+}
+
 export interface SignedTransactionReport {
   readonly ok: boolean;
   readonly problems: readonly string[];
+  readonly failedInput: number | null;
+  readonly diagnostic: SignedTransactionDiagnostic;
+}
+
+export class WalletSignedTransactionError extends Error {
+  readonly diagnostic: SignedTransactionDiagnostic;
+
+  constructor(report: SignedTransactionReport) {
+    const prefix =
+      report.failedInput === null
+        ? 'The wallet transaction failed the local check'
+        : `Input ${report.failedInput.toString()} failed the local check`;
+    super(`${prefix}, so it was not broadcast. ${report.problems.join(' ')}`);
+    this.name = 'WalletSignedTransactionError';
+    this.diagnostic = report.diagnostic;
+  }
 }
 
 function decode(hex: string, label: string): Transaction | string {
@@ -23,6 +70,55 @@ function decode(hex: string, label: string): Transaction | string {
 
 const outputHex = (output: Output): string =>
   binToHex(encodeTransactionOutput(output));
+
+function outpoint(txid: Uint8Array, index: number): string {
+  return `${binToHex(txid)}:${index.toString()}`;
+}
+
+function sourceSummary(source: BchSourceOutput) {
+  return {
+    outpoint: outpoint(source.outpointTransactionHash, source.outpointIndex),
+    valueSatoshis: source.valueSatoshis.toString(),
+    lockingBytecode: binToHex(source.lockingBytecode),
+    token: source.token
+      ? {
+          category: binToHex(source.token.category),
+          amount: source.token.amount.toString(),
+        }
+      : null,
+  };
+}
+
+function sourceInputs(
+  signed: Transaction,
+  sources: readonly BchSourceOutput[],
+): SignedInputDiagnostic[] {
+  return signed.inputs.map((input, index) => {
+    const source = sources[index];
+    return {
+      index,
+      outpoint: outpoint(input.outpointTransactionHash, input.outpointIndex),
+      unlockingBytecodeLength: input.unlockingBytecode.length,
+      signed: input.unlockingBytecode.length > 0,
+      sourceValueSatoshis: source?.valueSatoshis.toString() ?? 'missing',
+      sourceLockingBytecode: source
+        ? binToHex(source.lockingBytecode)
+        : 'missing',
+      token: source?.token
+        ? {
+            category: binToHex(source.token.category),
+            amount: source.token.amount.toString(),
+          }
+        : null,
+      scriptError: null,
+    };
+  });
+}
+
+function vmInputIndex(error: string): number | null {
+  const match = /Error in evaluating input index (\d+)/i.exec(error);
+  return match?.[1] ? Number(match[1]) : null;
+}
 
 /**
  * A wallet answer is not trusted: it must keep the request's inputs and
@@ -36,10 +132,33 @@ export function inspectSignedTransaction(
 ): SignedTransactionReport {
   const unsigned = decode(unsignedHex, 'The request transaction');
   const signed = decode(signedHex, 'The wallet transaction');
-  if (typeof unsigned === 'string') return { ok: false, problems: [unsigned] };
-  if (typeof signed === 'string') return { ok: false, problems: [signed] };
+  const emptyDiagnostic: SignedTransactionDiagnostic = {
+    unsignedHex,
+    signedHex,
+    problems: [],
+    failedInput: null,
+    inputs: [],
+    sourceOutputs: sourceOutputs.map(sourceSummary),
+  };
+  if (typeof unsigned === 'string') {
+    return {
+      ok: false,
+      problems: [unsigned],
+      failedInput: null,
+      diagnostic: { ...emptyDiagnostic, problems: [unsigned] },
+    };
+  }
+  if (typeof signed === 'string') {
+    return {
+      ok: false,
+      problems: [signed],
+      failedInput: null,
+      diagnostic: { ...emptyDiagnostic, problems: [signed] },
+    };
+  }
 
   const problems: string[] = [];
+  let failedInput: number | null = null;
   if (signed.inputs.length !== unsigned.inputs.length) {
     problems.push(
       `The wallet returned ${signed.inputs.length} inputs; the request had ${unsigned.inputs.length}.`,
@@ -56,6 +175,7 @@ export function inspectSignedTransaction(
       problems.push(
         `Input ${index} spends a different outpoint than requested.`,
       );
+      failedInput ??= index;
     }
   });
   if (signed.outputs.length !== unsigned.outputs.length) {
@@ -75,9 +195,11 @@ export function inspectSignedTransaction(
       problems.push(
         `Input ${index} came back unsigned (empty unlocking script).`,
       );
+      failedInput ??= index;
     }
   });
 
+  const inputs = sourceInputs(signed, sourceOutputs);
   if (problems.length === 0 && sourceOutputs.length === signed.inputs.length) {
     const vm = createVirtualMachineBCH();
     const result = vm.verify({
@@ -97,7 +219,28 @@ export function inspectSignedTransaction(
     });
     if (typeof result === 'string') {
       problems.push(`Script check failed: ${result}`);
+      failedInput ??= vmInputIndex(result);
+      const inputIndex = vmInputIndex(result);
+      if (inputIndex !== null && inputs[inputIndex]) {
+        inputs[inputIndex] = {
+          ...inputs[inputIndex],
+          scriptError: result,
+        };
+      }
     }
   }
-  return { ok: problems.length === 0, problems };
+
+  return {
+    ok: problems.length === 0,
+    problems,
+    failedInput,
+    diagnostic: {
+      unsignedHex,
+      signedHex,
+      problems,
+      failedInput,
+      inputs,
+      sourceOutputs: sourceOutputs.map(sourceSummary),
+    },
+  };
 }

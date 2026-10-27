@@ -31,7 +31,10 @@ import { ElectrumClient } from '../../recover/core';
 import { WalletContext } from './context';
 import { wagmiConfig } from './evm-config';
 import { buildInputPaths, sourceOutputToRelay } from './relay-format';
-import { inspectSignedTransaction } from './signed-check';
+import {
+  WalletSignedTransactionError,
+  inspectSignedTransaction,
+} from './signed-check';
 import { wizardConnectTheme } from './wizard-theme';
 import { useBchReconnectTimeout } from './reconnect-timeout';
 import { isWrongEvmChain, wrongEvmChainMessage } from './chain';
@@ -305,15 +308,9 @@ function useRealBchWallet(): { wallet: BchWallet; dialog: ReactNode } {
         if (!report.ok) {
           console.error(
             'Wallet returned a transaction that fails the local check',
-            {
-              problems: report.problems,
-              unsignedHex: request.transaction,
-              signedHex: txHex,
-            },
+            report.diagnostic,
           );
-          throw new Error(
-            `The wallet's signed transaction failed the local check, so it was not broadcast. ${report.problems.join(' ')}`,
-          );
+          throw new WalletSignedTransactionError(report);
         }
         return { txHex, txid: txidOf(txHex) };
       } finally {
