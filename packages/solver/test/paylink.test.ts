@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { sha256 } from 'viem';
 import {
   CreatePayLinkResponseSchema,
   GetPayLinkResponseSchema,
@@ -177,6 +178,10 @@ describe('Pay Links API (PL-01 to PL-05)', () => {
     });
     const link = CreatePayLinkResponseSchema.parse(JSON.parse(createRes.body));
 
+    const payer1Secret =
+      '0x1111111111111111111111111111111111111111111111111111111111111111' as const;
+    const payer1HashLock = sha256(payer1Secret);
+
     // 2. Payer 1 quotes invoice
     const quote1Res = await app.inject({
       method: 'POST',
@@ -185,8 +190,7 @@ describe('Pay Links API (PL-01 to PL-05)', () => {
         counterChain: 'base',
         counterSymbol: 'USDC',
         userCounterAddress: '0x1111111111111111111111111111111111111111',
-        hashLock:
-          '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        hashLock: payer1HashLock,
         lane: 'safe',
       },
     });

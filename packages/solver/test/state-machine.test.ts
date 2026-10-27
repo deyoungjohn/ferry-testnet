@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import { transition } from '../src/state-machine/transitions.js';
 import type {
   ForwardOrderStatus,
@@ -6,6 +7,12 @@ import type {
   SolverOrderRecord,
 } from '../src/state-machine/types.js';
 import { parseOrderTerms } from '@ferry/core';
+
+function sha256Hex(hexWithoutPrefix: string): `0x${string}` {
+  return `0x${createHash('sha256').update(Buffer.from(hexWithoutPrefix, 'hex')).digest('hex')}` as `0x${string}`;
+}
+
+const defaultHashLock = sha256Hex('cc'.repeat(32));
 
 describe('Solver pure state machine transitions', () => {
   const dummyTerms = parseOrderTerms({
@@ -29,7 +36,7 @@ describe('Solver pure state machine transitions', () => {
     solverCounterAddress: '0xC9ec91859Bdb598dC2eeE715934D8231478f7A70',
     solverBchLockingBytecode:
       '0x76a914111111111111111111111111111111111111111188ac',
-    hashLock: `0x${'bb'.repeat(32)}`,
+    hashLock: defaultHashLock,
     counterDeadline: 1700086400,
     bchRefundHeight: 330000,
     bchCarrySats: 3000n,
@@ -42,13 +49,20 @@ describe('Solver pure state machine transitions', () => {
     status: ForwardOrderStatus,
     secret?: `0x${string}` | undefined,
     secretSource?: 'cooperative' | 'on_chain_claim' | undefined,
+    hashLockOverride?: `0x${string}`,
   ): SolverOrderRecord {
+    const hl =
+      hashLockOverride ??
+      (secret ? sha256Hex(secret.replace('0x', '')) : dummyTerms.hashLock);
     return {
       id: '0x1234',
       direction: 'COUNTER_TO_BCH',
       status,
-      terms: dummyTerms,
-      hashLock: dummyTerms.hashLock,
+      terms: {
+        ...dummyTerms,
+        hashLock: hl,
+      },
+      hashLock: hl,
       secret,
       secretSource,
       createdAt: 1000,
@@ -126,8 +140,13 @@ describe('Solver pure state machine transitions', () => {
 
   // Direct on-chain claim without prior cooperative reveal
   it('transitions from SOLVER_LOCK_SEEN directly to USER_CLAIM_SEEN if user claims on chain', () => {
-    const order = makeOrder('SOLVER_LOCK_SEEN');
     const secret = `0x${'dd'.repeat(32)}` as const;
+    const order = makeOrder(
+      'SOLVER_LOCK_SEEN',
+      undefined,
+      undefined,
+      sha256Hex('dd'.repeat(32)),
+    );
     const res = transition(order, {
       type: 'USER_CLAIM_SEEN',
       txId: '0xbchclaim2',
@@ -140,8 +159,13 @@ describe('Solver pure state machine transitions', () => {
 
   // Cooperative reveal marks secretSource as cooperative
   it('marks secretSource as cooperative on SECRET_REVEALED_COOPERATIVE', () => {
-    const order = makeOrder('SOLVER_LOCK_SEEN');
     const secret = `0x${'ee'.repeat(32)}` as const;
+    const order = makeOrder(
+      'SOLVER_LOCK_SEEN',
+      undefined,
+      undefined,
+      sha256Hex('ee'.repeat(32)),
+    );
     const res = transition(order, {
       type: 'SECRET_REVEALED_COOPERATIVE',
       secret,
@@ -218,7 +242,11 @@ describe('Solver pure state machine transitions', () => {
     function makeReverseOrder(
       status: ForwardOrderStatus,
       secret?: `0x${string}` | undefined,
+      hashLockOverride?: `0x${string}`,
     ): SolverOrderRecord {
+      const hl =
+        hashLockOverride ??
+        (secret ? sha256Hex(secret.replace('0x', '')) : dummyTerms.hashLock);
       return {
         id: '0x5678',
         direction: 'BCH_TO_COUNTER',
@@ -226,8 +254,9 @@ describe('Solver pure state machine transitions', () => {
         terms: {
           ...dummyTerms,
           direction: 'BCH_TO_COUNTER',
+          hashLock: hl,
         },
-        hashLock: dummyTerms.hashLock,
+        hashLock: hl,
         secret,
         createdAt: 1000,
         updatedAt: 1000,

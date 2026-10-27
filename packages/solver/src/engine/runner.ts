@@ -6,11 +6,15 @@ import {
   buildLockTransaction,
   buildRefundTransaction,
   buildClaimTransaction,
+  verifyClaimTransactionHex,
+  verifyRefundTransactionHex,
 } from '@ferry/htlc-bch';
 import {
   invariantF,
   invariantR,
   revealPolicy,
+  isValidSecret,
+  assertValidSecret,
   type LockEvent,
   type TxRef,
 } from '@ferry/core';
@@ -89,7 +93,14 @@ export class SolverEngine {
   async start(): Promise<void> {
     this.running = true;
 
-    // 1. Startup reconciliation
+    // 1. Startup self-heal pass for broadcast orders
+    try {
+      await this.selfHealBroadcastOrders();
+    } catch (err) {
+      this.logger.error({ err }, 'Error during startup self-heal pass');
+    }
+
+    // 2. Startup reconciliation
     await this.reconcileOrders();
 
     // 2. Wire EVM adapter watcher
@@ -220,6 +231,10 @@ export class SolverEngine {
         }
       } else if (event.type === 'Claimed') {
         // User claimed EVM lock; secret is revealed in event
+        const validSecret =
+          event.secret && isValidSecret(event.secret, order.terms.hashLock)
+            ? (event.secret as `0x${string}`)
+            : undefined;
         if (
           order.status === 'SOLVER_LOCK_SEEN' ||
           order.status === 'SOLVER_LOCK_BROADCAST' ||
@@ -228,7 +243,20 @@ export class SolverEngine {
           this.applyEvent(order, {
             type: 'USER_CLAIM_SEEN',
             txId: event.tx.txId,
-            secret: event.secret as `0x${string}`,
+            secret: validSecret,
+          });
+          if (validSecret) {
+            await this.processSolverBchClaim(order);
+          }
+        } else if (
+          order.status === 'USER_CLAIM_SEEN' &&
+          !order.secret &&
+          validSecret
+        ) {
+          this.applyEvent(order, {
+            type: 'USER_CLAIM_SEEN',
+            txId: event.tx.txId,
+            secret: validSecret,
           });
           await this.processSolverBchClaim(order);
         }
@@ -354,11 +382,32 @@ export class SolverEngine {
     return null;
   }
 
+  public async isBchTxInMempoolOrChain(
+    txid: string,
+    scriptHash?: string,
+  ): Promise<boolean> {
+    try {
+      if (scriptHash) {
+        const history = await this.bchClient.getHistory(scriptHash);
+        if (history.some((h) => h.tx_hash === txid)) return true;
+      }
+      if (typeof this.bchClient.getTransaction === 'function') {
+        const tx = await this.bchClient.getTransaction(txid, false);
+        if (tx) return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   public async executeOrAdoptBchTx(params: {
     orderId: string;
     actionType: 'SOLVER_LOCK' | 'SOLVER_REFUND' | 'SOLVER_CLAIM';
     buildTx: () => Promise<{ txid: string; txHex: string }>;
     isOnChain: (txid: string) => Promise<boolean>;
+    verifyTx?: (txHex: string) => Promise<true | string> | true | string;
+    staleBroadcastTimeoutMs?: number;
     faultBeforePoint?: string;
     faultAfterPoint?: string;
   }): Promise<{ txid: string; txHex: string; adopted: boolean }> {
@@ -374,6 +423,29 @@ export class SolverEngine {
       } catch {
         txid = existingAction.txId || '';
       }
+
+      // If we have txHex and a verifyTx callback, verify with the script VM
+      if (txHex && params.verifyTx) {
+        const verifyResult = await params.verifyTx(txHex);
+        if (verifyResult !== true) {
+          const errMsg =
+            typeof verifyResult === 'string'
+              ? verifyResult
+              : 'VM verification failed';
+          this.logger.warn(
+            {
+              orderId: params.orderId,
+              actionType: params.actionType,
+              txid,
+              err: errMsg,
+            },
+            'Stored BCH action txHex failed VM verification against current UTXO set; deleting action and rebuilding',
+          );
+          this.db.deleteAction(params.orderId, params.actionType);
+          txid = '';
+          txHex = '';
+        }
+      }
     }
 
     if (txid) {
@@ -384,11 +456,60 @@ export class SolverEngine {
         return { txid, txHex, adopted: true };
       }
 
-      // 2. Not on chain yet; rebroadcast the SAME signed bytes
+      // 2. Check if stale broadcast (not in mempool and not in block after N minutes)
+      const staleTimeoutMs = params.staleBroadcastTimeoutMs ?? 3 * 60 * 1000;
+      const actionAge = Date.now() - (existingAction?.updatedAt ?? 0);
+      if (
+        existingAction?.status === 'BROADCAST' &&
+        actionAge > staleTimeoutMs
+      ) {
+        const inMempoolOrChain = await this.isBchTxInMempoolOrChain(txid);
+        if (!inMempoolOrChain) {
+          this.logger.warn(
+            {
+              orderId: params.orderId,
+              actionType: params.actionType,
+              txid,
+              actionAgeMs: actionAge,
+            },
+            'BCH broadcast action is stale (not in mempool or chain); deleting action to allow rebuild',
+          );
+          this.db.deleteAction(params.orderId, params.actionType);
+          txid = '';
+          txHex = '';
+        }
+      }
+    }
+
+    if (txid) {
+      // 3. Not on chain yet; rebroadcast the SAME signed bytes
       if (txHex) {
         try {
           await this.bchClient.broadcast(txHex);
         } catch (err: unknown) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          if (
+            errMsg.includes('mandatory-script-verify-flag-failed') ||
+            errMsg.includes('rejected')
+          ) {
+            this.logger.error(
+              {
+                err,
+                orderId: params.orderId,
+                actionType: params.actionType,
+                txid,
+              },
+              'Node rejected BCH rebroadcast with script error; deleting action and marking needs_attention',
+            );
+            this.db.deleteAction(params.orderId, params.actionType);
+            const order = this.db.getOrder(params.orderId);
+            if (order) {
+              order.needsAttention = true;
+              order.rejectionReason = `Node rejected broadcast: ${errMsg}`;
+              this.db.saveOrder(order);
+            }
+            throw err;
+          }
           this.logger.debug(
             { err, txid },
             'Rebroadcast returned error (may already be in mempool or confirmed)',
@@ -399,7 +520,7 @@ export class SolverEngine {
       return { txid, txHex, adopted: false };
     }
 
-    // 3. First time execution: build tx first
+    // 4. First time execution or rebuild: build tx first
     const built = await params.buildTx();
     txid = built.txid;
     txHex = built.txHex;
@@ -414,8 +535,29 @@ export class SolverEngine {
       this.triggerFaultInjection(params.faultBeforePoint);
     }
 
-    // Broadcast
-    await this.bchClient.broadcast(txHex);
+    // Broadcast with rejection handling
+    try {
+      await this.bchClient.broadcast(txHex);
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        {
+          err,
+          orderId: params.orderId,
+          actionType: params.actionType,
+          txid,
+        },
+        'Node rejected BCH broadcast; marking needs_attention and deleting bad action',
+      );
+      this.db.deleteAction(params.orderId, params.actionType);
+      const order = this.db.getOrder(params.orderId);
+      if (order) {
+        order.needsAttention = true;
+        order.rejectionReason = `Node rejected broadcast: ${errMsg}`;
+        this.db.saveOrder(order);
+      }
+      throw err;
+    }
 
     if (params.faultAfterPoint) {
       this.triggerFaultInjection(params.faultAfterPoint);
@@ -423,6 +565,136 @@ export class SolverEngine {
 
     this.db.recordActionBroadcast(params.orderId, params.actionType, txid);
     return { txid, txHex, adopted: false };
+  }
+
+  public async selfHealBroadcastOrders(): Promise<void> {
+    const orders = this.db.listNonTerminalOrders();
+    for (const order of orders) {
+      if (
+        order.status !== 'SOLVER_CLAIM_BROADCAST' &&
+        order.status !== 'SOLVER_LOCK_BROADCAST'
+      ) {
+        continue;
+      }
+
+      const isReverse = order.direction === 'BCH_TO_COUNTER';
+      const lockerAddress = isReverse
+        ? (order.terms.solverCounterAddress as `0x${string}`)
+        : (order.terms.userCounterAddress as `0x${string}`);
+      const lockId = this.evmAdapter.lockId(
+        lockerAddress,
+        order.terms.hashLock,
+      );
+
+      if (order.status === 'SOLVER_CLAIM_BROADCAST') {
+        if (isReverse) {
+          // Solver was claiming BCH tokens from user BCH lock
+          const shHex = await this.ensureBchSubscription(order);
+          const txid = order.solverClaimTxId;
+          const inMempoolOrChain = txid
+            ? await this.isBchTxInMempoolOrChain(txid, shHex)
+            : false;
+          if (!inMempoolOrChain) {
+            this.logger.warn(
+              { orderId: order.id, txid },
+              'Startup self-heal: reverse SOLVER_CLAIM_BROADCAST tx not found in mempool or chain; resetting to USER_CLAIM_SEEN for rebuild',
+            );
+            this.db.deleteAction(order.id, 'SOLVER_CLAIM');
+            order.status = 'USER_CLAIM_SEEN';
+            order.solverClaimTxId = undefined;
+            order.updatedAt = Date.now();
+            this.db.saveOrder(order);
+          }
+        } else {
+          // Solver was claiming counter assets on EVM
+          const txid = order.solverClaimTxId;
+          const inMempoolOrChain =
+            txid &&
+            typeof (
+              this.evmAdapter as {
+                isTxMinedOrPending?: (h: string) => Promise<boolean>;
+              }
+            ).isTxMinedOrPending === 'function'
+              ? await (
+                  this.evmAdapter as {
+                    isTxMinedOrPending: (h: string) => Promise<boolean>;
+                  }
+                ).isTxMinedOrPending(txid)
+              : false;
+          if (!inMempoolOrChain) {
+            const currentLock = await this.evmAdapter.getLock(lockId);
+            if (currentLock.status === 'locked') {
+              this.logger.warn(
+                { orderId: order.id, txid },
+                'Startup self-heal: forward SOLVER_CLAIM_BROADCAST tx not found in mempool or chain; resetting to USER_CLAIM_SEEN for rebuild',
+              );
+              this.db.deleteAction(order.id, 'SOLVER_CLAIM');
+              order.status = 'USER_CLAIM_SEEN';
+              order.solverClaimTxId = undefined;
+              order.updatedAt = Date.now();
+              this.db.saveOrder(order);
+            }
+          }
+        }
+      } else if (order.status === 'SOLVER_LOCK_BROADCAST') {
+        if (isReverse) {
+          // Solver was locking EVM counter assets
+          const txid = order.solverLockTxId;
+          const inMempoolOrChain =
+            txid &&
+            typeof (
+              this.evmAdapter as {
+                isTxMinedOrPending?: (h: string) => Promise<boolean>;
+              }
+            ).isTxMinedOrPending === 'function'
+              ? await (
+                  this.evmAdapter as {
+                    isTxMinedOrPending: (h: string) => Promise<boolean>;
+                  }
+                ).isTxMinedOrPending(txid)
+              : false;
+          if (!inMempoolOrChain) {
+            const currentLock = await this.evmAdapter.getLock(lockId);
+            if (currentLock.status === 'absent') {
+              this.logger.warn(
+                { orderId: order.id, txid },
+                'Startup self-heal: reverse SOLVER_LOCK_BROADCAST tx not found and lock absent; resetting to USER_LOCK_FINAL to re-lock',
+              );
+              this.db.deleteAction(order.id, 'SOLVER_LOCK');
+              order.status = 'USER_LOCK_FINAL';
+              order.solverLockTxId = undefined;
+              order.updatedAt = Date.now();
+              this.db.saveOrder(order);
+            }
+          }
+        } else {
+          // Solver was locking BCH tokens
+          const shHex = await this.ensureBchSubscription(order);
+          const txid = order.solverLockTxId;
+          const inMempoolOrChain = txid
+            ? await this.isBchTxInMempoolOrChain(txid, shHex)
+            : false;
+          if (!inMempoolOrChain) {
+            const utxos = await this.bchClient.listUnspent(
+              shHex,
+              'include_tokens',
+            );
+            const lockExists = utxos.some((u) => u.tx_hash === txid);
+            if (!lockExists) {
+              this.logger.warn(
+                { orderId: order.id, txid },
+                'Startup self-heal: forward SOLVER_LOCK_BROADCAST tx not found in mempool or chain; resetting to USER_LOCK_FINAL to re-lock',
+              );
+              this.db.deleteAction(order.id, 'SOLVER_LOCK');
+              order.status = 'USER_LOCK_FINAL';
+              order.solverLockTxId = undefined;
+              order.updatedAt = Date.now();
+              this.db.saveOrder(order);
+            }
+          }
+        }
+      }
+    }
   }
 
   async reconcileOrders(): Promise<void> {
@@ -459,6 +731,10 @@ export class SolverEngine {
           });
         }
       } else if (evmLock.status === 'claimed') {
+        const validSecret =
+          evmLock.secret && isValidSecret(evmLock.secret, order.terms.hashLock)
+            ? (evmLock.secret as `0x${string}`)
+            : undefined;
         if (
           order.status === 'SOLVER_LOCK_SEEN' ||
           order.status === 'SOLVER_LOCK_BROADCAST' ||
@@ -467,7 +743,17 @@ export class SolverEngine {
           this.applyEvent(order, {
             type: 'USER_CLAIM_SEEN',
             txId: evmLock.claimTx.txId,
-            secret: evmLock.secret,
+            secret: validSecret,
+          });
+        } else if (
+          order.status === 'USER_CLAIM_SEEN' &&
+          !order.secret &&
+          validSecret
+        ) {
+          this.applyEvent(order, {
+            type: 'USER_CLAIM_SEEN',
+            txId: evmLock.claimTx.txId,
+            secret: validSecret,
           });
         }
       } else if (evmLock.status === 'refunded') {
@@ -836,6 +1122,18 @@ export class SolverEngine {
                   network: this.bchNetwork,
                 });
                 return { txid: refundResult.txid, txHex: refundResult.txHex };
+              },
+              verifyTx: (txHex) => {
+                return verifyRefundTransactionHex({
+                  params: encodeHtlcParameters(order.terms),
+                  utxo: {
+                    txid: order.solverLockTxId!,
+                    vout: 0,
+                    satoshis: order.terms.bchCarrySats,
+                  },
+                  txHex,
+                  network: this.bchNetwork,
+                });
               },
               isOnChain: async (txid) => {
                 const currentHistory = await this.bchClient.getHistory(shHex);
@@ -1223,17 +1521,28 @@ export class SolverEngine {
     ) {
       const currentLock = await this.evmAdapter.getLock(lockId);
       if (currentLock.status === 'claimed') {
+        const validSecret =
+          currentLock.secret &&
+          isValidSecret(currentLock.secret, order.terms.hashLock)
+            ? (currentLock.secret as `0x${string}`)
+            : undefined;
         this.logger.info(
-          { orderId: order.id, claimTx: currentLock.claimTx.txId },
-          'User claimed on EVM; extracted secret, proceeding to claim BCH tokens',
+          {
+            orderId: order.id,
+            claimTx: currentLock.claimTx.txId,
+            hasSecret: Boolean(validSecret),
+          },
+          'User claimed on EVM; proceeding to record claim and claim BCH tokens if secret known',
         );
         this.applyEvent(order, {
           type: 'USER_CLAIM_SEEN',
           txId: currentLock.claimTx.txId,
-          secret: currentLock.secret,
+          secret: validSecret,
         });
-        await this.processSolverBchClaim(order);
-        return;
+        if (validSecret) {
+          await this.processSolverBchClaim(order);
+          return;
+        }
       }
     }
 
@@ -1268,17 +1577,24 @@ export class SolverEngine {
       if (now >= terms.counterDeadline) {
         const currentLock = await this.evmAdapter.getLock(lockId);
         if (currentLock.status === 'claimed') {
+          const validSecret =
+            currentLock.secret &&
+            isValidSecret(currentLock.secret, order.terms.hashLock)
+              ? (currentLock.secret as `0x${string}`)
+              : undefined;
           this.logger.info(
-            { orderId: order.id },
-            'User claimed EVM lock at deadline; proceeding to claim BCH',
+            { orderId: order.id, hasSecret: Boolean(validSecret) },
+            'User claimed EVM lock at deadline; proceeding to claim BCH if secret known',
           );
           this.applyEvent(order, {
             type: 'USER_CLAIM_SEEN',
             txId: currentLock.claimTx.txId,
-            secret: currentLock.secret,
+            secret: validSecret,
           });
-          await this.processSolverBchClaim(order);
-          return;
+          if (validSecret) {
+            await this.processSolverBchClaim(order);
+            return;
+          }
         }
 
         if (currentLock.status === 'locked') {
@@ -1299,12 +1615,19 @@ export class SolverEngine {
             );
             const recheck = await this.evmAdapter.getLock(lockId);
             if (recheck.status === 'claimed') {
+              const validSecret =
+                recheck.secret &&
+                isValidSecret(recheck.secret, order.terms.hashLock)
+                  ? (recheck.secret as `0x${string}`)
+                  : undefined;
               this.applyEvent(order, {
                 type: 'USER_CLAIM_SEEN',
                 txId: recheck.claimTx.txId,
-                secret: recheck.secret,
+                secret: validSecret,
               });
-              await this.processSolverBchClaim(order);
+              if (validSecret) {
+                await this.processSolverBchClaim(order);
+              }
             }
           }
         } else if (currentLock.status === 'refunded') {
@@ -1319,6 +1642,7 @@ export class SolverEngine {
 
   public async processSolverBchClaim(order: SolverOrderRecord): Promise<void> {
     if (!order.secret) return;
+    assertValidSecret(order.secret, order.terms.hashLock);
     const shHex = await this.ensureBchSubscription(order);
     const utxos = await this.bchClient.listUnspent(shHex, 'include_tokens');
     const userUtxo =
@@ -1332,6 +1656,13 @@ export class SolverEngine {
       return;
     }
 
+    const htlcParams = encodeHtlcParameters(order.terms);
+    const claimUtxo = {
+      txid: userUtxo.tx_hash,
+      vout: userUtxo.tx_pos ?? 0,
+      satoshis: userUtxo.value ?? order.terms.bchCarrySats,
+    };
+
     const result = await this.executeOrAdoptBchTx({
       orderId: order.id,
       actionType: 'SOLVER_CLAIM',
@@ -1340,16 +1671,20 @@ export class SolverEngine {
           throw new Error('No UTXO available to claim user BCH lock');
         }
         const claimResult = buildClaimTransaction({
-          params: encodeHtlcParameters(order.terms),
-          utxo: {
-            txid: userUtxo.tx_hash,
-            vout: userUtxo.tx_pos ?? 0,
-            satoshis: userUtxo.value ?? order.terms.bchCarrySats,
-          },
+          params: htlcParams,
+          utxo: claimUtxo,
           secret: order.secret!,
           network: this.bchNetwork,
         });
         return { txid: claimResult.txid, txHex: claimResult.txHex };
+      },
+      verifyTx: (txHex) => {
+        return verifyClaimTransactionHex({
+          params: htlcParams,
+          utxo: claimUtxo,
+          txHex,
+          network: this.bchNetwork,
+        });
       },
       isOnChain: async (txid) => {
         const history = await this.bchClient.getHistory(shHex);

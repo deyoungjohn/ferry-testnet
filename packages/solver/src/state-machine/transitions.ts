@@ -1,3 +1,4 @@
+import { assertValidSecret } from '@ferry/core';
 import type {
   SolverEvent,
   SolverOrderRecord,
@@ -65,7 +66,14 @@ export function transition(
     }
 
     case 'SECRET_REVEALED_COOPERATIVE': {
-      if (current === 'SOLVER_LOCK_SEEN') {
+      assertValidSecret(event.secret, order.terms.hashLock);
+      if (
+        current === 'SOLVER_LOCK_SEEN' ||
+        current === 'QUOTED' ||
+        current === 'USER_LOCK_SEEN' ||
+        current === 'USER_LOCK_FINAL' ||
+        current === 'SOLVER_LOCK_BROADCAST'
+      ) {
         return {
           nextStatus: 'SECRET_KNOWN',
           mutations: {
@@ -80,6 +88,15 @@ export function transition(
         current === 'SOLVER_CLAIM_BROADCAST' ||
         current === 'SOLVER_CLAIM_FINAL'
       ) {
+        if (!order.secret) {
+          return {
+            nextStatus: current,
+            mutations: {
+              secret: event.secret,
+              secretSource: 'cooperative',
+            },
+          };
+        }
         return { nextStatus: current };
       }
       throw new Error(
@@ -88,6 +105,9 @@ export function transition(
     }
 
     case 'USER_CLAIM_SEEN': {
+      if (event.secret) {
+        assertValidSecret(event.secret, order.terms.hashLock);
+      }
       if (
         current === 'QUOTED' ||
         current === 'USER_LOCK_SEEN' ||
@@ -100,8 +120,8 @@ export function transition(
           nextStatus: 'USER_CLAIM_SEEN',
           mutations: {
             userClaimTxId: event.txId,
-            secret: event.secret,
-            secretSource: 'on_chain_claim',
+            secret: event.secret ?? undefined,
+            secretSource: event.secret ? 'on_chain_claim' : undefined,
           },
         };
       }
@@ -110,6 +130,16 @@ export function transition(
         current === 'SOLVER_CLAIM_BROADCAST' ||
         current === 'SOLVER_CLAIM_FINAL'
       ) {
+        if (event.secret && !order.secret) {
+          return {
+            nextStatus: current,
+            mutations: {
+              secret: event.secret,
+              secretSource: 'on_chain_claim',
+              ...(event.txId ? { userClaimTxId: event.txId } : {}),
+            },
+          };
+        }
         return { nextStatus: current };
       }
       throw new Error(`Unexpected USER_CLAIM_SEEN in state ${current}`);

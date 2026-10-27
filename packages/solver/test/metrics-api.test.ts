@@ -120,6 +120,9 @@ describe('Solver Metrics & Operator Alerts API', () => {
     db.saveOrder(activeOrder);
 
     // 3. Needs-attention order with private secret
+    const sampleSecret3 =
+      '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef' as const;
+    const sampleHashLock3 = sha256(sampleSecret3);
     const alertOrder: SolverOrderRecord = {
       id: '0xalert-1',
       direction: 'BCH_TO_COUNTER',
@@ -127,16 +130,15 @@ describe('Solver Metrics & Operator Alerts API', () => {
       needsAttention: true,
       rejectionReason:
         'Reconciliation: EVM lock is claimed unexpectedly early; marking needs_attention',
-      secret:
-        '0xsuper_secret_preimage_that_must_never_be_revealed_to_anyone_on_metrics',
+      secret: sampleSecret3,
       terms: makeTestTerms({
         direction: 'BCH_TO_COUNTER',
         counterAmount: 10_000_000n,
         bchTokenAmount: 9_9000n,
-        hashLock: sha256('0xsecret3'),
+        hashLock: sampleHashLock3,
         quoteExpiry: Math.floor(now / 1000) - 100,
       }),
-      hashLock: sha256('0xsecret3'),
+      hashLock: sampleHashLock3,
       userLockTxId: '0xuser-bch-txid-1234',
       createdAt: now - 300_000,
       updatedAt: now - 50_000,
@@ -255,7 +257,7 @@ describe('Solver Metrics & Operator Alerts API', () => {
     expect(res.payload).not.toContain('userCounterAddress');
     expect(res.payload).not.toContain('userBchLockingBytecode');
     expect(res.payload).not.toContain(
-      '0xsuper_secret_preimage_that_must_never_be_revealed_to_anyone_on_metrics',
+      '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
     );
     expect(res.payload).not.toContain('secret');
   });
@@ -380,7 +382,7 @@ describe('Solver Metrics & Operator Alerts API', () => {
 
     // Strict privacy: no raw preimage secret in operator payload
     expect(resOk.payload).not.toContain(
-      '0xsuper_secret_preimage_that_must_never_be_revealed_to_anyone_on_metrics',
+      '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
     );
   });
 

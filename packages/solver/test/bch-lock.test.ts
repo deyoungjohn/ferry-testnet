@@ -62,8 +62,7 @@ describe('BCH Lock and Secret Extraction', () => {
         '0x76a914111111111111111111111111111111111111111188ac',
       refundLockingBytecode:
         '0x76a914222222222222222222222222222222222222222288ac',
-      hashLock:
-        '0x5555555555555555555555555555555555555555555555555555555555555555',
+      hashLock: sha256(secret),
       refundHeight: 330000,
       tokenCategory: displayToInternalCategory(
         '0xec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac',

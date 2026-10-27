@@ -1,7 +1,12 @@
 import DatabaseConstructor, {
   type Database as DatabaseType,
 } from 'better-sqlite3';
-import { convertCeil, evmLockId, type OrderTerms } from '@ferry/core';
+import {
+  assertValidSecret,
+  convertCeil,
+  evmLockId,
+  type OrderTerms,
+} from '@ferry/core';
 import type {
   SolverOrderRecord,
   ForwardOrderStatus,
@@ -192,6 +197,10 @@ export class SolverDatabase {
   }
 
   saveOrder(order: SolverOrderRecord): void {
+    if (order.secret !== undefined && order.secret !== null) {
+      assertValidSecret(order.secret, order.hashLock);
+    }
+
     const lockerAddress =
       order.direction === 'BCH_TO_COUNTER'
         ? order.terms.solverCounterAddress
@@ -558,6 +567,13 @@ export class SolverDatabase {
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
     };
+  }
+
+  deleteAction(orderId: string, action: string): void {
+    const stmt = this.db.prepare(
+      'DELETE FROM actions WHERE order_id = ? AND action = ?',
+    );
+    stmt.run(orderId, action);
   }
 
   private mapOrderRow(row: Record<string, unknown>): SolverOrderRecord {

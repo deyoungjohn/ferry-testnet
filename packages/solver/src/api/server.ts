@@ -33,6 +33,7 @@ import {
   convertCeil,
   checkLimits,
   pegGuard,
+  isValidSecret,
   invariantF,
   invariantR,
   revealPolicy,
@@ -671,8 +672,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     const { secret } = parseResult.data;
 
     // Verify secret matches hashLock
-    const { sha256 } = await import('viem');
-    if (sha256(secret) !== order.hashLock) {
+    if (!isValidSecret(secret, order.hashLock)) {
       return reply.status(400).send({
         code: 'HASH_LOCK_MISMATCH',
         message: 'Provided secret does not match hashLock',
@@ -894,8 +894,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     }
 
     // Verify secret matches hashLock
-    const { sha256 } = await import('viem');
-    if (sha256(secret) !== order.hashLock) {
+    if (!isValidSecret(secret, order.hashLock)) {
       return reply.status(400).send({
         code: 'HASH_LOCK_MISMATCH',
         message: 'Provided secret does not match hashLock',

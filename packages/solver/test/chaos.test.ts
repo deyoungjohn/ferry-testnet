@@ -190,7 +190,7 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
     for (const state of statesToTest) {
       db.db.exec('DELETE FROM orders; DELETE FROM actions;');
       const orderId = `0x${Math.random().toString(16).slice(2).padStart(64, '0')}`;
-      const dummyTerms = getDummyTerms();
+      const dummyTerms = getDummyTerms({ hashLock: sha256(secret) });
 
       // Seed DB with order in specific state
       db.saveOrder({

@@ -7,6 +7,7 @@ import { SolverEngine } from '../src/engine/runner.js';
 import type { EvmChainAdapter } from '@ferry/chain-evm';
 import type { BchQuorumClient } from '../src/bch/quorum-client.js';
 import { parseOrderTerms, orderId as computeOrderId } from '@ferry/core';
+import { encodeHtlcParameters, buildClaimTransaction } from '@ferry/htlc-bch';
 import type { ElectrumUtxo } from '../src/bch/types.js';
 
 describe('Reverse Swap Engine (BCH_TO_COUNTER)', () => {
@@ -1018,9 +1019,21 @@ describe('Reverse Swap Engine (BCH_TO_COUNTER)', () => {
         updatedAt: Date.now(),
       });
 
+      const bchParams = encodeHtlcParameters(terms);
+      const claimResult = buildClaimTransaction({
+        params: bchParams,
+        utxo: {
+          txid: userLockTxId,
+          vout: 0,
+          satoshis: terms.bchCarrySats,
+        },
+        secret,
+        network: 'chipnet',
+      });
+
       db.recordActionIntent(orderId, 'SOLVER_CLAIM', {
-        txid: '0xpre-computed-claim-txid',
-        txHex: '0100000001mockclaimhex',
+        txid: claimResult.txid,
+        txHex: claimResult.txHex,
       });
 
       const engine = new SolverEngine(
@@ -1033,7 +1046,7 @@ describe('Reverse Swap Engine (BCH_TO_COUNTER)', () => {
       );
 
       await engine.step();
-      expect(bchBroadcasts).toEqual(['0100000001mockclaimhex']);
+      expect(bchBroadcasts).toEqual([claimResult.txHex]);
       const order = db.getOrder(orderId)!;
       expect(order.status).toBe('SOLVER_CLAIM_BROADCAST');
     });

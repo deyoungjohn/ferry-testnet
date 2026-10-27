@@ -46,7 +46,11 @@ export type SolverEvent =
   | { type: 'SOLVER_LOCK_BROADCAST'; txId: string }
   | { type: 'SOLVER_LOCK_SEEN'; txId: string }
   | { type: 'SECRET_REVEALED_COOPERATIVE'; secret: `0x${string}` }
-  | { type: 'USER_CLAIM_SEEN'; txId: string; secret: `0x${string}` }
+  | {
+      type: 'USER_CLAIM_SEEN';
+      txId: string;
+      secret?: `0x${string}` | null | undefined;
+    }
   | { type: 'SOLVER_CLAIM_BROADCAST'; txId: string }
   | { type: 'SOLVER_CLAIM_FINAL'; txId: string }
   | { type: 'SWAP_COMPLETE' }
