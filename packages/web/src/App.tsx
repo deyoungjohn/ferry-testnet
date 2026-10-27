@@ -21,6 +21,14 @@ const PayLinksPage = lazy(async () => {
   return { default: module.PayLinksPage };
 });
 
+const WalletExtensionSpikePage =
+  import.meta.env.DEV && import.meta.env.VITE_WALLET_EXTENSION_SPIKE === '1'
+    ? lazy(async () => {
+        const module = await import('./routes/WalletExtensionSpikePage');
+        return { default: module.WalletExtensionSpikePage };
+      })
+    : null;
+
 function RouteLoading() {
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-16 sm:px-6">
@@ -68,6 +76,16 @@ export function App() {
             </Suspense>
           }
         />
+        {WalletExtensionSpikePage ? (
+          <Route
+            path="dev/wallet-extension"
+            element={
+              <Suspense fallback={<RouteLoading />}>
+                <WalletExtensionSpikePage />
+              </Suspense>
+            }
+          />
+        ) : null}
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

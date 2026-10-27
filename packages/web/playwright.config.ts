@@ -30,6 +30,7 @@ export default defineConfig({
       VITE_BCH_ELECTRUM_URL: '',
       VITE_BCH_ELECTRUM_URL_2: '',
       VITE_USE_MOCKS: '',
+      VITE_WALLET_EXTENSION_SPIKE: '1',
     },
   },
   projects: [
