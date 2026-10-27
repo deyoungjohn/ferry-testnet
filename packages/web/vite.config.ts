@@ -68,6 +68,7 @@ export default defineConfig(({ mode }) => {
         VITE_SOLVER_SIGNING_ADDRESS: '',
         VITE_SOLVER_BCH_ADDRESS: '',
         VITE_USE_MOCKS: '',
+        VITE_WALLET_EXTENSION_SPIKE: '',
       },
       include: ['src/**/*.test.{ts,tsx}'],
     },
