@@ -263,3 +263,14 @@ Executed end-to-end against live solver daemon running on `localhost:8787` (`pnp
 3. **BCH Lock UTXO Selection & Carry Satoshis:**
    - The user must provide both CashTokens of category `tPUSD` and satoshis for carry (`terms.bchCarrySats = 3000n`), plus sufficient satoshis to cover miner fees (~500 - 1500 sats).
    - If the user wallet lacks a separate pure satoshi UTXO or has insufficient sats alongside the token UTXO, `buildLockTransaction` will throw `Insufficient token / satoshi balance`.
+
+## 2026-10-27 · Live reverse UI proof (script signer)
+
+Order `0xe8878b7edfeff55bfae73838666bec4f47f26688c08fb5ba492833cd2fa7a462`, fast lane, tPUSD → USDC, against a local solver on `127.0.0.1:8787`. The test runner signed the exact relay request with `USER_BCH_WIF`; the page received only the signed transaction bytes.
+
+- **User BCH lock (`buildReverseLock` / real request format):** `f4bdd2c8f54e603529219266cb1f633bd045d1771d2c99f2eb3195ee1b954bb4`
+  - Explorer: `https://blockexplorer.cash/chipnet/tx/f4bdd2c8f54e603529219266cb1f633bd045d1771d2c99f2eb3195ee1b954bb4`
+- **Solver BCH claim:** `feb06279505c4b32adbc06592db4dd9b7c72b5a83558a4c18dc865e7ad896775`
+  - Explorer: `https://blockexplorer.cash/chipnet/tx/feb06279505c4b32adbc06592db4dd9b7c72b5a83558a4c18dc865e7ad896775`
+- **Timings:** quote + BCH lock broadcast 3.807 s; BCH lock to gasless claim available 16.068 s; claim click to `DONE` 6.037 s; total 25.912 s.
+- **UI defect found and fixed before this successful run:** reverse transaction labels/chains were derived with forward semantics, so an earlier completed order linked EVM hashes to the BCH explorer and omitted the Base claim. See an earlier issue.
