@@ -113,4 +113,48 @@ describe('HttpSolverClient independent BCH tip', () => {
     expect(order.bchTipError).toBe('electrum down');
     expect(order.bchRefundAvailable).toBe(false);
   });
+
+  it('maps reverse txIds to the chain that actually holds them', async () => {
+    const reverseRequest = {
+      ...quoteRequest(),
+      direction: 'BCH_TO_COUNTER' as const,
+      amountIn: 1_000n,
+    };
+    const quote = await createMockSolverClient().quote(reverseRequest);
+    const response = {
+      orderId: quote.orderId,
+      status: 'DONE' as const,
+      lane: quote.lane,
+      terms: quote.terms,
+      signature: quote.signature,
+      signerAddress: quote.signerAddress,
+      txIds: {
+        userLockTxId: 'bch-user-lock',
+        solverLockTxId: `0x${'22'.repeat(32)}`,
+        userClaimTxId: `0x${'33'.repeat(32)}`,
+        solverClaimTxId: 'bch-solver-claim',
+      },
+      deadlines: {
+        quoteExpiry: quote.terms.quoteExpiry,
+        counterDeadline: quote.terms.counterDeadline,
+        bchRefundHeight: quote.terms.bchRefundHeight,
+      },
+      updatedAt: 1,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(serializeApiJson(response))),
+    );
+    const client = new HttpSolverClient('http://solver.test', {
+      read: async () => 100,
+    });
+
+    const order = await client.getOrder(quote.orderId);
+    expect(order.transactions).toEqual([
+      { label: 'BCH lock', chain: 'bch', hash: 'bch-user-lock' },
+      { label: 'Base lock', chain: 'base', hash: `0x${'22'.repeat(32)}` },
+      { label: 'Base claim', chain: 'base', hash: `0x${'33'.repeat(32)}` },
+      { label: 'BCH claim', chain: 'bch', hash: 'bch-solver-claim' },
+    ]);
+  });
 });

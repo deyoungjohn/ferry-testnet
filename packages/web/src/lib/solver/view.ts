@@ -132,6 +132,17 @@ const REVERSE_STEPS: readonly StepDefinition[] = [
     txLabel: null,
   },
   {
+    key: 'user-claim',
+    label: 'USDC claimed on Base',
+    reached: [
+      'USER_CLAIM_SEEN',
+      'SOLVER_CLAIM_BROADCAST',
+      'SOLVER_CLAIM_FINAL',
+      'DONE',
+    ],
+    txLabel: 'Base claim',
+  },
+  {
     key: 'settled',
     label: 'Both sides settled',
     reached: ['DONE'],
