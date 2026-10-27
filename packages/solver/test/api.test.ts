@@ -767,4 +767,290 @@ describe('Solver API contracts & Secret Privacy Rule', () => {
     const body = JSON.parse(res.payload);
     expect(body.code).toBe('ORDER_TERMINAL');
   });
+
+  it(': unfunded QUOTED orders do not count toward exposure until user lock is seen', async () => {
+    const initialExposure = db.getOpenExposureUsdMicros();
+    const testSecret =
+      '0x3333333333333333333333333333333333333333333333333333333333333333' as const;
+    const testHashLock = sha256(testSecret);
+
+    const quoteTerms = {
+      version: 1 as const,
+      direction: 'COUNTER_TO_BCH' as const,
+      bchToken: 'PUSD' as const,
+      bchTokenCategory:
+        '0xec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac' as `0x${string}`,
+      bchTokenAmount: 24000n,
+      counterAmount: 50_000_000n, // $50.00
+      counterChain: 'base' as const,
+      counterNetworkId: 84532,
+      counterAsset: {
+        symbol: 'USDC' as const,
+        decimals: 6,
+        address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      },
+      counterHtlc: '0x5A0C062f4B7b8fF2263530e12bc15De9C836a641' as const,
+      userCounterAddress: '0x5555555555555555555555555555555555555555',
+      userBchLockingBytecode:
+        '0x76a914555555555555555555555555555555555555555588ac' as const,
+      solverCounterAddress: solverAddress,
+      solverBchLockingBytecode:
+        '0x76a914000000000000000000000000000000000000000088ac' as const,
+      hashLock: testHashLock,
+      counterDeadline: Math.floor(Date.now() / 1000) + 86400,
+      bchRefundHeight: 330036,
+      bchCarrySats: 3000n,
+      bchMaxFee: 1500n,
+      quoteId: 'quote-unfunded-exposure-test',
+      quoteExpiry: Math.floor(Date.now() / 1000) + 120,
+    };
+
+    // Save order in QUOTED state
+    db.saveOrder({
+      id: '0xunfunded_quoted_order',
+      direction: 'COUNTER_TO_BCH',
+      status: 'QUOTED',
+      lane: 'safe',
+      fastOptIn: false,
+      terms: quoteTerms,
+      hashLock: testHashLock,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    // QUOTED order must NOT increase open exposure
+    expect(db.getOpenExposureUsdMicros()).toBe(initialExposure);
+
+    // Transition order to USER_LOCK_SEEN -> now counts as exposure
+    const o = db.getOrder('0xunfunded_quoted_order')!;
+    db.saveOrder({ ...o, status: 'USER_LOCK_SEEN' });
+    expect(db.getOpenExposureUsdMicros()).toBe(initialExposure + 50_000_000n);
+
+    // Clean up
+    db.saveOrder({ ...o, status: 'DONE' });
+    expect(db.getOpenExposureUsdMicros()).toBe(initialExposure);
+  });
+
+  it(': normalizes BSC 18-decimal token amounts to 6-decimal USD micros for exposure', async () => {
+    const initialExposure = db.getOpenExposureUsdMicros();
+    const testSecret =
+      '0x4444444444444444444444444444444444444444444444444444444444444444' as const;
+    const testHashLock = sha256(testSecret);
+
+    // BSC USDT with 18 decimals, 25 USDT = 25 * 10^18
+    const bsc18Terms = {
+      version: 1 as const,
+      direction: 'COUNTER_TO_BCH' as const,
+      bchToken: 'PUSD' as const,
+      bchTokenCategory:
+        '0xec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac' as `0x${string}`,
+      bchTokenAmount: 2485n,
+      counterAmount: 25_000_000_000_000_000_000n, // 25 USDT (18 decimals)
+      counterChain: 'bsc' as const,
+      counterNetworkId: 97,
+      counterAsset: {
+        symbol: 'USDT' as const,
+        decimals: 18,
+        address: '0x1111111111111111111111111111111111111111',
+      },
+      counterHtlc: '0x2222222222222222222222222222222222222222' as const,
+      userCounterAddress: '0x6666666666666666666666666666666666666666',
+      userBchLockingBytecode:
+        '0x76a914666666666666666666666666666666666666666688ac' as const,
+      solverCounterAddress: solverAddress,
+      solverBchLockingBytecode:
+        '0x76a914000000000000000000000000000000000000000088ac' as const,
+      hashLock: testHashLock,
+      counterDeadline: Math.floor(Date.now() / 1000) + 86400,
+      bchRefundHeight: 330036,
+      bchCarrySats: 3000n,
+      bchMaxFee: 1500n,
+      quoteId: 'quote-bsc18-test',
+      quoteExpiry: Math.floor(Date.now() / 1000) + 120,
+    };
+
+    db.saveOrder({
+      id: '0xbsc_18_decimal_order',
+      direction: 'COUNTER_TO_BCH',
+      status: 'USER_LOCK_FINAL',
+      lane: 'safe',
+      fastOptIn: false,
+      terms: bsc18Terms,
+      hashLock: testHashLock,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    // 25 USDT (18 decimals) must normalize to 25_000_000 USD micros ($25.00), NOT 25e18
+    expect(db.getOpenExposureUsdMicros()).toBe(initialExposure + 25_000_000n);
+
+    // Clean up
+    const o = db.getOrder('0xbsc_18_decimal_order')!;
+    db.saveOrder({ ...o, status: 'DONE' });
+    expect(db.getOpenExposureUsdMicros()).toBe(initialExposure);
+  });
+
+  it(': rate-limits quote requests per address and respects trustedProxy', async () => {
+    const testConfig = SolverConfigSchema.parse({
+      solverEvmPrivateKey: solverEvmKey,
+      quoteRateLimitWindowMs: 10_000,
+      quoteRateLimitMaxPerAddress: 3,
+      quoteRateLimitMaxPerIp: 10,
+      trustedProxy: false,
+    });
+
+    const testApp = buildServer({
+      config: testConfig,
+      db,
+      evmAdapter: fakeEvmAdapter,
+      bchClient: fakeBchClient,
+      engine,
+    });
+
+    const userAddress = '0x7777777777777777777777777777777777777777';
+
+    // First 3 quote requests succeed
+    for (let i = 0; i < 3; i++) {
+      const res = await testApp.inject({
+        method: 'POST',
+        url: '/v1/quotes',
+        payload: {
+          direction: 'COUNTER_TO_BCH',
+          bchToken: 'PUSD',
+          counterChain: 'base',
+          counterSymbol: 'USDC',
+          amountIn: '10000000',
+          lane: 'safe',
+          userCounterAddress: userAddress,
+          userBchLockingBytecode:
+            '0x76a914777777777777777777777777777777777777777788ac',
+          hashLock: sha256(`0x07${i.toString(16).padStart(62, '0')}`),
+        },
+      });
+      expect(res.statusCode).toBe(200);
+    }
+
+    // 4th request from same address hits rate limit
+    const rateLimitedRes = await testApp.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      payload: {
+        direction: 'COUNTER_TO_BCH',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '10000000',
+        lane: 'safe',
+        userCounterAddress: userAddress,
+        userBchLockingBytecode:
+          '0x76a914777777777777777777777777777777777777777788ac',
+        hashLock: sha256(
+          '0x07ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+        ),
+      },
+    });
+
+    expect(rateLimitedRes.statusCode).toBe(429);
+    const body = JSON.parse(rateLimitedRes.payload);
+    expect(body.code).toBe('RATE_LIMITED');
+  });
+
+  it(' &: 1,000 quotes from one address do not block a second address', async () => {
+    // Isolate in fresh DB and server instance
+    const freshDb = new SolverDatabase(':memory:');
+    const customConfig = SolverConfigSchema.parse({
+      solverEvmPrivateKey: solverEvmKey,
+      quoteRateLimitWindowMs: 60_000,
+      quoteRateLimitMaxPerAddress: 10,
+      quoteRateLimitMaxPerIp: 2000, // allow the 1000 requests to hit address cap
+      maxUnfundedQuotesPerAddress: 10,
+      maxGlobalUnfundedQuotes: 500,
+      maxExposureUsdMicros: 250_000_000n, // $250.00 max exposure
+      trustedProxy: true,
+    });
+
+    const spamApp = buildServer({
+      config: customConfig,
+      db: freshDb,
+      evmAdapter: fakeEvmAdapter,
+      bchClient: fakeBchClient,
+      engine,
+    });
+
+    const spammerAddress = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const innocentAddress = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+    let successCount = 0;
+    let rateLimitedCount = 0;
+
+    // Spammer sends 1,000 quote requests with distinct hashlocks
+    for (let i = 0; i < 1000; i++) {
+      const hexPad = i.toString(16).padStart(62, '0');
+      const hashLock = sha256(`0x01${hexPad}`);
+
+      const res = await spamApp.inject({
+        method: 'POST',
+        url: '/v1/quotes',
+        headers: {
+          'x-forwarded-for': '198.51.100.1',
+        },
+        payload: {
+          direction: 'COUNTER_TO_BCH',
+          bchToken: 'PUSD',
+          counterChain: 'base',
+          counterSymbol: 'USDC',
+          amountIn: '25000000', // $25.00 each
+          lane: 'safe',
+          userCounterAddress: spammerAddress,
+          userBchLockingBytecode:
+            '0x76a914aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa88ac',
+          hashLock,
+        },
+      });
+
+      if (res.statusCode === 200) {
+        successCount++;
+      } else if (res.statusCode === 429) {
+        rateLimitedCount++;
+      }
+    }
+
+    // Spammer was bounded to max 10 quotes, remaining 990 were rejected
+    expect(successCount).toBe(10);
+    expect(rateLimitedCount).toBe(990);
+
+    // Spammer's quotes are unfunded (QUOTED) -> open exposure must still be zero!
+    expect(freshDb.getOpenExposureUsdMicros()).toBe(0n);
+
+    // Now, innocent user 2 requests a quote
+    const innocentHashLock = sha256(
+      '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    );
+    const innocentRes = await spamApp.inject({
+      method: 'POST',
+      url: '/v1/quotes',
+      headers: {
+        'x-forwarded-for': '198.51.100.2',
+      },
+      payload: {
+        direction: 'COUNTER_TO_BCH',
+        bchToken: 'PUSD',
+        counterChain: 'base',
+        counterSymbol: 'USDC',
+        amountIn: '25000000', // $25.00
+        lane: 'safe',
+        userCounterAddress: innocentAddress,
+        userBchLockingBytecode:
+          '0x76a914bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb88ac',
+        hashLock: innocentHashLock,
+      },
+    });
+
+    // Innocent user is NOT blocked: succeeds with 200 OK and valid signed quote!
+    expect(innocentRes.statusCode).toBe(200);
+    const innocentBody = JSON.parse(innocentRes.payload);
+    expect(innocentBody.orderId).toBeDefined();
+    expect(innocentBody.signature).toBeDefined();
+    expect(innocentBody.terms.userCounterAddress).toBe(innocentAddress);
+  }, 30_000);
 });

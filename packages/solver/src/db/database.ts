@@ -1,7 +1,7 @@
 import DatabaseConstructor, {
   type Database as DatabaseType,
 } from 'better-sqlite3';
-import { evmLockId, type OrderTerms } from '@ferry/core';
+import { convertCeil, evmLockId, type OrderTerms } from '@ferry/core';
 import type {
   SolverOrderRecord,
   ForwardOrderStatus,
@@ -310,15 +310,59 @@ export class SolverDatabase {
 
   getOpenExposureUsdMicros(): bigint {
     const orders = this.listNonTerminalOrders();
-    const now = Math.floor(Date.now() / 1000);
     let totalMicros = 0n;
     for (const order of orders) {
-      if (order.status === 'QUOTED' && now > order.terms.quoteExpiry) {
+      // Unfunded QUOTED orders do not count toward exposure until user lock is seen
+      if (order.status === 'QUOTED') {
         continue;
       }
-      totalMicros += order.terms.counterAmount;
+      const decimals = order.terms.counterAsset?.decimals ?? 6;
+      totalMicros += convertCeil(order.terms.counterAmount, decimals, 6);
     }
     return totalMicros;
+  }
+
+  countUnfundedQuotesByAddress(userAddress: string): number {
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = this.db.prepare(`
+      SELECT terms_json FROM orders
+      WHERE LOWER(user_counter_address) = LOWER(?)
+        AND status = 'QUOTED'
+    `);
+    const rows = stmt.all(userAddress) as Array<{ terms_json: string }>;
+    let count = 0;
+    for (const row of rows) {
+      try {
+        const terms = JSON.parse(row.terms_json);
+        if (typeof terms.quoteExpiry === 'number' && terms.quoteExpiry > now) {
+          count++;
+        }
+      } catch {
+        // ignore malformed terms
+      }
+    }
+    return count;
+  }
+
+  countGlobalUnfundedQuotes(): number {
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = this.db.prepare(`
+      SELECT terms_json FROM orders
+      WHERE status = 'QUOTED'
+    `);
+    const rows = stmt.all() as Array<{ terms_json: string }>;
+    let count = 0;
+    for (const row of rows) {
+      try {
+        const terms = JSON.parse(row.terms_json);
+        if (typeof terms.quoteExpiry === 'number' && terms.quoteExpiry > now) {
+          count++;
+        }
+      } catch {
+        // ignore malformed terms
+      }
+    }
+    return count;
   }
 
   listNeedsAttentionOrders(): SolverOrderRecord[] {
