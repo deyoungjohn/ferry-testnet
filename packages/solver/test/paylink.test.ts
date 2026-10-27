@@ -298,14 +298,17 @@ describe('Pay Links API (PL-01 to PL-05)', () => {
         recipientLockingBytecode: merchantLockingBytecode,
         token: 'PUSD',
         amountOut: '1000',
-        expiresAt: now + 1,
+        expiresAt: Math.floor(Date.now() / 1000) + 1,
       },
     });
     expect(createRes.statusCode).toBe(200);
     const link = CreatePayLinkResponseSchema.parse(JSON.parse(createRes.body));
 
-    // Wait 1.1s for expiry
-    await new Promise((resolve) => setTimeout(resolve, 1100));
+    // Wait for expiry
+    const msRemaining = link.expiresAt * 1000 - Date.now();
+    if (msRemaining >= 0) {
+      await new Promise((resolve) => setTimeout(resolve, msRemaining + 150));
+    }
 
     // Attempt quote on expired link -> 410 LINK_EXPIRED
     const quoteRes = await app.inject({
