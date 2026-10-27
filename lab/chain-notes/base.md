@@ -149,3 +149,13 @@ Executed end-to-end against live solver daemon running on `localhost:8787` (`pnp
   - Block: `50858486`, Status: `1 (success)`, Latency: `3.12s`
   - Direct execution: User wallet directly submitted transaction to Base Sepolia HTLC (`0x5A0C062f4B7b8fF2263530e12bc15De9C836a641`) calling `claim(lockId, secret)`.
   - Explorer: `https://sepolia.basescan.org/tx/0xd1f8ab18224c6c6afc020447fb200ed6eb938b4a0a3ccee932ec041c67d25854`
+
+## 2026-10-27 · Live reverse UI proof (script signer)
+
+Order `0xe8878b7edfeff55bfae73838666bec4f47f26688c08fb5ba492833cd2fa7a462`, fast lane, tPUSD → USDC, against a local solver on `127.0.0.1:8787`. The browser used the real reverse quote, `relay-format`, `buildReverseLock`, and the real status page; the test runner held `USER_BCH_WIF` and only returned signed bytes to the page.
+
+- **Solver EVM counter-lock:** `0xf5867b2e003208fa4b1a6b01253e1fef45ddfb2c6a02fd436f8ff23d89fc3369`
+  - Explorer: `https://sepolia.basescan.org/tx/0xf5867b2e003208fa4b1a6b01253e1fef45ddfb2c6a02fd436f8ff23d89fc3369`
+- **User EVM claim (gasless relay):** `0x75dce99e07ea0b89f9ba256fc81f62d048dd4e5d3396c556d21213250ea21e5a`
+  - Explorer: `https://sepolia.basescan.org/tx/0x75dce99e07ea0b89f9ba256fc81f62d048dd4e5d3396c556d21213250ea21e5a`
+- **Timings:** quote + BCH lock broadcast 3.807 s; BCH lock to gasless claim available 16.068 s; claim click to `DONE` 6.037 s; total 25.912 s.

@@ -19,6 +19,7 @@ import {
   serializeApiJson,
   type CancelPayLinkRequest,
   type CreatePayLinkRequest,
+  type Direction,
   type HealthResponse,
   type Hex32,
   type ListPayLinksQuery,
@@ -60,36 +61,52 @@ function splitPermitSignature(signature: `0x${string}`): {
   };
 }
 
-function txList(input: {
-  userLockTxId?: string | undefined;
-  solverLockTxId?: string | undefined;
-  userClaimTxId?: string | undefined;
-  solverClaimTxId?: string | undefined;
-  solverRefundTxId?: string | undefined;
-}): OrderTransaction[] {
+function txList(
+  input: {
+    userLockTxId?: string | undefined;
+    solverLockTxId?: string | undefined;
+    userClaimTxId?: string | undefined;
+    solverClaimTxId?: string | undefined;
+    solverRefundTxId?: string | undefined;
+  },
+  direction: Direction,
+): OrderTransaction[] {
+  const reverse = direction === 'BCH_TO_COUNTER';
   const out: OrderTransaction[] = [];
   if (input.userLockTxId) {
-    out.push({ label: 'Base lock', chain: 'base', hash: input.userLockTxId });
+    out.push(
+      reverse
+        ? { label: 'BCH lock', chain: 'bch', hash: input.userLockTxId }
+        : { label: 'Base lock', chain: 'base', hash: input.userLockTxId },
+    );
   }
   if (input.solverLockTxId) {
-    out.push({ label: 'BCH lock', chain: 'bch', hash: input.solverLockTxId });
+    out.push(
+      reverse
+        ? { label: 'Base lock', chain: 'base', hash: input.solverLockTxId }
+        : { label: 'BCH lock', chain: 'bch', hash: input.solverLockTxId },
+    );
   }
   if (input.userClaimTxId) {
-    out.push({ label: 'BCH claim', chain: 'bch', hash: input.userClaimTxId });
+    out.push(
+      reverse
+        ? { label: 'Base claim', chain: 'base', hash: input.userClaimTxId }
+        : { label: 'BCH claim', chain: 'bch', hash: input.userClaimTxId },
+    );
   }
   if (input.solverClaimTxId) {
-    out.push({
-      label: 'Base claim',
-      chain: 'base',
-      hash: input.solverClaimTxId,
-    });
+    out.push(
+      reverse
+        ? { label: 'BCH claim', chain: 'bch', hash: input.solverClaimTxId }
+        : { label: 'Base claim', chain: 'base', hash: input.solverClaimTxId },
+    );
   }
   if (input.solverRefundTxId) {
-    out.push({
-      label: 'Base refund',
-      chain: 'base',
-      hash: input.solverRefundTxId,
-    });
+    out.push(
+      reverse
+        ? { label: 'Base refund', chain: 'base', hash: input.solverRefundTxId }
+        : { label: 'BCH refund', chain: 'bch', hash: input.solverRefundTxId },
+    );
   }
   return out;
 }
@@ -325,7 +342,7 @@ export class HttpSolverClient implements SolverClient {
       bchTipHeight,
       bchTipError,
       updatedAt: response.updatedAt,
-      transactions: txList(response.txIds),
+      transactions: txList(response.txIds, response.terms.direction),
       bchLockUtxo: response.bchLock
         ? {
             txid: response.bchLock.txid,

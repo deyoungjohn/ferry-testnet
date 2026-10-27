@@ -1,9 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
+import { LIVE_SKIP_REASON, liveSolverReady } from './live-env';
 
 test('web obtains signed forward and reverse quotes from the live solver', async ({
   page,
+  request,
 }) => {
+  test.skip(!(await liveSolverReady(request)), LIVE_SKIP_REASON);
   await page.setViewportSize({ width: 1440, height: 900 });
 
   for (const direction of ['forward', 'reverse'] as const) {
@@ -14,7 +17,7 @@ test('web obtains signed forward and reverse quotes from the live solver', async
     await page.getByRole('button', { name: 'Connect Base' }).click();
     await page.getByRole('button', { name: 'Get quote' }).click();
 
-    await expect(page.getByText('Live solver')).toBeVisible({
+    await expect(page.getByText('Live solver', { exact: true })).toBeVisible({
       timeout: 30_000,
     });
     const downloadButton = page.getByRole('button', {

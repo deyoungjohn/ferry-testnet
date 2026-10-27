@@ -5,6 +5,8 @@ import type { Hex, TypedDataDefinition } from 'viem';
 import { parseBchAddress } from '../bch/address';
 import { MOCK_BCH_USER_ADDRESS, PUSD_CATEGORY } from '../config';
 import { WalletContext } from './context';
+import { sourceOutputToRelay } from './relay-format';
+import { getScriptWalletBridge } from './script-wallet';
 import type {
   BchSignedTransaction,
   BchSignTransactionRequest,
@@ -57,6 +59,15 @@ export function MockWalletProvider({
   const claimConflict = query?.get('claimConflict') === '1';
   const claimSpentButKnown = query?.get('claimSpentButKnown') === '1';
   const broadcastCount = useRef(0);
+  const scriptWallet = useMemo(() => getScriptWalletBridge(), []);
+  const scriptBch = useMemo(() => {
+    if (!scriptWallet) return null;
+    const parsed = parseBchAddress(scriptWallet.address);
+    if (!parsed.ok) {
+      throw new Error(`Script wallet address is invalid: ${parsed.error}`);
+    }
+    return parsed.value;
+  }, [scriptWallet]);
 
   const evm = useMemo<EvmWallet>(
     () => ({
@@ -101,10 +112,16 @@ export function MockWalletProvider({
     () => ({
       status: bchStatus,
       address:
-        bchStatus === 'connected' || bchStatus === 'offline' ? mockBch : null,
+        bchStatus === 'connected' || bchStatus === 'offline'
+          ? (scriptBch ?? mockBch)
+          : null,
       error: null,
       walletName:
-        bchStatus === 'connected' || bchStatus === 'offline' ? 'Paytaca' : null,
+        bchStatus === 'connected' || bchStatus === 'offline'
+          ? scriptWallet
+            ? 'Script test wallet'
+            : 'Paytaca'
+          : null,
       pendingRequest: null,
       connect: () => {
         setBchStatus('connected');
@@ -118,18 +135,53 @@ export function MockWalletProvider({
       forget: () => {
         setBchStatus('disconnected');
       },
-      listUtxos: async () => MOCK_BCH_UTXOS,
+      listUtxos: async () => {
+        if (!scriptWallet) return MOCK_BCH_UTXOS;
+        const utxos = await scriptWallet.listUtxos();
+        return utxos.map((utxo) => ({
+          txid: utxo.txid,
+          vout: utxo.vout,
+          satoshis: BigInt(utxo.satoshis),
+          lockingBytecode: utxo.lockingBytecode as `0x${string}`,
+          ...(utxo.token
+            ? {
+                token: {
+                  category: utxo.token.category.startsWith('0x')
+                    ? utxo.token.category
+                    : `0x${utxo.token.category}`,
+                  amount: BigInt(utxo.token.amount),
+                },
+              }
+            : {}),
+        }));
+      },
       signTransaction: async (
         request: BchSignTransactionRequest,
-      ): Promise<BchSignedTransaction> => ({
-        txHex: request.transaction,
-        txid: sha256(
-          (request.transaction.startsWith('0x')
-            ? request.transaction
-            : `0x${request.transaction}`) as Hex,
-        ),
-      }),
+      ): Promise<BchSignedTransaction> => {
+        if (!scriptWallet) {
+          return {
+            txHex: request.transaction,
+            txid: sha256(
+              (request.transaction.startsWith('0x')
+                ? request.transaction
+                : `0x${request.transaction}`) as Hex,
+            ),
+          };
+        }
+        const signed = await scriptWallet.sign({
+          transaction: request.transaction,
+          sourceOutputs: request.sourceOutputs.map(sourceOutputToRelay),
+          broadcast: request.broadcast ?? false,
+          userPrompt: request.userPrompt ?? 'Sign the BCH funding request',
+        });
+        if (!signed) throw new Error('The script wallet rejected the request');
+        return {
+          txHex: signed.signedTransaction,
+          txid: signed.signedTransactionHash,
+        };
+      },
       broadcastTransaction: async (txHex: string) => {
+        if (scriptWallet) return scriptWallet.broadcast(txHex);
         if (claimBroadcastDelayMs > 0) {
           await new Promise((resolve) =>
             window.setTimeout(resolve, claimBroadcastDelayMs),
@@ -153,6 +205,8 @@ export function MockWalletProvider({
       claimBroadcastDuplicate,
       claimConflict,
       claimSpentButKnown,
+      scriptBch,
+      scriptWallet,
     ],
   );
 

@@ -643,8 +643,16 @@ describe('reverse swap', () => {
     await solver.relayClaim(quote.orderId, secret);
     order = await solver.getOrder(quote.orderId);
     expect(order.status).toBe('USER_CLAIM_SEEN');
-    expect(buildOrderViewModel(order).claimAvailable).toBe(false);
-    expect(buildOrderViewModel(order).statusLabel).toBe('Your USDC claim seen');
+    const view = buildOrderViewModel(order);
+    expect(view.claimAvailable).toBe(false);
+    expect(view.statusLabel).toBe('Your USDC claim seen');
+    const userClaim = view.steps.find((step) => step.key === 'user-claim');
+    expect(userClaim?.state).toBe('current');
+    expect(userClaim?.transaction).toEqual({
+      label: 'Base claim',
+      chain: 'base',
+      hash: `0x${'33'.repeat(32)}`,
+    });
   });
 
   it('offers a BCH refund after the reverse refund height', async () => {
