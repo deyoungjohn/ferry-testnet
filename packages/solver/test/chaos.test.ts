@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
+import { sha256 } from 'viem';
 import { SolverDatabase } from '../src/db/database.js';
 import { SolverEngine } from '../src/engine/runner.js';
 import { BchQuorumClient } from '../src/bch/quorum-client.js';
@@ -63,6 +64,40 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
       bchMaxFee: 1500n,
       quoteId: 'chaos-quote-1',
       quoteExpiry: Math.floor(Date.now() / 1000) + 120,
+      ...overrides,
+    });
+
+  const getDummyReverseTerms = (
+    overrides?: Partial<Parameters<typeof parseOrderTerms>[0]>,
+  ) =>
+    parseOrderTerms({
+      version: 1,
+      direction: 'BCH_TO_COUNTER',
+      bchToken: 'PUSD',
+      bchTokenCategory: `0x${'aa'.repeat(32)}`,
+      bchTokenAmount: 100n,
+      counterAmount: 946000n,
+      counterChain: 'base',
+      counterNetworkId: 31337,
+      counterAsset: {
+        symbol: 'USDC',
+        decimals: 6,
+        address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      },
+      counterHtlc: '0x5A0C062f4B7b8fF2263530e12bc15De9C836a641',
+      userCounterAddress: '0x87Ea46fe296C1810eF234A8e8D782A2122deFaDd',
+      userBchLockingBytecode:
+        '0x76a914444444444444444444444444444444444444444488ac',
+      solverCounterAddress: solverAddress,
+      solverBchLockingBytecode:
+        '0x76a9143bc28d6d92d9073fb5e3adf481795eaf446bceed88ac',
+      hashLock: `0x${'bb'.repeat(32)}`,
+      counterDeadline: Math.floor(Date.now() / 1000) + 21600,
+      bchRefundHeight: 330144,
+      bchCarrySats: 3000n,
+      bchMaxFee: 1500n,
+      quoteId: 'chaos-reverse-quote-1',
+      quoteExpiry: Math.floor(Date.now() / 1000) + 300,
       ...overrides,
     });
 
@@ -766,6 +801,446 @@ describe('Chaos & Failure Tests (Blueprint §11.3: CH-01, CH-02, CH-03, CH-04)',
     const updated = db.getOrder(orderId)!;
     expect(updated.status).toBe('SOLVER_LOCK_BROADCAST');
     expect(updated.solverLockTxId).toBe(intent.txid);
+
+    restartEngine.stop();
+    if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
+  }, 60_000);
+
+  it('CH-01d (reverse 1): SIGKILL fault injection BEFORE_EVM_LOCK_BROADCAST: restart broadcasts EVM lock exactly once', async () => {
+    db.db.exec('DELETE FROM orders; DELETE FROM actions;');
+    const orderId = `0x${'d1'.repeat(32)}`;
+    const dummyTerms = getDummyReverseTerms();
+    db.saveOrder({
+      id: orderId,
+      direction: 'BCH_TO_COUNTER',
+      status: 'USER_LOCK_FINAL',
+      lane: 'fast',
+      fastOptIn: true,
+      terms: dummyTerms,
+      hashLock: dummyTerms.hashLock,
+      userLockTxId: '11'.repeat(32),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    const broadcastLog = `${tempDbPath}-broadcasts-rev-1.log`;
+    if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
+
+    const { readyPromise, closePromise } = spawnChaosChild(
+      [
+        `--dbPath=${tempDbPath}`,
+        `--orderId=${orderId}`,
+        '--runStep',
+        `--broadcastLogPath=${broadcastLog}`,
+      ],
+      {
+        FERRY_FAULT_INJECTION: '1',
+        FAULT_CRASH_POINT: 'BEFORE_EVM_LOCK_BROADCAST',
+      },
+    );
+
+    await readyPromise;
+    await closePromise;
+
+    // 1. Verify child died before broadcast
+    const recordedBefore = fs.existsSync(broadcastLog)
+      ? fs.readFileSync(broadcastLog, 'utf8').trim().split('\n').filter(Boolean)
+      : [];
+    expect(recordedBefore.length).toBe(0);
+
+    // 2. Action is PENDING with intent recorded
+    const action = db.getAction(orderId, 'SOLVER_LOCK')!;
+    expect(action).not.toBeNull();
+    expect(action.status).toBe('PENDING');
+
+    // 3. Restart engine on same DB
+    const recordedRestartEvm: string[] = [];
+    const restartEvm = {
+      address: solverAddress,
+      lockId: () => orderId,
+      getLock: async () => ({ status: 'absent' as const }),
+      isFinal: async () => true,
+      lock: async () => {
+        recordedRestartEvm.push('0xrestart-evm-lock');
+        return { chain: 'base' as const, txId: '0xrestart-evm-lock' };
+      },
+    } as unknown as EvmChainAdapter;
+
+    const restartBch = {
+      getQuorumStatus: () => ({
+        quorumTip: 330000,
+        tips: {},
+        isQuorumHealthy: true,
+        ageSeconds: 5,
+      }),
+      listUnspent: async () => [
+        {
+          tx_hash: '11'.repeat(32),
+          tx_pos: 0,
+          value: 3000,
+          height: 330001,
+          token_data: {
+            category: 'aa'.repeat(32),
+            amount: '100',
+          },
+        },
+      ],
+      getHistory: async () => [{ tx_hash: '11'.repeat(32), height: 330001 }],
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: () => {},
+    } as unknown as BchQuorumClient;
+
+    const restartEngine = new SolverEngine(
+      db,
+      restartEvm,
+      restartBch,
+      solverEvmKey,
+      sampleWif,
+    );
+
+    await restartEngine.step();
+
+    // Exactly one broadcast happened across the lifecycle!
+    expect(recordedRestartEvm.length).toBe(1);
+    const updated = db.getOrder(orderId)!;
+    expect(updated.status).toBe('SOLVER_LOCK_BROADCAST');
+    expect(updated.solverLockTxId).toBe('0xrestart-evm-lock');
+
+    restartEngine.stop();
+    if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
+  }, 60_000);
+
+  it('CH-01d (reverse 2): SIGKILL fault injection AFTER_EVM_LOCK_BROADCAST: restart adopts existing EVM lock without duplicate broadcast', async () => {
+    db.db.exec('DELETE FROM orders; DELETE FROM actions;');
+    const orderId = `0x${'d2'.repeat(32)}`;
+    const dummyTerms = getDummyReverseTerms();
+    db.saveOrder({
+      id: orderId,
+      direction: 'BCH_TO_COUNTER',
+      status: 'USER_LOCK_FINAL',
+      lane: 'fast',
+      fastOptIn: true,
+      terms: dummyTerms,
+      hashLock: dummyTerms.hashLock,
+      userLockTxId: '11'.repeat(32),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    const broadcastLog = `${tempDbPath}-broadcasts-rev-2.log`;
+    if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
+
+    const { readyPromise, closePromise } = spawnChaosChild(
+      [
+        `--dbPath=${tempDbPath}`,
+        `--orderId=${orderId}`,
+        '--runStep',
+        `--broadcastLogPath=${broadcastLog}`,
+      ],
+      {
+        FERRY_FAULT_INJECTION: '1',
+        FAULT_CRASH_POINT: 'AFTER_EVM_LOCK_BROADCAST',
+      },
+    );
+
+    await readyPromise;
+    await closePromise;
+
+    // 1. Verify EVM lock was broadcast before crash
+    const recordedInChild = fs.existsSync(broadcastLog)
+      ? fs.readFileSync(broadcastLog, 'utf8').trim().split('\n').filter(Boolean)
+      : [];
+    expect(recordedInChild.length).toBe(1);
+
+    // 2. Action is still PENDING because process was killed before recording broadcast
+    const action = db.getAction(orderId, 'SOLVER_LOCK')!;
+    expect(action).not.toBeNull();
+    expect(action.status).toBe('PENDING');
+
+    // 3. Restart engine on same DB, simulating chain where EVM lock exists
+    const recordedRestartEvm: string[] = [];
+    const restartEvm = {
+      address: solverAddress,
+      lockId: () => orderId,
+      getLock: async () => ({
+        status: 'locked' as const,
+        lockTx: { txId: '0xchild-evm-lock-tx' },
+      }),
+      isFinal: async () => true,
+      lock: async () => {
+        recordedRestartEvm.push('0xduplicate-evm-lock');
+        return { chain: 'base' as const, txId: '0xduplicate-evm-lock' };
+      },
+    } as unknown as EvmChainAdapter;
+
+    const restartBch = {
+      getQuorumStatus: () => ({
+        quorumTip: 330000,
+        tips: {},
+        isQuorumHealthy: true,
+        ageSeconds: 5,
+      }),
+      listUnspent: async () => [
+        {
+          tx_hash: '11'.repeat(32),
+          tx_pos: 0,
+          value: 3000,
+          height: 330001,
+          token_data: {
+            category: 'aa'.repeat(32),
+            amount: '100',
+          },
+        },
+      ],
+      getHistory: async () => [{ tx_hash: '11'.repeat(32), height: 330001 }],
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: () => {},
+    } as unknown as BchQuorumClient;
+
+    const restartEngine = new SolverEngine(
+      db,
+      restartEvm,
+      restartBch,
+      solverEvmKey,
+      sampleWif,
+    );
+
+    await restartEngine.step();
+
+    // Zero duplicate broadcasts from restart! It adopted the existing on-chain tx!
+    expect(recordedRestartEvm.length).toBe(0);
+    const updated = db.getOrder(orderId)!;
+    expect(updated.status).toBe('SOLVER_LOCK_SEEN');
+    expect(updated.solverLockTxId).toBe('0xchild-evm-lock-tx');
+
+    restartEngine.stop();
+    if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
+  }, 60_000);
+
+  it('CH-01d (reverse 3): SIGKILL fault injection BEFORE_BCH_CLAIM_BROADCAST: restart broadcasts BCH claim exactly once', async () => {
+    db.db.exec('DELETE FROM orders; DELETE FROM actions;');
+    const orderId = `0x${'d3'.repeat(32)}`;
+    const secret = `0x${'99'.repeat(32)}` as const;
+    const dummyTerms = getDummyReverseTerms({ hashLock: sha256(secret) });
+    db.saveOrder({
+      id: orderId,
+      direction: 'BCH_TO_COUNTER',
+      status: 'USER_CLAIM_SEEN',
+      terms: dummyTerms,
+      hashLock: dummyTerms.hashLock,
+      secret,
+      secretSource: 'on_chain_claim',
+      userLockTxId: '11'.repeat(32),
+      solverLockTxId: '0xsolver-evm-lock',
+      userClaimTxId: '0xuser-evm-claim',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    const broadcastLog = `${tempDbPath}-broadcasts-rev-3.log`;
+    if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
+
+    const { readyPromise, closePromise } = spawnChaosChild(
+      [
+        `--dbPath=${tempDbPath}`,
+        `--orderId=${orderId}`,
+        '--runStep',
+        `--broadcastLogPath=${broadcastLog}`,
+      ],
+      {
+        FERRY_FAULT_INJECTION: '1',
+        FAULT_CRASH_POINT: 'BEFORE_BCH_CLAIM_BROADCAST',
+      },
+    );
+
+    await readyPromise;
+    await closePromise;
+
+    // 1. Verify child died before broadcast
+    const recordedBefore = fs.existsSync(broadcastLog)
+      ? fs.readFileSync(broadcastLog, 'utf8').trim().split('\n').filter(Boolean)
+      : [];
+    expect(recordedBefore.length).toBe(0);
+
+    // 2. Action is PENDING with intent recorded
+    const action = db.getAction(orderId, 'SOLVER_CLAIM')!;
+    expect(action).not.toBeNull();
+    expect(action.status).toBe('PENDING');
+    const intent = JSON.parse(action.intentPayload);
+    expect(intent.txid).toBeDefined();
+    expect(intent.txHex).toBeDefined();
+
+    // 3. Restart engine on same DB
+    const recordedRestartBch: string[] = [];
+    const restartBch = {
+      getQuorumStatus: () => ({
+        quorumTip: 330000,
+        tips: {},
+        isQuorumHealthy: true,
+        ageSeconds: 5,
+      }),
+      listUnspent: async () => [
+        {
+          tx_hash: '11'.repeat(32),
+          tx_pos: 0,
+          value: 3000,
+          height: 330001,
+          token_data: {
+            category: 'aa'.repeat(32),
+            amount: '100',
+          },
+        },
+      ],
+      getHistory: async () => [{ tx_hash: '11'.repeat(32), height: 330001 }],
+      broadcast: async (hex: string) => {
+        recordedRestartBch.push(hex);
+        return intent.txid;
+      },
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: () => {},
+    } as unknown as BchQuorumClient;
+
+    const restartEvm = {
+      address: solverAddress,
+      lockId: () => orderId,
+      getLock: async () => ({
+        status: 'claimed' as const,
+        claimTx: { txId: '0xuser-evm-claim' },
+        secret,
+      }),
+      isFinal: async () => true,
+    } as unknown as EvmChainAdapter;
+
+    const restartEngine = new SolverEngine(
+      db,
+      restartEvm,
+      restartBch,
+      solverEvmKey,
+      sampleWif,
+    );
+
+    await restartEngine.step();
+
+    // Exactly one broadcast happened across the lifecycle!
+    expect(recordedRestartBch.length).toBe(1);
+    const updated = db.getOrder(orderId)!;
+    expect(updated.status).toBe('SOLVER_CLAIM_BROADCAST');
+    expect(updated.solverClaimTxId).toBe(intent.txid);
+
+    restartEngine.stop();
+    if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
+  }, 60_000);
+
+  it('CH-01d (reverse 4): SIGKILL fault injection AFTER_BCH_CLAIM_BROADCAST: restart adopts existing BCH claim without duplicate broadcast', async () => {
+    db.db.exec('DELETE FROM orders; DELETE FROM actions;');
+    const orderId = `0x${'d4'.repeat(32)}`;
+    const secret = `0x${'99'.repeat(32)}` as const;
+    const dummyTerms = getDummyReverseTerms({ hashLock: sha256(secret) });
+    db.saveOrder({
+      id: orderId,
+      direction: 'BCH_TO_COUNTER',
+      status: 'USER_CLAIM_SEEN',
+      terms: dummyTerms,
+      hashLock: dummyTerms.hashLock,
+      secret,
+      secretSource: 'on_chain_claim',
+      userLockTxId: '11'.repeat(32),
+      solverLockTxId: '0xsolver-evm-lock',
+      userClaimTxId: '0xuser-evm-claim',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    const broadcastLog = `${tempDbPath}-broadcasts-rev-4.log`;
+    if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);
+
+    const { readyPromise, closePromise } = spawnChaosChild(
+      [
+        `--dbPath=${tempDbPath}`,
+        `--orderId=${orderId}`,
+        '--runStep',
+        `--broadcastLogPath=${broadcastLog}`,
+      ],
+      {
+        FERRY_FAULT_INJECTION: '1',
+        FAULT_CRASH_POINT: 'AFTER_BCH_CLAIM_BROADCAST',
+      },
+    );
+
+    await readyPromise;
+    await closePromise;
+
+    // 1. Verify BCH claim was broadcast before crash
+    const recordedInChild = fs.existsSync(broadcastLog)
+      ? fs.readFileSync(broadcastLog, 'utf8').trim().split('\n').filter(Boolean)
+      : [];
+    expect(recordedInChild.length).toBe(1);
+
+    // 2. Action is still PENDING because process was killed before recording broadcast
+    const action = db.getAction(orderId, 'SOLVER_CLAIM')!;
+    expect(action).not.toBeNull();
+    expect(action.status).toBe('PENDING');
+    const intent = JSON.parse(action.intentPayload);
+
+    // 3. Restart engine on same DB, simulating chain where BCH claim is in history
+    const recordedRestartBch: string[] = [];
+    const restartBch = {
+      getQuorumStatus: () => ({
+        quorumTip: 330000,
+        tips: {},
+        isQuorumHealthy: true,
+        ageSeconds: 5,
+      }),
+      listUnspent: async () => [
+        {
+          tx_hash: '11'.repeat(32),
+          tx_pos: 0,
+          value: 3000,
+          height: 330001,
+          token_data: {
+            category: 'aa'.repeat(32),
+            amount: '100',
+          },
+        },
+      ],
+      getHistory: async () => [
+        { tx_hash: '11'.repeat(32), height: 330001 },
+        { tx_hash: intent.txid, height: 330002 },
+      ],
+      broadcast: async (hex: string) => {
+        recordedRestartBch.push(hex);
+        return intent.txid;
+      },
+      subscribeScriptHash: async () => {},
+      unsubscribeScriptHash: () => {},
+    } as unknown as BchQuorumClient;
+
+    const restartEvm = {
+      address: solverAddress,
+      lockId: () => orderId,
+      getLock: async () => ({
+        status: 'claimed' as const,
+        claimTx: { txId: '0xuser-evm-claim' },
+        secret,
+      }),
+      isFinal: async () => true,
+    } as unknown as EvmChainAdapter;
+
+    const restartEngine = new SolverEngine(
+      db,
+      restartEvm,
+      restartBch,
+      solverEvmKey,
+      sampleWif,
+    );
+
+    await restartEngine.step();
+
+    // Zero duplicate broadcasts from restart! It adopted the existing on-chain tx!
+    expect(recordedRestartBch.length).toBe(0);
+    const updated = db.getOrder(orderId)!;
+    expect(updated.status).toBe('DONE');
+    expect(updated.solverClaimTxId).toBe(intent.txid);
 
     restartEngine.stop();
     if (fs.existsSync(broadcastLog)) fs.unlinkSync(broadcastLog);

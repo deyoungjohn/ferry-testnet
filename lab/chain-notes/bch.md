@@ -220,3 +220,46 @@ Timestamps extracted from solver SQLite database and Chipnet block explorer:
   - Periodic reconciliation detected user claim in mempool `height = 0`
   - Secret extracted & EVM claim broadcast within **1 ms** of reconciliation pass
   - Swap transitioned cleanly to `SOLVER_CLAIM_BROADCAST`
+
+---
+
+## 2026-10-27 · Live Swaps Evidence: Reverse Path Proof & Web UI Implementation Requirements
+
+Executed end-to-end against live solver daemon running on `localhost:8787` (`pnpm dev:solver`) with testnet keys from root `.env.local`.
+
+### 1. Fast Lane Reverse Swap (0-conf Opt-In, Gasless Relay Claim, Order `0x255b822037ea39e01b3da225f13f2880e7d9b42845e7b5d0f023f469ae8cb5a8`)
+- **User BCH Lock (`buildLockTransaction`):**
+  - TXID: `6537b5b334a4cbdfb927da007c762748e88e9b782aef9a174763e00a877d4e0e`
+  - Output: 1.00 tPUSD (`ec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac`) + 3000 satoshis carry locked into covenant P2SH32.
+  - Explorer: `https://chipnet.imaginary.cash/tx/6537b5b334a4cbdfb927da007c762748e88e9b782aef9a174763e00a877d4e0e`
+- **Solver BCH Claim (`buildClaimTransaction`):**
+  - TXID: `699fabae8a4e98014e0984ef971fe456bd894b2c50e81010524d9d11c6c3cf61`
+  - Output: Solver token address claiming 1.00 tPUSD using secret preimage revealed on Base Sepolia.
+  - Explorer: `https://chipnet.imaginary.cash/tx/699fabae8a4e98014e0984ef971fe456bd894b2c50e81010524d9d11c6c3cf61`
+- **Total Duration:** 19.01s (Fast lane 0-conf on BCH).
+
+### 2. Safe Lane Reverse Swap (1-Conf BCH, Direct Contract Claim, Order `0x947d75bd270d4488eb0812eab8d5bb7d63d96b2d31afef5ec95215f25d79744d`)
+- **User BCH Lock (`buildLockTransaction`):**
+  - TXID: `7a015d04d3bf01f425e8b38045b1d3e2b9b3756aa7735f01bc77bdfcf6545ed5`
+  - Output: 1.00 tPUSD (`ec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac`) + 3000 satoshis carry locked into covenant P2SH32.
+  - Confirmation: Mined in Chipnet block `329694` (1 confirmation verified before solver EVM counter-lock).
+  - Explorer: `https://chipnet.imaginary.cash/tx/7a015d04d3bf01f425e8b38045b1d3e2b9b3756aa7735f01bc77bdfcf6545ed5`
+- **Solver BCH Claim (`buildClaimTransaction`):**
+  - TXID: `9a08e90c884553c073f9e6ba8fd7cde0b2e8bd0ef1d25c61f5860de1c0a86121`
+  - Output: Solver token address claiming 1.00 tPUSD using secret preimage revealed via direct EVM claim on Base Sepolia.
+  - Explorer: `https://chipnet.imaginary.cash/tx/9a08e90c884553c073f9e6ba8fd7cde0b2e8bd0ef1d25c61f5860de1c0a86121`
+- **Total Duration:** 642.95s (~10.7 mins, mostly waiting for Chipnet block 329694).
+
+### 3. Web UI Differences and Implementation Requirements ( Report)
+1. **Direct EVM Claim `lockId` Calculation:**
+   - In EVM contracts, `lockId` is computed as `keccak256(abi.encode(msg.sender, hashLock))`.
+   - In reverse swaps, the EVM counter-lock was broadcast by the **solver** (`terms.solverCounterAddress`), making the solver the lock's `sender`.
+   - When the user wallet directly executes `FerryHTLC.claim(lockId, secret)`, it **MUST NOT** pass the Ferry protocol `orderId` (which reverts with `NotLocked() (0x1834e265)`).
+   - Instead, the web UI must compute:
+     `keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'bytes32' }], [terms.solverCounterAddress, terms.hashLock]))`.
+2. **Gasless Relay Claim (`POST /v1/orders/:id/relay-claim`):**
+   - In the gasless relay path, the solver automatically calculates `expectedLockId` from `terms.solverCounterAddress`, submits the EVM claim, and pays the Base gas fee.
+   - This provides the smoothest UX: user needs zero Base ETH to complete the reverse swap.
+3. **BCH Lock UTXO Selection & Carry Satoshis:**
+   - The user must provide both CashTokens of category `tPUSD` and satoshis for carry (`terms.bchCarrySats = 3000n`), plus sufficient satoshis to cover miner fees (~500 - 1500 sats).
+   - If the user wallet lacks a separate pure satoshi UTXO or has insufficient sats alongside the token UTXO, `buildLockTransaction` will throw `Insufficient token / satoshi balance`.

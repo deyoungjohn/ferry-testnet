@@ -25,17 +25,39 @@ const order = db.getOrder(values.orderId);
 const fakeEvm = {
   address: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
   lockId: () => '0xmock-lock-id',
-  getLock: async () => ({ status: 'locked' as const }),
+  getLock: async () => {
+    if (order?.direction === 'BCH_TO_COUNTER') {
+      if (order?.status === 'USER_LOCK_FINAL') {
+        return { status: 'absent' as const };
+      }
+      if (order?.status === 'USER_CLAIM_SEEN' || order?.secret) {
+        return {
+          status: 'claimed' as const,
+          claimTx: { txId: '0xclaim-tx' },
+          secret: order.secret,
+        };
+      }
+    }
+    return { status: 'locked' as const };
+  },
   isFinal: async () => true,
+  lock: async () => {
+    if (values.broadcastLogPath) {
+      fs.appendFileSync(values.broadcastLogPath, `evm-lock:${order?.id}\n`);
+    }
+    return { chain: 'base' as const, txId: '0xchild-evm-lock-tx' };
+  },
   claim: async () => ({ chain: 'base' as const, txId: '0xchild-claim-tx' }),
   watch: () => () => {},
 } as unknown as EvmChainAdapter;
 
 const sampleWif = 'cPJEAQPn5NYgtNy9HXR1q2q6vw4EghTgjscBFFseT4UT9gbpoDY9';
 const tipHeight =
-  order?.status === 'USER_LOCK_FINAL'
-    ? (order?.terms?.bchRefundHeight ?? 330036) - 36
-    : (order?.terms?.bchRefundHeight ?? 330000);
+  order?.direction === 'BCH_TO_COUNTER'
+    ? (order?.terms?.bchRefundHeight ?? 330144) - 144
+    : order?.status === 'USER_LOCK_FINAL'
+      ? (order?.terms?.bchRefundHeight ?? 330036) - 36
+      : (order?.terms?.bchRefundHeight ?? 330000);
 
 const fakeBch = {
   getQuorumStatus: () => ({
@@ -45,6 +67,22 @@ const fakeBch = {
     ageSeconds: 5,
   }),
   listUnspent: async () => {
+    if (order?.direction === 'BCH_TO_COUNTER') {
+      return [
+        {
+          tx_hash: order.userLockTxId ?? '11'.repeat(32),
+          tx_pos: 0,
+          value: Number(order.terms?.bchCarrySats ?? 3000n),
+          height: 330001,
+          token_data: {
+            category: (
+              order.terms?.bchTokenCategory ?? 'aa'.repeat(32)
+            ).replace(/^0x/, ''),
+            amount: (order.terms?.bchTokenAmount ?? 100n).toString(),
+          },
+        },
+      ];
+    }
     const utxos = [
       {
         tx_hash: '11'.repeat(32),
@@ -70,7 +108,12 @@ const fakeBch = {
     }
     return utxos;
   },
-  getHistory: async () => [],
+  getHistory: async () => {
+    if (order?.direction === 'BCH_TO_COUNTER' && order.userLockTxId) {
+      return [{ tx_hash: order.userLockTxId, height: 330001 }];
+    }
+    return [];
+  },
   broadcast: async (txHex: string) => {
     if (values.broadcastLogPath) {
       fs.appendFileSync(values.broadcastLogPath, `${txHex}\n`);

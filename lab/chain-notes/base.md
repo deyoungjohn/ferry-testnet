@@ -119,3 +119,33 @@ Executed end-to-end against live solver daemon running on `localhost:8787` (`pnp
   - TXID: `0xc01aab351a1257a01c304ae6a1f6c0a851d1bdeaac75e7cdb72180706f6a7e5d`
   - Block: `50577265`, Status: `1 (success)`
   - Explorer: `https://sepolia.basescan.org/tx/0xc01aab351a1257a01c304ae6a1f6c0a851d1bdeaac75e7cdb72180706f6a7e5d`
+
+---
+
+## 2026-10-27 · Live Swaps Evidence: Reverse Path Proof (Fast & Safe Lanes,)
+
+Executed end-to-end against live solver daemon running on `localhost:8787` (`pnpm dev:solver`) with testnet keys from root `.env.local`.
+
+### 1. Fast Lane Reverse Swap (0-conf Opt-In, Gasless Relay Claim, Order `0x255b822037ea39e01b3da225f13f2880e7d9b42845e7b5d0f023f469ae8cb5a8`)
+- **Solver EVM Counter-Lock (`lock`):**
+  - TXID: `0xdca25eea088f0eeeda34081aeb30fcb59f1c01cb4e1bda2a1bedefd5ba938e9b`
+  - Block: `50854136`, Status: `1 (success)`, Latency: `11.26s`
+  - Confirmation Policy: Broadcast immediately upon detecting user BCH lock in mempool (0-conf under $25 limit with `fastOptIn: true`).
+  - Explorer: `https://sepolia.basescan.org/tx/0xdca25eea088f0eeeda34081aeb30fcb59f1c01cb4e1bda2a1bedefd5ba938e9b`
+- **User EVM Claim (`claim` via `POST /v1/orders/:id/relay-claim`):**
+  - TXID: `0x51b12f1e45ce4e9fb2e11b1bea7df5e33db46c75f62795933bb34ef3464f94e7`
+  - Block: `50854150`, Status: `1 (success)`, Latency: `2.89s`
+  - Relay: Gas paid by solver relayer; user needed 0 ETH on Base.
+  - Explorer: `https://sepolia.basescan.org/tx/0x51b12f1e45ce4e9fb2e11b1bea7df5e33db46c75f62795933bb34ef3464f94e7`
+
+### 2. Safe Lane Reverse Swap (1-Conf BCH, Direct Contract Claim, Order `0x947d75bd270d4488eb0812eab8d5bb7d63d96b2d31afef5ec95215f25d79744d`)
+- **Solver EVM Counter-Lock (`lock`):**
+  - TXID: `0xcc8cc8489f1f1ec3feef232f19a9e8f89a59ee3e23d252be8cfe42e45061d177`
+  - Block: `50857452`, Status: `1 (success)`, Latency: `634.02s`
+  - Confirmation Policy: Broadcast only after user BCH lock reached 1 block confirmation on Chipnet (block `329694`).
+  - Explorer: `https://sepolia.basescan.org/tx/0xcc8cc8489f1f1ec3feef232f19a9e8f89a59ee3e23d252be8cfe42e45061d177`
+- **User EVM Claim (`claim` via direct contract call by user wallet client):**
+  - TXID: `0xd1f8ab18224c6c6afc020447fb200ed6eb938b4a0a3ccee932ec041c67d25854`
+  - Block: `50858486`, Status: `1 (success)`, Latency: `3.12s`
+  - Direct execution: User wallet directly submitted transaction to Base Sepolia HTLC (`0x5A0C062f4B7b8fF2263530e12bc15De9C836a641`) calling `claim(lockId, secret)`.
+  - Explorer: `https://sepolia.basescan.org/tx/0xd1f8ab18224c6c6afc020447fb200ed6eb938b4a0a3ccee932ec041c67d25854`
