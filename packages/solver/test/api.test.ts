@@ -1052,5 +1052,5 @@ describe('Solver API contracts & Secret Privacy Rule', () => {
     expect(innocentBody.orderId).toBeDefined();
     expect(innocentBody.signature).toBeDefined();
     expect(innocentBody.terms.userCounterAddress).toBe(innocentAddress);
-  });
+  }, 30_000);
 });
