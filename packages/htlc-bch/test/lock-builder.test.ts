@@ -533,6 +533,25 @@ describe('BCH HTLC Lock Builder & Input Selection Suite', () => {
       expect(
         result.signed!.transaction.inputs[1]!.unlockingBytecode.length,
       ).toBeGreaterThan(0);
+
+      // Verify lock transaction with Libauth VM
+      const sourceOutputs = result.selectedInputs.allInputs.map((u) => ({
+        valueSatoshis: u.satoshis,
+        lockingBytecode: u.lockingBytecode ?? sampleWifBytecode,
+        ...(u.token
+          ? {
+              token: {
+                category: libauth.hexToBin(targetCategoryHex),
+                amount: u.token.amount,
+              },
+            }
+          : {}),
+      }));
+      const verifyRes = vm.verify({
+        transaction: result.signed!.transaction,
+        sourceOutputs,
+      });
+      expect(verifyRes).toBe(true);
     });
   });
 

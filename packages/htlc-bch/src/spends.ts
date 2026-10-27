@@ -4,7 +4,13 @@ import {
   type NetworkProvider,
   Network,
 } from 'cashscript';
-import { binToHex, hexToBin, sha256 } from '@bitauth/libauth';
+import {
+  binToHex,
+  hexToBin,
+  sha256,
+  createVirtualMachineBCH,
+  decodeTransaction,
+} from '@bitauth/libauth';
 import type { BchHtlcParameters, CashAddressNetwork } from './types.js';
 import { getHtlcContract } from './contract.js';
 import { internalToDisplayCategory } from './byte-order.js';
@@ -38,6 +44,7 @@ export interface BuildClaimTxOptions {
   network?: CashAddressNetwork;
   provider?: NetworkProvider;
   overrideDisplayCategory?: string;
+  skipVmVerify?: boolean;
 }
 
 export interface BuildRefundTxOptions {
@@ -47,6 +54,93 @@ export interface BuildRefundTxOptions {
   network?: CashAddressNetwork;
   provider?: NetworkProvider;
   overrideDisplayCategory?: string;
+  skipVmVerify?: boolean;
+}
+
+/**
+ * Verify a built Libauth transaction and its source outputs against consensus script rules.
+ * Returns true on success or a descriptive error string on failure.
+ */
+export function verifyBchTransactionWithVm(params: {
+  transaction: unknown;
+  sourceOutputs: unknown[];
+}): true | string {
+  let tx = params.transaction;
+  if (typeof tx === 'string') {
+    const decoded = decodeTransaction(hexToBin(tx));
+    if (typeof decoded === 'string') {
+      return `Failed to decode transaction hex: ${decoded}`;
+    }
+    tx = decoded;
+  }
+  const vm = createVirtualMachineBCH();
+  type VerifyParams = Parameters<typeof vm.verify>[0];
+  return vm.verify({
+    transaction: tx as VerifyParams['transaction'],
+    sourceOutputs: params.sourceOutputs as VerifyParams['sourceOutputs'],
+  });
+}
+
+/**
+ * Verify a claim transaction hex against HTLC parameters and the source UTXO.
+ */
+export function verifyClaimTransactionHex(options: {
+  params: BchHtlcParameters;
+  utxo: HtlcUtxo;
+  txHex: string;
+  network?: CashAddressNetwork;
+  overrideDisplayCategory?: string;
+}): true | string {
+  const contract = getHtlcContract(options.params, {
+    ...(options.network !== undefined ? { network: options.network } : {}),
+  });
+  const displayCategory =
+    options.overrideDisplayCategory ??
+    internalToDisplayCategory(options.params.tokenCategory);
+  const utxoSatoshis = BigInt(options.utxo.satoshis);
+  const sourceOutput = {
+    lockingBytecode: hexToBin(contract.lockingBytecode),
+    valueSatoshis: utxoSatoshis,
+    token: {
+      category: hexToBin(displayCategory),
+      amount: options.params.tokenAmount,
+    },
+  };
+  return verifyBchTransactionWithVm({
+    transaction: options.txHex,
+    sourceOutputs: [sourceOutput],
+  });
+}
+
+/**
+ * Verify a refund transaction hex against HTLC parameters and the source UTXO.
+ */
+export function verifyRefundTransactionHex(options: {
+  params: BchHtlcParameters;
+  utxo: HtlcUtxo;
+  txHex: string;
+  network?: CashAddressNetwork;
+  overrideDisplayCategory?: string;
+}): true | string {
+  const contract = getHtlcContract(options.params, {
+    ...(options.network !== undefined ? { network: options.network } : {}),
+  });
+  const displayCategory =
+    options.overrideDisplayCategory ??
+    internalToDisplayCategory(options.params.tokenCategory);
+  const utxoSatoshis = BigInt(options.utxo.satoshis);
+  const sourceOutput = {
+    lockingBytecode: hexToBin(contract.lockingBytecode),
+    valueSatoshis: utxoSatoshis,
+    token: {
+      category: hexToBin(displayCategory),
+      amount: options.params.tokenAmount,
+    },
+  };
+  return verifyBchTransactionWithVm({
+    transaction: options.txHex,
+    sourceOutputs: [sourceOutput],
+  });
 }
 
 export interface BuiltTransaction {
@@ -137,18 +231,30 @@ export function buildClaimTransaction(
   ).buildLibauthTransaction();
   const txid = computeTxId(txHex);
 
+  const sourceOutput = {
+    lockingBytecode: hexToBin(contract.lockingBytecode),
+    valueSatoshis: utxoSatoshis,
+    token: {
+      category: hexToBin(displayCategory),
+      amount: options.params.tokenAmount,
+    },
+  };
+
+  if (!options.skipVmVerify) {
+    const vmResult = verifyBchTransactionWithVm({
+      transaction: libauthTx,
+      sourceOutputs: [sourceOutput],
+    });
+    if (vmResult !== true) {
+      throw new Error(`BCH claim script VM verification failed: ${vmResult}`);
+    }
+  }
+
   return {
     txHex,
     txid,
     libauthTx,
-    sourceOutput: {
-      lockingBytecode: hexToBin(contract.lockingBytecode),
-      valueSatoshis: utxoSatoshis,
-      token: {
-        category: hexToBin(displayCategory),
-        amount: options.params.tokenAmount,
-      },
-    },
+    sourceOutput,
     builder,
   };
 }
@@ -220,18 +326,30 @@ export function buildRefundTransaction(
   ).buildLibauthTransaction();
   const txid = computeTxId(txHex);
 
+  const sourceOutput = {
+    lockingBytecode: hexToBin(contract.lockingBytecode),
+    valueSatoshis: utxoSatoshis,
+    token: {
+      category: hexToBin(displayCategory),
+      amount: options.params.tokenAmount,
+    },
+  };
+
+  if (!options.skipVmVerify) {
+    const vmResult = verifyBchTransactionWithVm({
+      transaction: libauthTx,
+      sourceOutputs: [sourceOutput],
+    });
+    if (vmResult !== true) {
+      throw new Error(`BCH refund script VM verification failed: ${vmResult}`);
+    }
+  }
+
   return {
     txHex,
     txid,
     libauthTx,
-    sourceOutput: {
-      lockingBytecode: hexToBin(contract.lockingBytecode),
-      valueSatoshis: utxoSatoshis,
-      token: {
-        category: hexToBin(displayCategory),
-        amount: options.params.tokenAmount,
-      },
-    },
+    sourceOutput,
     builder,
   };
 }

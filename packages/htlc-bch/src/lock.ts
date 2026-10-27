@@ -27,6 +27,7 @@ import {
   resolveLockingBytecode,
 } from './contract.js';
 import { internalToDisplayCategory } from './byte-order.js';
+import { verifyBchTransactionWithVm } from './spends.js';
 
 export interface LockUtxo {
   txid: string;
@@ -694,6 +695,27 @@ export function buildLockTransaction(
     const decoded = decodeTransaction(hexToBin(signedTxHex));
     if (typeof decoded === 'string') {
       throw new Error(`Failed to decode signed transaction: ${decoded}`);
+    }
+
+    const sourceOutputs = selected.allInputs.map((input) => ({
+      valueSatoshis: input.satoshis,
+      lockingBytecode: input.lockingBytecode ?? changeLockingBytecode,
+      ...(input.token
+        ? {
+            token: {
+              category: hexToBin(input.token.category),
+              amount: input.token.amount,
+            },
+          }
+        : {}),
+    }));
+
+    const vmResult = verifyBchTransactionWithVm({
+      transaction: decoded,
+      sourceOutputs,
+    });
+    if (vmResult !== true) {
+      throw new Error(`BCH lock script VM verification failed: ${vmResult}`);
     }
 
     signedResult = {
