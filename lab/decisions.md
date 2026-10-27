@@ -643,3 +643,18 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 
 ### Correction to D-A1-033 · final implementation
 - Final code uses main's `buildInputPaths` and Paytaca's wallet-side parser as the source of truth; the branch-local helper was removed. The local check remains the structured `WalletSignedTransactionError` diagnostic implemented here.
+---
+
+### D-A2-015 · Invariant-Enforced Secret Validation, Script VM Spend Verification, Action Rebuild Policy, and Startup Self-Heal Pass
+- **Context:** safety hardening after an earlier incident (race condition where solver attempted to claim BCH lock with empty/unindexed secret). Previous code had a 32-zero fallback when EVM log indexing was delayed, causing the solver to build and broadcast an invalid BCH spend that failed CashScript contract verification and resulted in an unrecoverable `BROADCAST` action record.
+- **Decision:**
+  1. *Secret Validation Invariant (`sha256(secret) == hashLock`):* Added shared `isValidSecret` and `assertValidSecret` in `@ferry/core`. Enforced at every entry point:
+     - `packages/chain-evm`: `getLock` returns `secret: claimSecret ?? null`. No 32-zero fallback.
+     - `packages/solver`: `/relay-claim` and `/reveal-secret` reject invalid secrets with HTTP 400. `saveOrder` asserts invariant before writing to SQLite. State machine transitions validate secrets. `runner.ts` asserts valid secret before executing solver BCH claim.
+  2. *Pre-Broadcast BCH Script VM Verification:* `packages/htlc-bch` verifies all locally built spends (`buildClaimTransaction`, `buildRefundTransaction`, `buildLockTransaction`) using `@bitauth/libauth` virtual machine execution against contract source locking bytecode and UTXO state before returning or broadcasting. Spends throw immediately on VM failure.
+  3. *Action Record Verification and Rebuild:* `executeOrAdoptBchTx` verifies cached action `txHex` with script VM before reuse. Stored actions that fail VM verification or exceed a 3-minute stale broadcast timeout without appearing in mempool or block are deleted (`deleteAction`) and rebuilt fresh. On node rejection, the action is NOT recorded as `BROADCAST`; instead the action is pruned, order marked `needsAttention = true`, and operator alert logged.
+  4. *Startup Self-Heal Pass (`selfHealBroadcastOrders`):* During daemon initialization, scans orders in `SOLVER_CLAIM_BROADCAST` or `SOLVER_LOCK_BROADCAST`. If the transaction is neither in mempool nor in a block, the order status is reset to `USER_CLAIM_SEEN` (for claim) or `USER_LOCK_FINAL` (for lock) and stale action record purged, allowing the runner loop to cleanly rebuild and broadcast.
+- **Evidence:** Regression tests in `packages/solver/test/claim-secret-safety.test.ts` (14/14 tests passing), including a reproduction of the original failure, delayed log index handling, startup self-heal, script VM verification on claim/refund/lock, and stale action pruning.
+- **Consequence for rebuild:** Never broadcast an unverified script spend; strictly validate preimages at all boundaries; self-heal unconfirmed broadcast actions on restart.
+
+
