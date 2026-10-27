@@ -3,76 +3,90 @@ import { z } from 'zod';
 export const DEFAULT_DEV_EVM_PRIVATE_KEY =
   '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
 
-export const SolverConfigSchema = z.object({
-  port: z.coerce.number().default(8787),
-  host: z.string().default('127.0.0.1'),
-  dbPath: z.string().default(':memory:'),
-  network: z.enum(['testnet', 'mainnet']).default('testnet'),
-  bchElectrumUrls: z
-    .string()
-    .default(
-      'wss://chipnet.imaginary.cash:50004,wss://blackie.c3-soft.com:64004',
-    ),
-  baseRpcUrl: z.string().default('https://sepolia.base.org'),
-  baseChainId: z.coerce.number().default(84532),
-  baseHtlcAddress: z
-    .string()
-    .regex(/^0x[0-9a-fA-F]{40}$/)
-    .default('0x5A0C062f4B7b8fF2263530e12bc15De9C836a641'),
-  baseUsdcAddress: z
-    .string()
-    .regex(/^0x[0-9a-fA-F]{40}$/)
-    .default('0x036CbD53842c5426634e7929541eC2318f3dCF7e'),
-  solverEvmPrivateKey: z
-    .string()
-    .regex(/^0x[0-9a-fA-F]{64}$/)
-    .default(DEFAULT_DEV_EVM_PRIVATE_KEY),
-  solverBchWif: z.string().optional(),
-  userBchWif: z.string().optional(),
-  userEvmPrivateKey: z.string().optional(),
-  tpusdCategory: z
-    .string()
-    .default(
-      'ec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac',
-    ),
-  tmusdCategory: z
-    .string()
-    .default(
-      'c99627aec3e041f281068704c2609699d234586d5097301eff995f3bd00ac04d',
-    ),
-  pusdCategory: z.string().optional(),
-  musdCategory: z.string().optional(),
-  quotingEnabled: z.coerce.boolean().default(true),
-  spreadBps: z.coerce.number().default(40),
-  fixedFeeUsdMicros: z.coerce.bigint().default(50000n), // $0.05
-  minSwapUsdMicros: z.coerce.bigint().default(1000000n), // $1.00
-  maxSwapUsdMicros: z.coerce.bigint().default(50000000n), // $50.00
-  maxExposureUsdMicros: z.coerce.bigint().default(250000000n), // $250.00
-  zeroConfMaxUsdMicros: z.coerce.bigint().default(25000000n), // $25.00
-  quoteTtlSeconds: z.coerce.number().default(60),
-  pegTolerance: z.coerce.number().default(0.01),
-  evmConfs: z.coerce.number().default(10),
-  dsproofWindowMs: z.coerce.number().default(5000),
-  fwdBchRefundBlocks: z.coerce.number().default(36),
-  fwdEvmDeadlineSeconds: z.coerce.number().default(86400),
-  revBchRefundBlocks: z.coerce.number().default(144),
-  revEvmDeadlineSeconds: z.coerce.number().default(21600),
-  revMinRemainingBlocks: z.coerce.number().default(108),
-  bchCarrySats: z.coerce.bigint().default(3000n),
-  bchMaxFeeSats: z.coerce.bigint().default(1500n),
-  skewMaxBps: z.coerce.number().default(50),
-  tipMaxAgeBchSeconds: z.coerce.number().default(7200),
-  tipMaxAgeBaseSeconds: z.coerce.number().default(60),
-  allowMockPaylinkSignatures: z.coerce.boolean().default(false),
-  trustedProxy: z.coerce.boolean().default(false),
-  quoteRateLimitWindowMs: z.coerce.number().default(60_000),
-  quoteRateLimitMaxPerAddress: z.coerce.number().default(30),
-  quoteRateLimitMaxPerIp: z.coerce.number().default(60),
-  quoteRateLimitMaxEntries: z.coerce.number().default(10_000),
-  quoteRateLimitPruneIntervalMs: z.coerce.number().default(60_000),
-  maxUnfundedQuotesPerAddress: z.coerce.number().default(10),
-  maxGlobalUnfundedQuotes: z.coerce.number().default(500),
-});
+export const SolverConfigSchema = z
+  .object({
+    port: z.coerce.number().default(8787),
+    host: z.string().default('127.0.0.1'),
+    dbPath: z.string().default(':memory:'),
+    network: z.enum(['testnet', 'mainnet']).default('testnet'),
+    bchElectrumUrls: z
+      .string()
+      .default(
+        'wss://chipnet.imaginary.cash:50004,wss://blackie.c3-soft.com:64004',
+      ),
+    baseRpcUrl: z.string().default('https://sepolia.base.org'),
+    baseChainId: z.coerce.number().default(84532),
+    baseHtlcAddress: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{40}$/)
+      .default('0x5A0C062f4B7b8fF2263530e12bc15De9C836a641'),
+    baseUsdcAddress: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{40}$/)
+      .default('0x036CbD53842c5426634e7929541eC2318f3dCF7e'),
+    solverEvmPrivateKey: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{64}$/)
+      .default(DEFAULT_DEV_EVM_PRIVATE_KEY),
+    solverBchWif: z.string().optional(),
+    userBchWif: z.string().optional(),
+    userEvmPrivateKey: z.string().optional(),
+    tpusdCategory: z
+      .string()
+      .default(
+        'ec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac',
+      ),
+    tmusdCategory: z
+      .string()
+      .default(
+        'c99627aec3e041f281068704c2609699d234586d5097301eff995f3bd00ac04d',
+      ),
+    pusdCategory: z.string().optional(),
+    musdCategory: z.string().optional(),
+    quotingEnabled: z.coerce.boolean().default(true),
+    spreadBps: z.coerce.number().default(40),
+    fixedFeeUsdMicros: z.coerce.bigint().default(50000n), // $0.05
+    minSwapUsdMicros: z.coerce.bigint().default(1000000n), // $1.00
+    maxSwapUsdMicros: z.coerce.bigint().default(50000000n), // $50.00
+    maxExposureUsdMicros: z.coerce.bigint().default(250000000n), // $250.00
+    zeroConfMaxUsdMicros: z.coerce.bigint().default(25000000n), // $25.00
+    quoteTtlSeconds: z.coerce.number().default(60),
+    pegTolerance: z.coerce.number().default(0.01),
+    evmConfs: z.coerce.number().default(10),
+    dsproofWindowMs: z.coerce.number().default(5000),
+    fwdBchRefundBlocks: z.coerce.number().default(36),
+    fwdEvmDeadlineSeconds: z.coerce.number().default(86400),
+    revBchRefundBlocks: z.coerce.number().default(144),
+    revEvmDeadlineSeconds: z.coerce.number().default(21600),
+    revMinRemainingBlocks: z.coerce.number().default(108),
+    bchCarrySats: z.coerce.bigint().default(3000n),
+    bchMaxFeeSats: z.coerce.bigint().default(1500n),
+    skewMaxBps: z.coerce.number().default(50),
+    tipMaxAgeBchSeconds: z.coerce.number().default(7200),
+    tipMaxAgeBaseSeconds: z.coerce.number().default(60),
+    allowMockPaylinkSignatures: z.coerce.boolean().default(false),
+    trustedProxy: z.coerce.boolean().default(false),
+    quoteRateLimitWindowMs: z.coerce.number().default(60_000),
+    quoteRateLimitMaxPerAddress: z.coerce.number().default(30),
+    quoteRateLimitMaxPerIp: z.coerce.number().default(60),
+    quoteRateLimitMaxEntries: z.coerce.number().default(10_000),
+    quoteRateLimitPruneIntervalMs: z.coerce.number().default(60_000),
+    maxUnfundedQuotesPerAddress: z.coerce.number().default(10),
+    maxGlobalUnfundedQuotes: z.coerce.number().default(500),
+    operatorToken: z.string().min(32).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.network === 'mainnet') {
+      if (!data.operatorToken || data.operatorToken.length < 32) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'OPERATOR_TOKEN with at least 32 characters is required on mainnet. Refusing to start.',
+          path: ['operatorToken'],
+        });
+      }
+    }
+  });
 
 export type SolverConfig = z.infer<typeof SolverConfigSchema>;
 
@@ -234,5 +248,6 @@ export function loadConfigFromEnv(
     maxGlobalUnfundedQuotes: env.MAX_GLOBAL_UNFUNDED_QUOTES
       ? Number(env.MAX_GLOBAL_UNFUNDED_QUOTES)
       : undefined,
+    operatorToken: env.OPERATOR_TOKEN ? env.OPERATOR_TOKEN.trim() : undefined,
   });
 }

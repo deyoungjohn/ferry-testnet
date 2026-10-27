@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import pino from 'pino';
+import { timingSafeEqual } from 'node:crypto';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
   QuoteRequestSchema,
@@ -142,6 +143,16 @@ export class ErrorMetricsTracker {
     this.byCode = {};
     this.lastError = null;
   }
+}
+
+export function constantTimeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf-8');
+  const bufB = Buffer.from(b, 'utf-8');
+  if (bufA.length !== bufB.length) {
+    timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return timingSafeEqual(bufA, bufB);
 }
 
 export interface SolverServerOptions {
@@ -1171,7 +1182,6 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       errorCounts: errorTracker.getMetrics(),
       needsAttention: {
         count: needsAttentionCount,
-        orders: db.getNeedsAttentionOrdersSummary(),
       },
       rateLimiter: {
         addressBuckets: rateLimiter.getAddressBucketCount(),
@@ -1184,7 +1194,46 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     return reply.status(200).send(metrics);
   });
 
-  // 11. GET /v1/operator/needs-attention (Alert-style operator listing)
+  // 11. GET /v1/operator/needs-attention & /v1/operator/alerts (Protected operator listing)
+  const verifyOperatorAuth = async (
+    req: { headers: Record<string, string | string[] | undefined> },
+    reply: {
+      status: (code: number) => { send: (payload: unknown) => unknown };
+    },
+  ) => {
+    // If no token is configured, answer 404 to hide the endpoint
+    if (!config.operatorToken) {
+      return reply.status(404).send({
+        code: 'NOT_FOUND',
+        message: 'Route not found',
+      });
+    }
+
+    const authHeader = req.headers.authorization;
+    if (typeof authHeader !== 'string') {
+      return reply.status(401).send({
+        code: 'UNAUTHORIZED',
+        message: 'Missing Authorization header with Bearer token',
+      });
+    }
+
+    const match = /^Bearer\s+(.+)$/i.exec(authHeader);
+    if (!match || !match[1]) {
+      return reply.status(401).send({
+        code: 'UNAUTHORIZED',
+        message: 'Authorization header must use Bearer scheme',
+      });
+    }
+
+    const providedToken = match[1].trim();
+    if (!constantTimeCompare(providedToken, config.operatorToken)) {
+      return reply.status(401).send({
+        code: 'UNAUTHORIZED',
+        message: 'Invalid operator token',
+      });
+    }
+  };
+
   const getNeedsAttentionHandler = async (
     _req: unknown,
     reply: {
@@ -1238,9 +1287,16 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     });
   };
 
-  app.get('/v1/operator/needs-attention', getNeedsAttentionHandler);
-  app.get('/v1/operator/alerts', getNeedsAttentionHandler);
-  app.get('/v1/alerts', getNeedsAttentionHandler);
+  app.get(
+    '/v1/operator/needs-attention',
+    { preHandler: verifyOperatorAuth },
+    getNeedsAttentionHandler,
+  );
+  app.get(
+    '/v1/operator/alerts',
+    { preHandler: verifyOperatorAuth },
+    getNeedsAttentionHandler,
+  );
 
   // 10. POST /v1/links
   app.post('/v1/links', async (req, reply) => {

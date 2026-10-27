@@ -606,3 +606,18 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
   3. *Alert-Style Operator Surfacing (`GET /v1/operator/needs-attention` and `GET /v1/operator/alerts`):* Lists all orders with `needs_attention: 1` including rejection reason, terms, and transaction IDs, with zero raw secret exposure.
 - **Evidence:** Unit test suites in `packages/solver/test/self-check.test.ts` and `packages/solver/test/metrics-api.test.ts`.
 - **Consequence for rebuild:** Market maker daemons must run automated on-chain sanity checks before quoting and provide comprehensive metrics and operator alert endpoints.
+
+---
+
+### D-A2-014 · Operator Route Bearer Authentication, Mainnet Mandate, and Public Metrics Privacy Boundary
+- **Context:** review finding. Earlier, `GET /v1/operator/needs-attention` and `GET /v1/operator/alerts` were unauthenticated, exposing internal triage data publicly. Additionally, `GET /v1/metrics` returned an `orders` array inside `needsAttention` containing individual order IDs, terms, and user wallet addresses.
+- **Decision:**
+  1. *Bearer Token Authentication (`OPERATOR_TOKEN`):* Operator triage routes (`/v1/operator/needs-attention` and `/v1/operator/alerts`) require `Authorization: Bearer <token>`.
+  2. *Constant-Time Comparison:* To eliminate timing side channels while avoiding length-dependent exceptions in `crypto.timingSafeEqual`, tokens are compared by computing `sha256(providedToken)` and `sha256(configuredToken)` buffers of identical length (32 bytes) and comparing them using `timingSafeEqual`.
+  3. *Fail-Closed & Stealth Default:* If `OPERATOR_TOKEN` is unset in configuration, requests to `/v1/operator/*` return HTTP 404 (`Route not found`), hiding the existence of operator endpoints from port scanners.
+  4. *Mainnet Startup Mandate:* On `NETWORK=mainnet`, `SolverConfigSchema` and the startup pre-flight self-check enforce that `OPERATOR_TOKEN` is defined and has a minimum length of 32 characters (`min(32)`). The solver refuses to boot if missing or too short.
+  5. *Public Metrics Privacy Boundary:* `GET /v1/metrics` is strictly restricted to aggregate counts (`needsAttention: { count: N }`). All order arrays, order IDs, user addresses, and secrets are excluded from public telemetry.
+  6. *Legacy Cleanup:* Removed the redundant unauthenticated alias `GET /v1/alerts`.
+- **Evidence:** Integration tests in `packages/solver/test/metrics-api.test.ts` verifying 404 on unset token, 401 on bad/missing token, 200 with valid bearer token, and asserting that public endpoints (`/v1/metrics`, `/v1/health`, `/v1/stats`, `/v1/orders/recent`, `/v1/pegs`) never contain order IDs. Mainnet config validation tests in `test/self-check.test.ts`.
+- **Consequence for rebuild:** Operator triage APIs must use constant-time bearer token auth with stealth 404 fallbacks; public telemetry endpoints must never expose order or user identifiers.
+

@@ -220,12 +220,26 @@ export async function runStartupSelfCheck(
     }
   }
 
-  // 6. Format Display Report (NEVER contains private keys or WIFs)
+  // 6. Verify Operator Token on mainnet
+  if (config.network === 'mainnet') {
+    if (!config.operatorToken || config.operatorToken.length < 32) {
+      throw new StartupSelfCheckError(
+        'OPERATOR_TOKEN with at least 32 characters is required on mainnet. Refusing to start.',
+      );
+    }
+  }
+
+  // 7. Format Display Report (NEVER contains private keys, WIFs, or tokens)
+  const operatorAuthLine = config.operatorToken
+    ? `Configured (${config.operatorToken.length} chars, min 32)`
+    : 'Not configured (operator routes disabled / answer 404)';
+
   const reportLines = [
     '================ FERRYMAN STARTUP SELF-CHECK ================',
     `Network:                 ${config.network}`,
     `EVM Signer Address:      ${solverEvmAddress}`,
     `BCH Signer Address:      ${solverBchAddress ?? 'N/A'}`,
+    `Operator Auth:           ${operatorAuthLine}`,
     '-------------------------------------------------------------',
     `Chain IDs:`,
     `  Base EVM Chain ID:     ${actualChainId} (verified matches config)`,

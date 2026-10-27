@@ -178,4 +178,53 @@ describe('Startup Self-Check', () => {
       }),
     ).rejects.toThrowError(/BCH Genesis Hash mismatch on chipnet/);
   });
+
+  it('refuses startup on mainnet if operatorToken is missing or shorter than 32 characters', async () => {
+    const configWithoutToken = createMockConfig({
+      network: 'mainnet',
+      baseChainId: 8453,
+      operatorToken: 'a'.repeat(32),
+    });
+    (
+      configWithoutToken as unknown as { operatorToken?: string | undefined }
+    ).operatorToken = undefined;
+
+    const publicClient = createMockPublicClient({
+      getChainId: async () => 8453,
+    });
+    const bchClient = createMockBchClient({
+      getQuorumStatus: () => ({
+        isQuorumHealthy: true,
+        quorumTip: 900000,
+        genesisHash: EXPECTED_BCH_GENESIS.mainnet,
+      }),
+    });
+
+    await expect(
+      runStartupSelfCheck({
+        config: configWithoutToken,
+        publicClient,
+        bchClient,
+        solverEvmAddress: validEvmAddress,
+        solverBchWif: validBchWif,
+      }),
+    ).rejects.toThrowError(
+      /OPERATOR_TOKEN with at least 32 characters is required on mainnet/,
+    );
+
+    (
+      configWithoutToken as unknown as { operatorToken?: string }
+    ).operatorToken = 'too-short';
+    await expect(
+      runStartupSelfCheck({
+        config: configWithoutToken,
+        publicClient,
+        bchClient,
+        solverEvmAddress: validEvmAddress,
+        solverBchWif: validBchWif,
+      }),
+    ).rejects.toThrowError(
+      /OPERATOR_TOKEN with at least 32 characters is required on mainnet/,
+    );
+  });
 });

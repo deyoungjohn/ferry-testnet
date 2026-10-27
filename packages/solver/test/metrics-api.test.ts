@@ -230,19 +230,161 @@ describe('Solver Metrics & Operator Alerts API', () => {
     expect(body.errorCounts.byCode.ORDER_NOT_FOUND).toBe(1);
     expect(body.errorCounts.lastError.code).toBe('ORDER_NOT_FOUND');
 
-    // 7. Needs-attention counts and orders
+    // 7. Needs-attention counts (aggregate count only, zero orders array in public metrics)
     expect(body.needsAttention.count).toBe(1);
-    expect(body.needsAttention.orders.length).toBe(1);
-    expect(body.needsAttention.orders[0].orderId).toBe('0xalert-1');
+    expect(body.needsAttention.orders).toBeUndefined();
 
-    // 8. STRICT PRIVACY ENFORCEMENT: raw secret must NEVER appear
+    // 8. STRICT PRIVACY ENFORCEMENT: public metrics never include order IDs, addresses, or secrets
+    expect(res.payload).not.toContain('0xquoted-1');
+    expect(res.payload).not.toContain('0xactive-1');
+    expect(res.payload).not.toContain('0xalert-1');
+    expect(res.payload).not.toContain('0xdone-1');
+    expect(res.payload).not.toContain('"orderId"');
+    expect(res.payload).not.toContain(
+      '0x1111111111111111111111111111111111111111',
+    );
+    expect(res.payload).not.toContain(
+      '0x2222222222222222222222222222222222222222',
+    );
+    expect(res.payload).not.toContain(
+      '0x3333333333333333333333333333333333333333',
+    );
+    expect(res.payload).not.toContain(
+      '0x4444444444444444444444444444444444444444',
+    );
+    expect(res.payload).not.toContain('userCounterAddress');
+    expect(res.payload).not.toContain('userBchLockingBytecode');
     expect(res.payload).not.toContain(
       '0xsuper_secret_preimage_that_must_never_be_revealed_to_anyone_on_metrics',
     );
     expect(res.payload).not.toContain('secret');
   });
 
-  it('GET /v1/operator/needs-attention provides alert-style operator listing', async () => {
+  it('GET /v1/operator/needs-attention requires valid Bearer token and answers 404 when unset', async () => {
+    seedSampleOrders();
+    const operatorToken = 'very-secret-operator-token-with-at-least-32-chars';
+
+    // 1. When operatorToken is unset, operator routes answer 404 (hides existence)
+    const appWithoutToken = buildServer({
+      config: SolverConfigSchema.parse({
+        solverEvmPrivateKey: solverEvmKey,
+      }),
+      db,
+      evmAdapter: fakeEvmAdapter,
+      bchClient: fakeBchClient,
+      engine,
+    });
+
+    const res404 = await appWithoutToken.inject({
+      method: 'GET',
+      url: '/v1/operator/needs-attention',
+    });
+    expect(res404.statusCode).toBe(404);
+
+    const alias404 = await appWithoutToken.inject({
+      method: 'GET',
+      url: '/v1/operator/alerts',
+    });
+    expect(alias404.statusCode).toBe(404);
+
+    // Removed alias /v1/alerts answers 404
+    const removedRes = await appWithoutToken.inject({
+      method: 'GET',
+      url: '/v1/alerts',
+    });
+    expect(removedRes.statusCode).toBe(404);
+
+    // 2. When operatorToken is set:
+    const appWithToken = buildServer({
+      config: SolverConfigSchema.parse({
+        solverEvmPrivateKey: solverEvmKey,
+        operatorToken,
+      }),
+      db,
+      evmAdapter: fakeEvmAdapter,
+      bchClient: fakeBchClient,
+      engine,
+    });
+
+    // 2a. Missing Authorization header -> 401
+    const resNoAuth = await appWithToken.inject({
+      method: 'GET',
+      url: '/v1/operator/needs-attention',
+    });
+    expect(resNoAuth.statusCode).toBe(401);
+    expect(JSON.parse(resNoAuth.payload).code).toBe('UNAUTHORIZED');
+
+    // 2b. Malformed Authorization header -> 401
+    const resBadScheme = await appWithToken.inject({
+      method: 'GET',
+      url: '/v1/operator/needs-attention',
+      headers: {
+        authorization: 'Basic dXNlcjpwYXNz',
+      },
+    });
+    expect(resBadScheme.statusCode).toBe(401);
+    expect(JSON.parse(resBadScheme.payload).code).toBe('UNAUTHORIZED');
+
+    // 2c. Wrong token -> 401
+    const resWrongToken = await appWithToken.inject({
+      method: 'GET',
+      url: '/v1/operator/needs-attention',
+      headers: {
+        authorization:
+          'Bearer incorrect-token-that-is-at-least-32-chars-long-12345',
+      },
+    });
+    expect(resWrongToken.statusCode).toBe(401);
+    expect(JSON.parse(resWrongToken.payload).code).toBe('UNAUTHORIZED');
+
+    // 2d. Correct token -> 200 with orders
+    const resOk = await appWithToken.inject({
+      method: 'GET',
+      url: '/v1/operator/needs-attention',
+      headers: {
+        authorization: `Bearer ${operatorToken}`,
+      },
+    });
+    expect(resOk.statusCode).toBe(200);
+    const body = JSON.parse(resOk.payload);
+    expect(body.count).toBe(1);
+    expect(body.orders[0].orderId).toBe('0xalert-1');
+    expect(body.orders[0].direction).toBe('BCH_TO_COUNTER');
+    expect(body.orders[0].rejectionReason).toContain(
+      'EVM lock is claimed unexpectedly early',
+    );
+    expect(body.orders[0].txIds.userLockTxId).toBe('0xuser-bch-txid-1234');
+    expect(body.systemAlerts).toBeDefined();
+
+    // 2e. Alias /v1/operator/alerts also accepts Bearer token and returns same payload
+    const aliasOk = await appWithToken.inject({
+      method: 'GET',
+      url: '/v1/operator/alerts',
+      headers: {
+        authorization: `Bearer ${operatorToken}`,
+      },
+    });
+    expect(aliasOk.statusCode).toBe(200);
+    const aliasBody = JSON.parse(aliasOk.payload);
+    expect(aliasBody.count).toBe(body.count);
+
+    // 2f. Removed alias /v1/alerts still returns 404 even with valid token
+    const removedWithToken = await appWithToken.inject({
+      method: 'GET',
+      url: '/v1/alerts',
+      headers: {
+        authorization: `Bearer ${operatorToken}`,
+      },
+    });
+    expect(removedWithToken.statusCode).toBe(404);
+
+    // Strict privacy: no raw preimage secret in operator payload
+    expect(resOk.payload).not.toContain(
+      '0xsuper_secret_preimage_that_must_never_be_revealed_to_anyone_on_metrics',
+    );
+  });
+
+  it('verifies public routes never include order IDs', async () => {
     seedSampleOrders();
     const config = SolverConfigSchema.parse({
       solverEvmPrivateKey: solverEvmKey,
@@ -256,37 +398,25 @@ describe('Solver Metrics & Operator Alerts API', () => {
       engine,
     });
 
-    const res = await app.inject({
-      method: 'GET',
-      url: '/v1/operator/needs-attention',
-    });
+    // Check all public informational endpoints
+    const publicUrls = [
+      '/v1/metrics',
+      '/v1/health',
+      '/v1/stats',
+      '/v1/orders/recent',
+      '/v1/pegs',
+    ];
 
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.payload);
+    for (const url of publicUrls) {
+      const res = await app.inject({ method: 'GET', url });
+      expect(res.statusCode).toBe(200);
 
-    expect(body.count).toBe(1);
-    expect(body.orders[0].orderId).toBe('0xalert-1');
-    expect(body.orders[0].direction).toBe('BCH_TO_COUNTER');
-    expect(body.orders[0].rejectionReason).toContain(
-      'EVM lock is claimed unexpectedly early',
-    );
-    expect(body.orders[0].txIds.userLockTxId).toBe('0xuser-bch-txid-1234');
-    expect(body.systemAlerts).toBeDefined();
-
-    // Alias /v1/operator/alerts returns the same payload
-    const aliasRes = await app.inject({
-      method: 'GET',
-      url: '/v1/operator/alerts',
-    });
-    expect(aliasRes.statusCode).toBe(200);
-    const aliasBody = JSON.parse(aliasRes.payload);
-    expect(aliasBody.count).toBe(body.count);
-
-    // Strict privacy: no secret in payload
-    expect(res.payload).not.toContain(
-      '0xsuper_secret_preimage_that_must_never_be_revealed_to_anyone_on_metrics',
-    );
-    expect(res.payload).not.toContain('"secret"');
+      // Verify none of the seeded order IDs are present in any public endpoint
+      expect(res.payload).not.toContain('0xquoted-1');
+      expect(res.payload).not.toContain('0xactive-1');
+      expect(res.payload).not.toContain('0xalert-1');
+      expect(res.payload).not.toContain('0xdone-1');
+    }
   });
 
   it('fails closed on mainnet if trustedProxy is unset while forwarding header is present', async () => {
@@ -294,6 +424,7 @@ describe('Solver Metrics & Operator Alerts API', () => {
       solverEvmPrivateKey: solverEvmKey,
       network: 'mainnet',
       trustedProxy: false, // operator did not enable trustedProxy!
+      operatorToken: 'a'.repeat(32), // valid 32-char token
     });
 
     const app = buildServer({
@@ -339,6 +470,7 @@ describe('Solver Metrics & Operator Alerts API', () => {
       solverEvmPrivateKey: solverEvmKey,
       network: 'mainnet',
       trustedProxy: true, // operator correctly configured trustedProxy!
+      operatorToken: 'a'.repeat(32), // valid 32-char token
     });
 
     const app = buildServer({
@@ -372,5 +504,35 @@ describe('Solver Metrics & Operator Alerts API', () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.payload);
     expect(body.orderId).toBeDefined();
+  });
+
+  describe('Mainnet OPERATOR_TOKEN Enforcement', () => {
+    it('refuses mainnet config if operatorToken is missing', () => {
+      expect(() =>
+        SolverConfigSchema.parse({
+          solverEvmPrivateKey: solverEvmKey,
+          network: 'mainnet',
+        }),
+      ).toThrowError(/OPERATOR_TOKEN with at least 32 characters is required/);
+    });
+
+    it('refuses mainnet config if operatorToken is shorter than 32 characters', () => {
+      expect(() =>
+        SolverConfigSchema.parse({
+          solverEvmPrivateKey: solverEvmKey,
+          network: 'mainnet',
+          operatorToken: 'short-token-under-32-chars',
+        }),
+      ).toThrowError();
+    });
+
+    it('accepts mainnet config when operatorToken has at least 32 characters', () => {
+      const config = SolverConfigSchema.parse({
+        solverEvmPrivateKey: solverEvmKey,
+        network: 'mainnet',
+        operatorToken: 'valid-32-char-token-for-mainnet!',
+      });
+      expect(config.operatorToken).toBe('valid-32-char-token-for-mainnet!');
+    });
   });
 });
