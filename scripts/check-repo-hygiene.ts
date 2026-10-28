@@ -111,7 +111,7 @@ export function checkTrackedContent(
     /(?:PRIVATE_KEY|privateKey|secretKey|secret_key|WIF|wif)\s*[:=]\s*["']([0-9a-zA-Z]{32,66})["']/i;
 
   // Match Solana secret key arrays [1, 2, ..., 64]
-  const solanaArrayRegex = /\[\s*(?:\d{1,3}\s*,\s*){31,63}\d{1,3}\s*\]/;
+  const solanaArrayRegex = /\[\s*(?:\d{1,3}\s*,\s*){63}\d{1,3}\s*\]/;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];

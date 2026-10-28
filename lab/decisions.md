@@ -683,3 +683,9 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** Vitest tests in `packages/solver/test/claim-secret-safety.test.ts` (20/20 tests green), including slow-propagating locks, lagging quorum nodes, winning spend adoption from HTLC history, and conflict detection. End-to-end chipnet proof recorded in `lab/chain-notes/bch.md` (order `0x160edccd…`, 20.94s total swap, secret preimage validated, script VM verified).
 - **Consequence for rebuild:** Multi-input covenant broadcast recovery must never rely on a single node or blind timer; verify quorum visibility and inspect input outpoints against contract history before re-selecting UTXOs.
 
+### D-A1-036 · live UI walkthrough covers both directions and both lanes with script signers
+- **Decision:** The opt-in live walkthrough uses script signers for both chains: a chipnet WIF and a Base Sepolia key stay in the Playwright runner, while the page receives only the public address and signed bytes/signatures. It exercises the real quote, recovery download, wallet request, relay/lock, status page, auto-claim/gasless claim and both explorer families.
+- **Result:** Four orders reached `DONE`: forward fast 31.052 s, forward safe 29.721 s, reverse fast 28.090 s, reverse safe 957.381 s (944.546 s was the expected single BCH confirmation wait). No new wording/state defect surfaced during the walk.
+- **Evidence:** `e2e/live/walkthrough.spec.ts`, `e2e/live/script-evm.ts`, `e2e/live/script-wallet.ts`; txids/timings recorded in both chain notes.
+- **Consequence for rebuild:** Keep live funded acceptance tests separate from the default suite and use script signers for repeatable UI coverage; a real wallet remains a separate human step.
+- **Revisit if:** the live solver or token inventory is unavailable, or a real wallet introduces a transport behavior the script signer cannot model.

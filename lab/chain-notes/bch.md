@@ -306,3 +306,15 @@ Executed end-to-end against live solver daemon with the fixes using testnet keys
   - Total swap duration: **20.94s**
   - Result: The relay-claim and EVM watcher raced without causing `getLock` zero-secret fallback. The real preimage was safely received and validated, VM verification passed, and the claim was accepted into Chipnet mempool and confirmed without error.
 
+## 2026-10-27 · live walkthrough: both directions, both lanes
+
+Script signers used the real UI against an isolated solver on `127.0.0.1:8790`; the browser never held a key. All four walks ended `DONE`.
+
+| Direction | Lane | Order | BCH user lock | BCH solver/claim | UI timings |
+|---|---|---|---|---|---|
+| Forward | Fast | `0x036c563702004fc0de2dc46182a319d8617e2a2ef6e4933d412f7bb71b785d19` | — (Base lock) | solver lock `90d2407ab667ef66294867ae9d4f1a65b7fd983fe81415dd52350ebe31489a1b`; user claim `ed9c9dc7d138ff1a2673c1d8fe04cbd4a2448c27dd4a2b0b599a3f66aa957562` | quote+recovery 8.440 s; lock 4.679 s; final 17.933 s; total 31.052 s |
+| Forward | Safe | `0xcc9948379ba7a4e1be2647c682034481c675e8974847bb286ff22e4031a1769d` | — (Base lock) | solver lock `fa33c3a2d9f8dc4208e288570fd1ab9b0c3bf69dc9c67a16a336c2a5a02b030a`; user claim `e869d388485843fa6d03264458fd0e2b01161dd858bab78eefb182e14aa7e747` | quote+recovery 5.534 s; lock 3.826 s; final 20.361 s; total 29.721 s |
+| Reverse | Fast | `0xb2bce4bd321cc7f5ed89cb9237f3d0851a8e9c397c26b246f82daef3865d4bea` | `db8d7874c52d4d1008b2fa8c88b7bb901a6e25a9af629e0377b070c5622acae3` | solver BCH claim `91c0009c4477a1561b82d73c61c3943e6914e76aa9ae7a59e6fd1b1b1f46a25f` | quote+recovery 6.722 s; lock 0.804 s; claim wait 12.662 s; final 7.902 s; total 28.090 s |
+| Reverse | Safe | `0x71240d04eb8389b1be6ee2187263d7109661c1a96fd9b1dd37b9e989ba248fba` | `dc0f739ff18e736f1903911a94b0cd4188bf8ae17b56194615e99e81cacc3732` | solver BCH claim `83595dd3923eb10cc15aaf419ef9a65cf0607722a89a9b12deca7a4fd9a62803` | quote+recovery 5.481 s; lock 1.119 s; confirmation wait 944.546 s (15m 44.5s); final 6.235 s; total 957.381 s |
+- The reverse safe lane spent 944.5 s in the expected single-confirmation wait; no wording/state correction was needed in this walk.
+- BCH explorer links for the user locks/claims resolve under `https://blockexplorer.cash/chipnet/tx/<txid>`.

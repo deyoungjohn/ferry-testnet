@@ -159,3 +159,15 @@ Order `0xe8878b7edfeff55bfae73838666bec4f47f26688c08fb5ba492833cd2fa7a462`, fast
 - **User EVM claim (gasless relay):** `0x75dce99e07ea0b89f9ba256fc81f62d048dd4e5d3396c556d21213250ea21e5a`
   - Explorer: `https://sepolia.basescan.org/tx/0x75dce99e07ea0b89f9ba256fc81f62d048dd4e5d3396c556d21213250ea21e5a`
 - **Timings:** quote + BCH lock broadcast 3.807 s; BCH lock to gasless claim available 16.068 s; claim click to `DONE` 6.037 s; total 25.912 s.
+
+## 2026-10-27 · live walkthrough: both directions, both lanes
+
+All four live UI walks ended `DONE` against the isolated solver on `127.0.0.1:8790`; browser key material stayed in the test runner.
+
+| Direction | Lane | Order | Base user lock | Base solver/claim |
+|---|---|---|---|---|
+| Forward | Fast | `0x036c563702004fc0de2dc46182a319d8617e2a2ef6e4933d412f7bb71b785d19` | `0x1beb1caa3b1b8c0a7fd926dc3a99f5510d38f72f9994003ca0fa60d9c0f28c69` | solver claim `0x4c7b70557e602fe749d7cd99472caac7bb85b42572cb34330717d89c8ff5e030` |
+| Forward | Safe | `0xcc9948379ba7a4e1be2647c682034481c675e8974847bb286ff22e4031a1769d` | `0xe30de054cf93c7a4a523ed3caf800a24bcc011e9482ba08df318a869c8737c36` | solver claim `0x35305e5a9a1b804032dac20f383eef5060af76c95b63847a32c7e42c2691b34e` |
+| Reverse | Fast | `0xb2bce4bd321cc7f5ed89cb9237f3d0851a8e9c397c26b246f82daef3865d4bea` | — (solver lock) | solver lock `0xc934fafd95b94c50281ee4c118b986387d4357393398e1609a121da89f9c1494`; user claim `0x35d6fd3fd82a091b359c3c762d16437d416ebc7bdc79d55153a0151a06b1762b` |
+| Reverse | Safe | `0x71240d04eb8389b1be6ee2187263d7109661c1a96fd9b1dd37b9e989ba248fba` | — (solver lock) | solver lock `0xec4ca08bcb572282669612d48a3b7f3aca986522eabae51c29a04e26b9740df6`; user claim `0xf270cf631b9beed96c2c33bce61ffe77650dd34f114281be7142d09b0dc90a3d` |
+- All Base links resolve under `https://sepolia.basescan.org/tx/<txid>`.
