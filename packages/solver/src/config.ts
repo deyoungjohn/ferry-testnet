@@ -3,6 +3,12 @@ import { z } from 'zod';
 export const DEFAULT_DEV_EVM_PRIVATE_KEY =
   '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
 
+export const KNOWN_DEV_EVM_KEYS = [
+  DEFAULT_DEV_EVM_PRIVATE_KEY.toLowerCase(),
+  '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', // Anvil 0
+  '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a', // Anvil 2
+];
+
 export const SolverConfigSchema = z
   .object({
     port: z.coerce.number().default(8787),
@@ -74,6 +80,10 @@ export const SolverConfigSchema = z
     maxUnfundedQuotesPerAddress: z.coerce.number().default(10),
     maxGlobalUnfundedQuotes: z.coerce.number().default(500),
     operatorToken: z.string().min(32).optional(),
+    expectedHtlcCodeHash: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{64}$/)
+      .optional(),
   })
   .superRefine((data, ctx) => {
     if (data.network === 'mainnet') {
@@ -83,6 +93,28 @@ export const SolverConfigSchema = z
           message:
             'OPERATOR_TOKEN with at least 32 characters is required on mainnet. Refusing to start.',
           path: ['operatorToken'],
+        });
+      }
+
+      // Check Fulcrum host count on mainnet
+      const urls = data.bchElectrumUrls
+        .split(',')
+        .map((u) => u.trim())
+        .filter(Boolean);
+      const hosts = new Set(
+        urls.map((u) => {
+          try {
+            return new URL(u).host.toLowerCase();
+          } catch {
+            return u.toLowerCase();
+          }
+        }),
+      );
+      if (hosts.size < 2) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `At least two independent Fulcrum hosts are required on mainnet (configured: ${hosts.size}). Refusing to start without redundant quorum.`,
+          path: ['bchElectrumUrls'],
         });
       }
     }
@@ -143,6 +175,17 @@ export function loadConfigFromEnv(
     );
   }
 
+  const hasFaultInjection =
+    env.FERRY_FAULT_INJECTION === '1' ||
+    env.FERRY_FAULT_INJECTION === 'true' ||
+    Boolean(env.FAULT_CRASH_POINT);
+
+  if (isMainnet && hasFaultInjection) {
+    throw new Error(
+      'Fault injection variables (FERRY_FAULT_INJECTION / FAULT_CRASH_POINT) are not allowed on mainnet. Refusing to start.',
+    );
+  }
+
   let solverEvmPrivateKey: string;
   if (!rawSolverKey) {
     if (isMainnet) {
@@ -157,15 +200,26 @@ export function loadConfigFromEnv(
     }
     solverEvmPrivateKey = DEFAULT_DEV_EVM_PRIVATE_KEY;
   } else {
-    if (
-      isMainnet &&
-      rawSolverKey.toLowerCase() === DEFAULT_DEV_EVM_PRIVATE_KEY.toLowerCase()
-    ) {
+    if (isMainnet && KNOWN_DEV_EVM_KEYS.includes(rawSolverKey.toLowerCase())) {
       throw new Error(
         'Default dev private key cannot be used on mainnet. Refusing to start.',
       );
     }
+    if (isMainnet && allowDevKeys) {
+      throw new Error(
+        'ALLOW_DEV_KEYS is not permitted on mainnet. Refusing to start.',
+      );
+    }
     solverEvmPrivateKey = rawSolverKey;
+  }
+
+  if (isMainnet && env.SOLVER_BCH_WIF) {
+    const wif = env.SOLVER_BCH_WIF.trim();
+    if (wif.startsWith('c') || wif.startsWith('9')) {
+      throw new Error(
+        'Testnet BCH WIF cannot be used on mainnet. Refusing to start.',
+      );
+    }
   }
 
   return SolverConfigSchema.parse({
@@ -249,5 +303,7 @@ export function loadConfigFromEnv(
       ? Number(env.MAX_GLOBAL_UNFUNDED_QUOTES)
       : undefined,
     operatorToken: env.OPERATOR_TOKEN ? env.OPERATOR_TOKEN.trim() : undefined,
+    expectedHtlcCodeHash:
+      env.BASE_HTLC_CODE_HASH || env.FERRY_HTLC_CODE_HASH || undefined,
   });
 }

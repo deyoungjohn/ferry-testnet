@@ -689,3 +689,22 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** `e2e/live/walkthrough.spec.ts`, `e2e/live/script-evm.ts`, `e2e/live/script-wallet.ts`; txids/timings recorded in both chain notes.
 - **Consequence for rebuild:** Keep live funded acceptance tests separate from the default suite and use script signers for repeatable UI coverage; a real wallet remains a separate human step.
 - **Revisit if:** the live solver or token inventory is unavailable, or a real wallet introduces a transport behavior the script signer cannot model.
+
+---
+
+### D-A2-017 · Fail-Closed Solver Mainnet Invariant Refusal Architecture
+- **Context:** requires proving that all mainnet refusal paths fire cleanly with explicit error messages before daemon startup, preventing any deployment with dev keys, single-host quorum vulnerabilities, missing auth tokens, unverified contract bytecode, or empty hot wallet inventory.
+- **Decision:**
+  1. *Multi-Layer Refusal Guards:* Implement fail-closed validation at both the configuration parsing stage (`SolverConfigSchema.superRefine`, `loadConfigFromEnv`) and the operational self-check stage (`runStartupSelfCheck`).
+  2. *Mandatory Mainnet Invariants:*
+     - **OPERATOR_TOKEN:** Mainnet strictly refuses startup unless a high-entropy bearer token (at least 32 characters) is configured to protect sensitive operator endpoints (`/v1/operator/*`).
+     - **Cryptographic Key Sanitation:** Rejects default Anvil dev keys (`0x59c6...`, `0xac09...`, `0x5de4...`), any presence of `ALLOW_DEV_KEYS=1`, or testnet BCH WIF formats (starting with `c` or `9`).
+     - **Fault Injection Ban:** Rejects startup if `FERRY_FAULT_INJECTION` or `FAULT_CRASH_POINT` is configured, preventing accidental process crashes in production.
+     - **Ingress Proxy Integrity:** Enforces `UNTRUSTED_PROXY_HEADER` (HTTP 400) when requests arrive with `X-Forwarded-For` or `X-Real-IP` while `TRUSTED_PROXY` is disabled, preventing rate limiter spoofing and ensuring operators correctly configure ingress gateways.
+     - **Quorum Redundancy:** Requires at least two independent, distinct Fulcrum/Rostrum hostnames in `BCH_ELECTRUM_URLS` and verifies that all connected nodes match the Bitcoin Cash mainnet genesis hash (`000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f`).
+     - **Chain ID & Contract Bytecode Verification:** Enforces EVM Chain ID 8453 on Base and asserts that both the FerryHTLC and USDC contract addresses contain active bytecode matching expected code hashes.
+     - **Hot Wallet Inventory Pre-Flight:** Strictly refuses startup if the solver hot wallet has zero native ETH (gas), zero BCH satoshis (fees and carry), or zero swap token liquidity.
+     - **Mock Signature Ban:** Rejects `ALLOW_MOCK_PAYLINK_SIGNATURES=1` on mainnet, mandating real cryptographic Libauth message verification.
+  3. *Live Read-Only Public Verification:* Proved that starting the solver against live public Base Mainnet RPC (`https://mainnet.base.org`) and dual live mainnet Fulcrum nodes (`wss://bch.imaginary.cash:50004`, `wss://blackie.c3-soft.com:50004`) with a throwaway zero-balance key connects, validates chain IDs and genesis hashes, and safely halts on the empty inventory check without any funds, keys, or transactions.
+- **Evidence:** Automated tests in `packages/solver/test/mainnet-refusals.test.ts` (11/11 tests passing).
+- **Consequence for rebuild:** Production solver daemons must never rely on runtime optimistic execution; all invariants must fail closed at boot.

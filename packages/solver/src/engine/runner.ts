@@ -71,10 +71,20 @@ export class SolverEngine {
       resolvedLogger = networkOrLogger;
     }
 
-    if (resolvedNetwork === 'mainnet' && process.env.FAULT_CRASH_POINT) {
-      throw new Error(
-        'Refusing to start: FAULT_CRASH_POINT is not allowed when network is mainnet',
-      );
+    if (resolvedNetwork === 'mainnet') {
+      if (process.env.FAULT_CRASH_POINT) {
+        throw new Error(
+          'Refusing to start: FAULT_CRASH_POINT is not allowed when network is mainnet',
+        );
+      }
+      if (
+        process.env.FERRY_FAULT_INJECTION === '1' ||
+        process.env.FERRY_FAULT_INJECTION === 'true'
+      ) {
+        throw new Error(
+          'Fault injection variables (FERRY_FAULT_INJECTION / FAULT_CRASH_POINT) are not allowed on mainnet. Refusing to start.',
+        );
+      }
     }
 
     this.network = resolvedNetwork;
