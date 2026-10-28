@@ -59,6 +59,17 @@ describe(' wallet panel with the Base wallet already connected', () => {
     expect(set.bch.disconnect).not.toHaveBeenCalled();
   });
 
+  it('calls a fresh pairing connecting, not reconnecting', () => {
+    const set = walletSet({ status: 'connecting', pairing: true }, {});
+    renderPanel(set);
+    expect(
+      screen.getByRole('button', { name: 'Connecting BCH…' }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: /reconnecting bch/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it('shows a remembered offline identity and can forget it', () => {
     const forget = vi.fn();
     const set = walletSet(

@@ -62,6 +62,7 @@ export interface BchWallet {
   readonly address: BchAddressInfo | null;
   readonly error: string | null;
   readonly walletName: string | null;
+  readonly pairing?: boolean;
   readonly pendingRequest?: string | null;
   connect(): void;
   disconnect(): Promise<void>;

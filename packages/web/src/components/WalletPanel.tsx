@@ -48,7 +48,9 @@ export function WalletPanel() {
           {bch.status === 'connected'
             ? 'Disconnect BCH'
             : bch.status === 'connecting'
-              ? 'Reconnecting BCH…'
+              ? bch.pairing
+                ? 'Connecting BCH…'
+                : 'Reconnecting BCH…'
               : bch.status === 'offline'
                 ? 'Reconnect BCH'
                 : 'Connect BCH'}
