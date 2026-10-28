@@ -50,9 +50,9 @@ describe('wait-state with the solver millisecond timestamp', () => {
         counterDeadline: quote.terms.counterDeadline,
         bchRefundHeight: quote.terms.bchRefundHeight,
       },
-      // The solver stores Date.now() milliseconds; do not hand-write a
-      // seconds value here.
-      updatedAt: Date.now() - 4 * 60_000,
+      // The solver API is Unix seconds; the web client keeps a
+      // millisecond read guard for rows written by older releases.
+      updatedAt: Math.floor(Date.now() / 1_000) - 4 * 60,
     };
     vi.stubGlobal(
       'fetch',
