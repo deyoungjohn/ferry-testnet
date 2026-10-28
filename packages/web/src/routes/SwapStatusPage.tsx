@@ -804,9 +804,9 @@ export function SwapStatusPage() {
           ) : null}
 
           <section className="mt-5 rounded-card border border-hairline bg-surface-1 p-5 sm:p-6">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-sm font-semibold text-text">Timeline</h2>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center justify-between gap-2 sm:justify-end">
                 <span className="text-[10px] text-text-muted">
                   {solverIsLive() ? 'Live solver' : 'Mock solver'} · updates
                   every 2s
@@ -814,7 +814,7 @@ export function SwapStatusPage() {
                 <button
                   type="button"
                   onClick={() => setDrawerOpen(true)}
-                  className="rounded-pill border border-hairline bg-surface-2 px-2.5 py-1 text-[10px] font-medium text-text-muted transition-colors hover:border-lime/30 hover:text-lime"
+                  className="shrink-0 rounded-pill border border-hairline bg-surface-2 px-2.5 py-1 text-[10px] font-medium whitespace-nowrap text-text-muted transition-colors hover:border-lime/30 hover:text-lime"
                 >
                   Open timeline drawer
                 </button>

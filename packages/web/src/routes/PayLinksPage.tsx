@@ -199,10 +199,10 @@ export function PayLinksPage() {
         the exact amount lands in your BCH wallet.
       </p>
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[1.05fr_0.95fr]">
         <form
           onSubmit={handleCreate}
-          className="rounded-card border border-hairline bg-surface-1 p-5 sm:p-6"
+          className="min-w-0 rounded-card border border-hairline bg-surface-1 p-5 sm:p-6"
         >
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">New link</h2>
@@ -390,7 +390,7 @@ export function PayLinksPage() {
           </div>
         </form>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {created && createdUrl ? (
             <section className="rounded-card border border-lime/25 bg-surface-1 p-5 sm:p-6">
               <div className="flex items-center gap-2">
