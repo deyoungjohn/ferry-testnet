@@ -61,6 +61,11 @@ function splitPermitSignature(signature: `0x${string}`): {
   };
 }
 
+/** The solver stores milliseconds; the page works in seconds. */
+export function toSeconds(timestamp: number): number {
+  return timestamp > 1e12 ? Math.floor(timestamp / 1_000) : timestamp;
+}
+
 function txList(
   input: {
     userLockTxId?: string | undefined;
@@ -341,7 +346,7 @@ export class HttpSolverClient implements SolverClient {
       lane: response.lane,
       bchTipHeight,
       bchTipError,
-      updatedAt: response.updatedAt,
+      updatedAt: toSeconds(response.updatedAt),
       transactions: txList(response.txIds, response.terms.direction),
       bchLockUtxo: response.bchLock
         ? {
