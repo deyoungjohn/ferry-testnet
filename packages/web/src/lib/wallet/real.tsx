@@ -226,10 +226,13 @@ function useRealBchWallet(
     pendingRequest,
     walletName: wizard.walletName ?? remembered?.name ?? null,
     connect: () => {
-      // A fresh pairing must supersede a stale restored attempt without waiting
-      // for its relay disconnect. Clear the stored session and remount the
-      // WizardConnect hook; the new mount opens a fresh QR dialog.
-      onRestart();
+      // Normal case: open the QR dialog directly. Only a stale restored
+      // attempt needs the clear-and-remount path.
+      if (wizard.state === 'connecting' || wizard.state === 'reconnecting') {
+        onRestart();
+        return;
+      }
+      wizard.connect();
     },
     disconnect: async () => {
       setManualAddress(null);
