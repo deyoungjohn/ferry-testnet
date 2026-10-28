@@ -1,0 +1,52 @@
+{
+  "orderId": "0x28f26446674a835fb36f09472045eed4461d42a4226c7c8ec4dc6609ba6d2c99",
+  "status": "DONE",
+  "lane": "safe",
+  "terms": {
+    "version": 1,
+    "direction": "COUNTER_TO_BCH",
+    "bchToken": "PUSD",
+    "bchTokenCategory": "0xec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac",
+    "bchTokenAmount": "991",
+    "counterAmount": "10000000",
+    "counterChain": "base",
+    "counterNetworkId": 84532,
+    "counterAsset": {
+      "symbol": "USDC",
+      "decimals": 6,
+      "address": "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
+    },
+    "counterHtlc": "0x5a0c062f4b7b8ff2263530e12bc15de9c836a641",
+    "userCounterAddress": "0xdf1e22fc38864c8b3f1bdb44029a75bc1cd9dc23",
+    "solverCounterAddress": "0xc9ec91859bdb598dc2eee715934d8231478f7a70",
+    "userBchLockingBytecode": "0x76a9147e2b4a4a04bdcd69d1e810833aad89559ff70f7d88ac",
+    "solverBchLockingBytecode": "0x76a914a233d928f9c102d42483b21969a4f8134eb3892988ac",
+    "hashLock": "0xe9fe1f2c4db49cfc8a0b36f8069372448dc0970dd9e38845857efeee4ab1fd92",
+    "counterDeadline": 1793277605,
+    "bchRefundHeight": 329895,
+    "bchCarrySats": "3000",
+    "bchMaxFee": "1500",
+    "quoteId": "quote-1793191205-nyg0a2",
+    "quoteExpiry": 1793191325
+  },
+  "signature": "0x873aa4c4697d8395b3e8ef232eecd561058a3f43b483bd283612de6c0ba628d5019d93528fc3a18254bb2e73d23e7f5e4e2824542997b2acd33119bd39fb0f531b",
+  "signerAddress": "0xc9ec91859bdb598dc2eee715934d8231478f7a70",
+  "txIds": {
+    "userLockTxId": "0xa36366265fcc431977fcb9846a4da0b83ed60e568a9c4c7691e2116d3cbda993",
+    "solverLockTxId": "2ba34e3de04427caa1591c04050c1a45429be7624421fc9d0d6fba435696e0d3",
+    "userClaimTxId": "83e8802dfbbee119857741042f699a2a0f6d5e912ee287d5c2870ce43cc719e1",
+    "solverClaimTxId": "0x38a197d3a19445658ea54d87516c7a65424d976cfee384bb347df63fc589a70e"
+  },
+  "bchLock": {
+    "txid": "2ba34e3de04427caa1591c04050c1a45429be7624421fc9d0d6fba435696e0d3",
+    "vout": 0,
+    "satoshis": "3000"
+  },
+  "deadlines": {
+    "quoteExpiry": 1793191325,
+    "counterDeadline": 1793277605,
+    "bchRefundHeight": 329895
+  },
+  "rejectionReason": "EVM lock claimed in unexpected order state",
+  "updatedAt": 1793191256190
+}

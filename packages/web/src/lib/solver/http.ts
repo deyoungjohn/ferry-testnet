@@ -61,6 +61,28 @@ function splitPermitSignature(signature: `0x${string}`): {
   };
 }
 
+const TIMESTAMP_KEYS = new Set(['updatedAt', 'createdAt', 'settledAt', 'asOf']);
+
+/**
+ * Accept both units while an older solver still sends milliseconds
+ *. Converts known timestamp fields at the top level and inside
+ * list items before the schema sees them.
+ */
+export function normalizeTimestamps(value: unknown, depth = 0): unknown {
+  if (depth > 3 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeTimestamps(item, depth + 1));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    out[key] =
+      TIMESTAMP_KEYS.has(key) && typeof item === 'number'
+        ? toSeconds(item)
+        : normalizeTimestamps(item, depth + 1);
+  }
+  return out;
+}
+
 /** The solver stores milliseconds; the page works in seconds. */
 export function toSeconds(timestamp: number): number {
   return timestamp > 1e12 ? Math.floor(timestamp / 1_000) : timestamp;
@@ -214,7 +236,7 @@ export class HttpSolverClient implements SolverClient {
         `HTTP_${response.status.toString()}`,
       );
     }
-    return schema.parse(body);
+    return schema.parse(normalizeTimestamps(body));
   }
 
   #assertQuoteConfig(): void {

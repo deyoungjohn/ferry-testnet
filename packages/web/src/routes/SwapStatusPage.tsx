@@ -64,6 +64,9 @@ export function SwapStatusPage() {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [localFallback, setLocalFallback] = useState(false);
+  const [refreshProblem, setRefreshProblem] = useState<SolverFailure | null>(
+    null,
+  );
   const [localSolverLive, setLocalSolverLive] = useState(false);
   const [claimPhase, setClaimPhase] = useState<
     'idle' | 'claiming' | 'onchain' | 'stalled'
@@ -96,15 +99,23 @@ export function SwapStatusPage() {
         setOrder(next);
         setError(null);
         setLocalFallback(false);
+        setRefreshProblem(null);
         void saveOrderRecord(next, solverIsLive());
       } catch (cause) {
         if (!active) return;
         const local = await loadOrderRecord(id);
         if (!active) return;
         if (local) {
+          const failure = describeSolverError(
+            cause,
+            'Could not load this order',
+          );
           setOrder(local);
           setError(null);
           setLocalFallback(true);
+          setRefreshProblem(
+            failure.code === 'ORDER_NOT_FOUND' ? null : failure,
+          );
           setLocalSolverLive(local.solverLive);
         } else {
           setError(describeSolverError(cause, 'Could not load this order'));
@@ -568,9 +579,14 @@ export function SwapStatusPage() {
           className="mt-6 rounded-well border border-warn/25 bg-warn/5 px-4 py-3 text-[11px] leading-5 text-warn"
         >
           <p className="font-medium">
-            The solver has no record of this order (it may have been restarted).
+            {refreshProblem
+              ? `Can't refresh this order from the solver: ${refreshProblem.sentence}`
+              : 'The solver has no record of this order (it may have been restarted).'}
           </p>
           <p className="mt-1">
+            {refreshProblem
+              ? `${refreshProblem.nextStep} The page retries every few seconds and may be out of date. Code: ${refreshProblem.code ?? 'none'}. `
+              : ''}
             Showing the last record saved in this browser. The recovery file and
             recovery page remain available.
           </p>
