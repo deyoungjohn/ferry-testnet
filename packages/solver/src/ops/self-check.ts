@@ -145,6 +145,14 @@ export async function runStartupSelfCheck(
     );
   }
   const htlcCodeHash = keccak256(htlcBytecode);
+  if (
+    config.expectedHtlcCodeHash &&
+    htlcCodeHash.toLowerCase() !== config.expectedHtlcCodeHash.toLowerCase()
+  ) {
+    throw new StartupSelfCheckError(
+      `FerryHTLC contract code hash mismatch at address ${htlcAddress}: got ${htlcCodeHash}, expected ${config.expectedHtlcCodeHash}`,
+    );
+  }
 
   const usdcAddress = config.baseUsdcAddress as `0x${string}`;
   const usdcBytecode = await publicClient.getBytecode({ address: usdcAddress });
@@ -220,11 +228,45 @@ export async function runStartupSelfCheck(
     }
   }
 
-  // 6. Verify Operator Token on mainnet
+  // 6. Verify Mainnet Invariants (Inventory, Operator Token, Quorum Redundancy)
   if (config.network === 'mainnet') {
+    // 6a. Operator Token
     if (!config.operatorToken || config.operatorToken.length < 32) {
       throw new StartupSelfCheckError(
         'OPERATOR_TOKEN with at least 32 characters is required on mainnet. Refusing to start.',
+      );
+    }
+
+    // 6b. Redundant Quorum (at least two independent Fulcrum hosts)
+    const urls = config.bchElectrumUrls
+      .split(',')
+      .map((u) => u.trim())
+      .filter(Boolean);
+    const hosts = new Set(
+      urls.map((u) => {
+        try {
+          return new URL(u).host.toLowerCase();
+        } catch {
+          return u.toLowerCase();
+        }
+      }),
+    );
+    if (hosts.size < 2) {
+      throw new StartupSelfCheckError(
+        `At least two independent Fulcrum hosts are required on mainnet (configured: ${hosts.size}). Refusing to start without redundant quorum.`,
+      );
+    }
+
+    // 6c. Non-empty inventory check
+    const isInventoryEmpty =
+      evmNativeWei === 0n ||
+      (bchSats !== undefined && bchSats === 0n) ||
+      (evmUsdcUnits === 0n &&
+        (bchTokenUnits === undefined || bchTokenUnits === 0n));
+
+    if (isInventoryEmpty) {
+      throw new StartupSelfCheckError(
+        `Empty solver inventory on mainnet: hot wallet has insufficient liquid balance to operate (EVM native gas: ${evmNativeWei.toString()} wei, Base USDC: ${evmUsdcUnits.toString()}, BCH: ${bchSats !== undefined ? bchSats.toString() : '0'} sats, BCH tokens: ${bchTokenUnits !== undefined ? bchTokenUnits.toString() : '0'}). Refusing to start without inventory.`,
       );
     }
   }

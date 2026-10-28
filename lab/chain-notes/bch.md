@@ -318,3 +318,14 @@ Script signers used the real UI against an isolated solver on `127.0.0.1:8790`; 
 | Reverse | Safe | `0x71240d04eb8389b1be6ee2187263d7109661c1a96fd9b1dd37b9e989ba248fba` | `dc0f739ff18e736f1903911a94b0cd4188bf8ae17b56194615e99e81cacc3732` | solver BCH claim `83595dd3923eb10cc15aaf419ef9a65cf0607722a89a9b12deca7a4fd9a62803` | quote+recovery 5.481 s; lock 1.119 s; confirmation wait 944.546 s (15m 44.5s); final 6.235 s; total 957.381 s |
 - The reverse safe lane spent 944.5 s in the expected single-confirmation wait; no wording/state correction was needed in this walk.
 - BCH explorer links for the user locks/claims resolve under `https://blockexplorer.cash/chipnet/tx/<txid>`.
+
+---
+
+## 2026-10-28 · BCH Mainnet Dual Fulcrum Live Read-Only Verification
+
+- Endpoints tested: `wss://bch.imaginary.cash:50004` and `wss://blackie.c3-soft.com:50004` (read-only quorum, no transactions).
+- Quorum verification: Both servers connect via WSS and return mainnet genesis hash `000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f`.
+- Liveness & Tip: Quorum client successfully queries tip height (> 800,000) and marks quorum healthy.
+- Solver startup self-check (`runStartupSelfCheck`) with throwaway key connects, verifies redundant quorum and genesis hash, and halts cleanly on empty inventory.
+- Test coverage: `packages/solver/test/mainnet-refusals.test.ts` opt-in via `FERRY_LIVE_TESTS=1` (with 30s timeout). Default test suite skips with an informative message to guarantee 100% offline runs.
+
