@@ -112,7 +112,7 @@ describe('Database Schema Migration', () => {
       name: string;
     }>;
     expect(colsAfter.some((c) => c.name === 'pay_link_id')).toBe(true);
-    expect(solverDb.db.pragma('user_version', { simple: true })).toBe(2);
+    expect(solverDb.db.pragma('user_version', { simple: true })).toBe(3);
 
     // Verify index was created
     const indices = solverDb.db

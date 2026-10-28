@@ -136,7 +136,7 @@ describe('Stats, Recent Swaps & Pegs Endpoints', () => {
     });
 
     it('accurately calculates completedSwaps, volume, and medianFastSeconds from completed orders', async () => {
-      const now = Date.now();
+      const now = Math.floor(Date.now() / 1000);
 
       // Safe swap: $10 (10,000,000 micros), duration 40s
       const terms1 = createMockTerms(10000000n, 1);
@@ -152,7 +152,7 @@ describe('Stats, Recent Swaps & Pegs Endpoints', () => {
           '0x1111111111111111111111111111111111111111111111111111111111111111',
         solverLockTxId:
           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        createdAt: now - 40000,
+        createdAt: now - 40,
         updatedAt: now,
       });
 
@@ -170,7 +170,7 @@ describe('Stats, Recent Swaps & Pegs Endpoints', () => {
           '0x2222222222222222222222222222222222222222222222222222222222222222',
         solverLockTxId:
           'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-        createdAt: now - 10000,
+        createdAt: now - 10,
         updatedAt: now,
       });
 
@@ -188,7 +188,7 @@ describe('Stats, Recent Swaps & Pegs Endpoints', () => {
           '0x3333333333333333333333333333333333333333333333333333333333333333',
         solverLockTxId:
           'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-        createdAt: now - 16000,
+        createdAt: now - 16,
         updatedAt: now,
       });
 
@@ -202,7 +202,7 @@ describe('Stats, Recent Swaps & Pegs Endpoints', () => {
         lane: 'fast',
         terms: terms4,
         hashLock: terms4.hashLock,
-        createdAt: now - 5000,
+        createdAt: now - 5,
         updatedAt: now,
       });
 

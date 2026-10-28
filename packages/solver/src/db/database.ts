@@ -24,12 +24,13 @@ export interface ActionRecord {
 }
 
 /**
- * Normalizes any timestamp to Unix timestamp in seconds.
- * Values >= 1e11 are treated as milliseconds and converted to seconds.
+ * Normalizes any timestamp to integer Unix timestamp in seconds.
+ * Note: Schema migration v3 rewrites all historical millisecond values to seconds in SQLite,
+ * so unit sniffing (> 1e11) is removed and database timestamps are strictly integer seconds.
  */
 export function toSeconds(ts: number | null | undefined): number {
   if (ts === null || ts === undefined || isNaN(ts)) return 0;
-  return ts > 100_000_000_000 ? Math.floor(ts / 1000) : Math.floor(ts);
+  return Math.floor(ts);
 }
 
 export interface PayLinkRecord {
@@ -126,14 +127,32 @@ export class SolverDatabase {
           PRIMARY KEY (order_id, action)
         );
       `);
+
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+        CREATE INDEX IF NOT EXISTS idx_orders_lock_id ON orders(lock_id);
+        CREATE INDEX IF NOT EXISTS idx_orders_pay_link_id ON orders(pay_link_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_user_hashlock ON orders(user_counter_address, hash_lock);
+        CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status);
+        CREATE INDEX IF NOT EXISTS idx_pay_links_recipient ON pay_links(recipient_cashaddr);
+        CREATE INDEX IF NOT EXISTS idx_pay_links_status ON pay_links(status);
+        CREATE INDEX IF NOT EXISTS idx_pay_links_order_id ON pay_links(order_id);
+      `);
+
+      this.db.pragma('user_version = 3');
+      return;
     } else {
       // Existing database: run schema migrations before creating any new indexes
+      const currentVersion = this.db.pragma('user_version', {
+        simple: true,
+      }) as number;
+
       const columns = this.db.pragma('table_info(orders)') as Array<{
         name: string;
       }>;
       const colNames = new Set(columns.map((c) => c.name));
 
-      // Migration v1 -> v2: pay_link_id column on orders
+      // Migration v1 -> v2: pay_link_id column on orders and missing tables
       if (!colNames.has('pay_link_id')) {
         this.db.exec('ALTER TABLE orders ADD COLUMN pay_link_id TEXT;');
       }
@@ -187,6 +206,22 @@ export class SolverDatabase {
           PRIMARY KEY (order_id, action)
         );
       `);
+
+      // Migration v2 -> v3: rewrite millisecond timestamps (> 1e11) to integer seconds.
+      // This fixes raw SQL sorting (ORDER BY created_at) and age calculations (MIN(created_at))
+      // which previously mixed milliseconds (~1.79e12) and seconds (~1.79e9).
+      if (currentVersion < 3) {
+        this.db.exec(`
+          UPDATE orders SET created_at = CAST(created_at / 1000 AS INTEGER) WHERE created_at > 100000000000;
+          UPDATE orders SET updated_at = CAST(updated_at / 1000 AS INTEGER) WHERE updated_at > 100000000000;
+          UPDATE orders SET first_seen_at = CAST(first_seen_at / 1000 AS INTEGER) WHERE first_seen_at IS NOT NULL AND first_seen_at > 100000000000;
+          UPDATE pay_links SET created_at = CAST(created_at / 1000 AS INTEGER) WHERE created_at > 100000000000;
+          UPDATE pay_links SET updated_at = CAST(updated_at / 1000 AS INTEGER) WHERE updated_at > 100000000000;
+          UPDATE pay_links SET expires_at = CAST(expires_at / 1000 AS INTEGER) WHERE expires_at IS NOT NULL AND expires_at > 100000000000;
+          UPDATE actions SET created_at = CAST(created_at / 1000 AS INTEGER) WHERE created_at > 100000000000;
+          UPDATE actions SET updated_at = CAST(updated_at / 1000 AS INTEGER) WHERE updated_at > 100000000000;
+        `);
+      }
     }
 
     // Now all tables and columns are guaranteed to exist; create indexes
@@ -202,7 +237,7 @@ export class SolverDatabase {
     `);
 
     // Record schema user_version
-    this.db.pragma('user_version = 2');
+    this.db.pragma('user_version = 3');
   }
 
   saveOrder(order: SolverOrderRecord): void {
@@ -421,7 +456,7 @@ export class SolverDatabase {
   }
 
   getOldestNonTerminalOrderAgeSeconds(
-    nowInput: number = Date.now(),
+    nowInput: number = Math.floor(Date.now() / 1000),
   ): number | null {
     const stmt = this.db.prepare(`
       SELECT MIN(created_at) as oldest_created_at
@@ -448,7 +483,9 @@ export class SolverDatabase {
     return row?.count ?? 0;
   }
 
-  getNeedsAttentionOrdersSummary(nowInput: number = Date.now()): Array<{
+  getNeedsAttentionOrdersSummary(
+    nowInput: number = Math.floor(Date.now() / 1000),
+  ): Array<{
     orderId: string;
     direction: 'BCH_TO_COUNTER' | 'COUNTER_TO_BCH';
     status: ForwardOrderStatus;
@@ -517,7 +554,7 @@ export class SolverDatabase {
     action: string,
     intentPayload: unknown,
   ): void {
-    const now = Date.now();
+    const now = Math.floor(Date.now() / 1000);
     const payloadStr =
       typeof intentPayload === 'string'
         ? intentPayload
@@ -536,7 +573,7 @@ export class SolverDatabase {
   }
 
   recordActionBroadcast(orderId: string, action: string, txId: string): void {
-    const now = Date.now();
+    const now = Math.floor(Date.now() / 1000);
     const stmt = this.db.prepare(`
       UPDATE actions
       SET status = 'BROADCAST', txid = ?, updated_at = ?
@@ -546,7 +583,7 @@ export class SolverDatabase {
   }
 
   recordActionConfirmed(orderId: string, action: string, txId: string): void {
-    const now = Date.now();
+    const now = Math.floor(Date.now() / 1000);
     const stmt = this.db.prepare(`
       UPDATE actions
       SET status = 'CONFIRMED', txid = ?, updated_at = ?
@@ -556,7 +593,7 @@ export class SolverDatabase {
   }
 
   recordActionFailed(orderId: string, action: string): void {
-    const now = Date.now();
+    const now = Math.floor(Date.now() / 1000);
     const stmt = this.db.prepare(`
       UPDATE actions
       SET status = 'FAILED', updated_at = ?

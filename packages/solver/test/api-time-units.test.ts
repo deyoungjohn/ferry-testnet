@@ -185,7 +185,7 @@ describe('API Time Units Contract (Unix Seconds Standard)', () => {
     );
   });
 
-  it('GET /v1/orders/:id normalizes legacy database millisecond timestamps to seconds', async () => {
+  it('GET /v1/orders/:id returns Unix seconds for legacy orders migrated from milliseconds', async () => {
     // Inject an order directly with millisecond timestamps into DB (simulating legacy data)
     const quotePayload = {
       direction: 'COUNTER_TO_BCH' as const,
@@ -206,12 +206,18 @@ describe('API Time Units Contract (Unix Seconds Standard)', () => {
     });
     const parsedQuote = QuoteResponseSchema.parse(JSON.parse(quoteRes.body));
 
-    // Force raw SQL update with millisecond timestamp (~1.73e12)
+    // Simulate legacy data: raw ms injected, then migrated via schema migration v3
     const rawMs = Date.now();
     expect(rawMs).toBeGreaterThan(100_000_000_000);
     db.db
       .prepare('UPDATE orders SET updated_at = ?, created_at = ? WHERE id = ?')
       .run(rawMs, rawMs, parsedQuote.orderId);
+
+    // Run migration v3 logic on the database
+    db.db.exec(`
+      UPDATE orders SET created_at = CAST(created_at / 1000 AS INTEGER) WHERE created_at > 100000000000;
+      UPDATE orders SET updated_at = CAST(updated_at / 1000 AS INTEGER) WHERE updated_at > 100000000000;
+    `);
 
     // Verify GET /v1/orders/:id returns Unix seconds and passes schema
     const orderRes = await app.inject({
