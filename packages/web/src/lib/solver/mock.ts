@@ -686,7 +686,7 @@ export class MockSolverClient implements SolverClient {
       if (this.#scenario === 'refund') {
         order = this.#refundFixture(id);
       } else {
-        throw new Error('Order not found');
+        throw new SolverError('ORDER_NOT_FOUND', 'Order not found');
       }
     }
     if (this.#holdStatus && order.status === this.#holdStatus) {

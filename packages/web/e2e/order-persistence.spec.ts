@@ -44,10 +44,11 @@ test('an unknown order still explains that no local record exists', async ({
   page,
 }) => {
   await page.goto(`/swap/0x${'99'.repeat(32)}?mock=1`);
-  await expect(page.getByText(/order not found/i)).toBeVisible({
-    timeout: 15_000,
-  });
   await expect(
-    page.getByText(/solver has no record of this order/i),
+    page.getByText('The solver has no record of this order.'),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('Code: ORDER_NOT_FOUND')).toBeVisible();
+  await expect(
+    page.getByText(/Showing the last record saved in this browser/i),
   ).toHaveCount(0);
 });
