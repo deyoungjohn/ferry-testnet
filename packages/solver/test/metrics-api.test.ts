@@ -82,7 +82,7 @@ describe('Solver Metrics & Operator Alerts API', () => {
     });
   }
 
-  const seedSampleOrders = (now: number = Date.now()) => {
+  const seedSampleOrders = (now: number = Math.floor(Date.now() / 1000)) => {
     // 1. Quoted order
     const quotedOrder: SolverOrderRecord = {
       id: '0xquoted-1',
@@ -93,11 +93,11 @@ describe('Solver Metrics & Operator Alerts API', () => {
         counterAmount: 25_000_000n, // $25.00
         bchTokenAmount: 24_8500n,
         hashLock: sha256('0xsecret1'),
-        quoteExpiry: Math.floor(now / 1000) + 60,
+        quoteExpiry: now + 60,
       }),
       hashLock: sha256('0xsecret1'),
-      createdAt: now - 30_000,
-      updatedAt: now - 30_000,
+      createdAt: now - 30,
+      updatedAt: now - 30,
     };
     db.saveOrder(quotedOrder);
 
@@ -111,11 +111,11 @@ describe('Solver Metrics & Operator Alerts API', () => {
         counterAmount: 50_000_000n, // $50.00
         bchTokenAmount: 49_7500n,
         hashLock: sha256('0xsecret2'),
-        quoteExpiry: Math.floor(now / 1000) + 60,
+        quoteExpiry: now + 60,
       }),
       hashLock: sha256('0xsecret2'),
-      createdAt: now - 120_000, // 2 minutes ago (oldest non-terminal)
-      updatedAt: now - 100_000,
+      createdAt: now - 120, // 2 minutes ago (oldest non-terminal)
+      updatedAt: now - 100,
     };
     db.saveOrder(activeOrder);
 
@@ -136,12 +136,12 @@ describe('Solver Metrics & Operator Alerts API', () => {
         counterAmount: 10_000_000n,
         bchTokenAmount: 9_9000n,
         hashLock: sampleHashLock3,
-        quoteExpiry: Math.floor(now / 1000) - 100,
+        quoteExpiry: now - 100,
       }),
       hashLock: sampleHashLock3,
       userLockTxId: '0xuser-bch-txid-1234',
-      createdAt: now - 300_000,
-      updatedAt: now - 50_000,
+      createdAt: now - 300,
+      updatedAt: now - 50,
     };
     db.saveOrder(alertOrder);
 
@@ -155,11 +155,11 @@ describe('Solver Metrics & Operator Alerts API', () => {
         counterAmount: 20_000_000n,
         bchTokenAmount: 19_8000n,
         hashLock: sha256('0xsecret4'),
-        quoteExpiry: Math.floor(now / 1000) - 200,
+        quoteExpiry: now - 200,
       }),
       hashLock: sha256('0xsecret4'),
-      createdAt: now - 400_000,
-      updatedAt: now - 350_000,
+      createdAt: now - 400,
+      updatedAt: now - 350,
     };
     db.saveOrder(doneOrder);
   };

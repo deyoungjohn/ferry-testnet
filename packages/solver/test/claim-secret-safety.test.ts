@@ -403,7 +403,7 @@ describe('Claim Secret Safety & Action Rebuild', () => {
       // Artificially age the action
       db.db
         .prepare('UPDATE actions SET updated_at = ? WHERE order_id = ?')
-        .run(Date.now() - 5 * 60 * 1000, orderId);
+        .run(Math.floor(Date.now() / 1000) - 5 * 60, orderId);
 
       const mockBchClient = {
         broadcast: vi.fn().mockResolvedValue('freshbuilt'),
@@ -744,7 +744,7 @@ describe('Claim Secret Safety & Action Rebuild', () => {
       db.recordActionBroadcast(orderId, 'SOLVER_LOCK', lockTxId);
       db.db
         .prepare('UPDATE actions SET updated_at = ? WHERE order_id = ?')
-        .run(Date.now() - 12 * 60 * 1000, orderId);
+        .run(Math.floor(Date.now() / 1000) - 12 * 60, orderId);
 
       // Quorum client: Server 0 did not see it, Server 1 HAS seen it in mempool!
       const mockBchClient = {
@@ -817,7 +817,7 @@ describe('Claim Secret Safety & Action Rebuild', () => {
       db.recordActionBroadcast(orderId, 'SOLVER_LOCK', lockTxId);
       db.db
         .prepare('UPDATE actions SET updated_at = ? WHERE order_id = ?')
-        .run(Date.now() - 15 * 60 * 1000, orderId);
+        .run(Math.floor(Date.now() / 1000) - 15 * 60, orderId);
 
       const mockBchClient = {
         checkTxAcrossQuorum: vi.fn().mockResolvedValue({
@@ -904,7 +904,7 @@ describe('Claim Secret Safety & Action Rebuild', () => {
       db.recordActionBroadcast(orderId, 'SOLVER_LOCK', originalTxId);
       db.db
         .prepare('UPDATE actions SET updated_at = ? WHERE order_id = ?')
-        .run(Date.now() - 15 * 60 * 1000, orderId);
+        .run(Math.floor(Date.now() / 1000) - 15 * 60, orderId);
 
       // Now simulate:
       // 1. Quorum check: originalTxId is NOT found on any quorum server
@@ -1011,7 +1011,7 @@ describe('Claim Secret Safety & Action Rebuild', () => {
       db.recordActionBroadcast(orderId, 'SOLVER_LOCK', originalTxId);
       db.db
         .prepare('UPDATE actions SET updated_at = ? WHERE order_id = ?')
-        .run(Date.now() - 15 * 60 * 1000, orderId);
+        .run(Math.floor(Date.now() / 1000) - 15 * 60, orderId);
 
       const conflictingTxId = '66'.repeat(32);
       const solverKeys = await deriveBchKeyDetails(sampleWif);
@@ -1121,7 +1121,7 @@ describe('Claim Secret Safety & Action Rebuild', () => {
       db.recordActionBroadcast(orderId, 'SOLVER_LOCK', originalTxId);
       db.db
         .prepare('UPDATE actions SET updated_at = ? WHERE order_id = ?')
-        .run(Date.now() - 15 * 60 * 1000, orderId);
+        .run(Math.floor(Date.now() / 1000) - 15 * 60, orderId);
 
       const mockBchClient = {
         checkTxAcrossQuorum: vi.fn().mockResolvedValue({

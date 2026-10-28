@@ -722,3 +722,22 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
   6. *Web Fallback Deprecation:* Notified the team that solver wire output is guaranteed in Unix seconds, allowing the web client workaround (`toSeconds`) to be cleaned up.
 - **Evidence:** Vitest tests in `packages/core/test/api.test.ts` (9/9 passed) and `packages/solver/test/api-time-units.test.ts` (8/8 passed). Full offline solver test suite pass in unshared network namespace (20 test files passed, 196 passed, 2 skipped).
 - **Consequence for rebuild:** Never mix seconds and milliseconds across API boundaries; schemas must reject values above `1e11` at the type gate.
+
+---
+
+### D-A2-019 · PRAGMA user_version = 3 SQLite Schema Migration for Unix Seconds Normalization and Removal of Read-Time Unit Sniffing
+- **Context:** Earlier, solver exposed timestamps and write operations were standardized to integer Unix seconds. However, pre-existing database files (including the operator's live database at `packages/solver/data/solver.db`) still held historical records in milliseconds (~1.79e12). While read functions like `mapOrderRow` and `mapPayLinkRow` utilized `toSeconds` to sniff and floor millisecond timestamps, raw SQLite queries (`ORDER BY created_at ASC`, `SELECT MIN(created_at)`) evaluated stored numeric values directly. Because ~1.79e9 < ~1.79e12, newly placed orders in seconds sorted ahead of hours-old orders in milliseconds, and oldest-order age calculation returned ~0 seconds, breaking queue fairness and metric telemetry.
+- **Decision:**
+  1. *PRAGMA user_version = 3 Database Migration:* In `packages/solver/src/db/database.ts`, added a schema migration executing when `currentVersion < 3`. The migration divides all stored millisecond values (`> 100_000_000_000`) by 1000 using idempotent SQL updates (`CAST(column / 1000 AS INTEGER)`) across:
+     - `orders`: `created_at`, `updated_at`, `first_seen_at`
+     - `pay_links`: `created_at`, `updated_at`, `expires_at`
+     - `actions`: `created_at`, `updated_at`
+  2. *Schema Version Tracking:* Updated `PRAGMA user_version = 3` for fresh databases and upon migration completion.
+  3. *Removal of Read-Time Sniffing in `toSeconds`:* With all database columns migrated to integer Unix seconds at the persistence layer, runtime unit sniffing (`ts > 100_000_000_000 ? Math.floor(ts / 1000) : Math.floor(ts)`) was removed from `toSeconds`. Stored values are now trusted and normalized purely with `Math.floor(ts)`.
+  4. *Comprehensive Migration Test Suite:* Created `packages/solver/test/time-unit-migration.test.ts` verifying:
+     - Synthetic legacy database (user_version = 2): demonstrates raw SQL `ORDER BY created_at ASC` inversion and `MIN(created_at)` age distortion before migration; verifies that opening with `SolverDatabase` upgrades schema to version 3, corrects order sequencing (oldest first), accurately computes oldest-order age, and normalizes pay-link and action timestamps.
+     - Live database copy verification: verified against a safe temporary copy of the operator's actual live database (`/tmp/ferry-db-backup/solver.db`), proving that all 27 orders successfully migrate from milliseconds to integer Unix seconds (between 1.7e9 and 2.0e9) with zero millisecond timestamps remaining.
+     - API validation: started Fastify HTTP server on the migrated database and verified that `/v1/orders/:id`, `/v1/orders/recent`, and `/v1/operator/needs-attention` respond with strict Unix seconds validating against `@ferry/core` schemas.
+- **Evidence:** Vitest tests in `packages/solver/test/time-unit-migration.test.ts` (2/2 passed) and `packages/solver/test/api-time-units.test.ts` (8/8 passed). Full offline solver test suite pass in unshared network namespace (`unshare -rn bash -c "ip link set lo up; pnpm --filter @ferry/solver test"`: 21 test files passed, 198 tests passed, 2 skipped).
+- **Consequence for rebuild:** Fix historical time unit discrepancies at the persistence layer via explicit schema migrations rather than runtime read-side guards to preserve relational query semantics (sorting, min/max aggregations).
+
