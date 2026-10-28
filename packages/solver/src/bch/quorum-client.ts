@@ -532,6 +532,54 @@ export class BchQuorumClient implements DSProofWatcher {
     );
   }
 
+  /**
+   * Check whether a transaction exists in the mempool or confirmed blocks across all quorum clients.
+   * If seen on any client, returns found: true.
+   */
+  async checkTxAcrossQuorum(
+    txid: string,
+    scriptHash?: string,
+  ): Promise<{
+    found: boolean;
+    seenOnServers: string[];
+    totalConnected: number;
+  }> {
+    const seenOnServers: string[] = [];
+    let totalConnected = 0;
+
+    for (const client of this.clients) {
+      if (!client.isConnected()) continue;
+      totalConnected++;
+      try {
+        if (scriptHash) {
+          const history = await client.request<ElectrumHistoryEntry[]>(
+            'blockchain.scripthash.get_history',
+            [scriptHash],
+          );
+          if (history && history.some((h) => h.tx_hash === txid)) {
+            seenOnServers.push(client.url);
+            continue;
+          }
+        }
+        const tx = await client.request('blockchain.transaction.get', [
+          txid,
+          false,
+        ]);
+        if (tx) {
+          seenOnServers.push(client.url);
+        }
+      } catch {
+        // Not found or error on this client
+      }
+    }
+
+    return {
+      found: seenOnServers.length > 0,
+      seenOnServers,
+      totalConnected,
+    };
+  }
+
   async getDSProof(txid: string): Promise<unknown | null> {
     try {
       return await this.executeWithFailover((client) =>

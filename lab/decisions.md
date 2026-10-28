@@ -666,3 +666,20 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** `wait-states.spec.ts` and `wait-state.test.ts`; mock status timing now records the transition time so elapsed/stall behavior is deterministic.
 - **Consequence for rebuild:** Define wait copy from the state machine and expected chain confirmation, not from a generic spinner; display user completion and solver completion independently.
 - **Revisit if:** The solver exposes a per-step expected duration or the BCH confirmation target changes.
+
+---
+
+### D-A2-016 · Quorum-Verified Stale Broadcast Policy, Differentiated Lock Timeouts, and Input Spent-State Adoption
+- **Context:** closing risk: the 3-minute stale broadcast rebuild rule from the earlier fix applied to forward `SOLVER_LOCK`. If a broadcast lock is slow to propagate or seen on one Fulcrum node but missing on another, rebuilding after 3 minutes reuses the same input UTXOs, creating a double-spend race where one lock loses and the order could record a losing txid.
+- **Decision:**
+  1. *Differentiated Timeouts:* Set `STALE_LOCK_TIMEOUT_MS = 10 * 60 * 1000` (10 minutes) for locks vs `STALE_CLAIM_TIMEOUT_MS = 3 * 60 * 1000` (3 minutes) for claims. Lock transactions fund contracts with multi-input UTXOs and require greater tolerance for peer propagation.
+  2. *Quorum Node Verification:* Added `checkTxAcrossQuorum` to `BchQuorumClient` querying all connected servers in parallel. A transaction is only declared stale if it is absent across all quorum servers. If seen on any peer, the transaction is retained as valid, and rebroadcast to assist propagation to lagging peers.
+  3. *Input Spent State Inspection & Winning Spend Adoption (`checkLockInputsSpentState`):*
+     - Before deleting a stale lock action or resetting `SOLVER_LOCK_BROADCAST`, the engine decodes input outpoints from `txHex` and checks `listUnspent`.
+     - If inputs are still unspent, it is safe to delete the action and rebuild with fresh UTXOs.
+     - If inputs are spent, an alternative spend exists on the network: the engine queries HTLC covenant history (`getHistory(htlcScriptHash)`). If a transaction in HTLC history spent the inputs, the engine adopts it as the winning lock transaction, updates `order.solverLockTxId`, and avoids duplicate broadcast.
+     - If inputs were spent by a conflicting transaction that did not fund the HTLC, the engine halts blind rebuilds, sets `order.needsAttention = true`, populates `order.rejectionReason`, and logs an error alert.
+  4. *Startup Self-Heal Integration:* `selfHealBroadcastOrders()` executes quorum and input spent-state verification before resetting forward `SOLVER_LOCK_BROADCAST` to `USER_LOCK_FINAL`.
+- **Evidence:** Vitest tests in `packages/solver/test/claim-secret-safety.test.ts` (20/20 tests green), including slow-propagating locks, lagging quorum nodes, winning spend adoption from HTLC history, and conflict detection. End-to-end chipnet proof recorded in `lab/chain-notes/bch.md` (order `0x160edccd…`, 20.94s total swap, secret preimage validated, script VM verified).
+- **Consequence for rebuild:** Multi-input covenant broadcast recovery must never rely on a single node or blind timer; verify quorum visibility and inspect input outpoints against contract history before re-selecting UTXOs.
+

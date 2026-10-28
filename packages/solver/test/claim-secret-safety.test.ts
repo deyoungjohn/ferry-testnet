@@ -13,11 +13,17 @@ import {
   encodeHtlcParameters,
   buildClaimTransaction,
   buildRefundTransaction,
+  buildLockTransaction,
   verifyClaimTransactionHex,
   verifyRefundTransactionHex,
 } from '@ferry/htlc-bch';
 import { SolverDatabase } from '../src/db/database.js';
-import { SolverEngine } from '../src/engine/runner.js';
+import { deriveBchKeyDetails } from '../src/bch/lock-builder.js';
+import {
+  SolverEngine,
+  STALE_CLAIM_TIMEOUT_MS,
+  STALE_LOCK_TIMEOUT_MS,
+} from '../src/engine/runner.js';
 import { transition } from '../src/state-machine/transitions.js';
 import type { BchQuorumClient } from '../src/bch/quorum-client.js';
 import type { EvmChainAdapter } from '@ferry/chain-evm';
@@ -705,6 +711,462 @@ describe('Claim Secret Safety & Action Rebuild', () => {
 
       const action = db.getAction(orderId, 'SOLVER_LOCK');
       expect(action).toBeNull();
+    });
+  });
+
+  describe('6. Quorum Verification & Lock Input Spent State', () => {
+    it('enforces longer stale timeout for locks (10m) than claims (3m)', () => {
+      expect(STALE_LOCK_TIMEOUT_MS).toBe(10 * 60 * 1000);
+      expect(STALE_CLAIM_TIMEOUT_MS).toBe(3 * 60 * 1000);
+      expect(STALE_LOCK_TIMEOUT_MS).toBeGreaterThan(STALE_CLAIM_TIMEOUT_MS);
+    });
+
+    it('slow-propagating lock: seen on second quorum server is NOT declared stale and not rebuilt', async () => {
+      const terms = createTestTerms('COUNTER_TO_BCH');
+      const orderId = computeOrderId(terms);
+
+      db.saveOrder({
+        id: orderId,
+        direction: 'COUNTER_TO_BCH',
+        status: 'SOLVER_LOCK_BROADCAST',
+        terms,
+        hashLock,
+        createdAt: Date.now() - 12 * 60 * 1000,
+        updatedAt: Date.now() - 12 * 60 * 1000,
+      });
+
+      const lockTxId = '11'.repeat(32);
+      const lockTxHex = '0200000001mockhex';
+      db.recordActionIntent(orderId, 'SOLVER_LOCK', {
+        txid: lockTxId,
+        txHex: lockTxHex,
+      });
+      db.recordActionBroadcast(orderId, 'SOLVER_LOCK', lockTxId);
+      db.db
+        .prepare('UPDATE actions SET updated_at = ? WHERE order_id = ?')
+        .run(Date.now() - 12 * 60 * 1000, orderId);
+
+      // Quorum client: Server 0 did not see it, Server 1 HAS seen it in mempool!
+      const mockBchClient = {
+        checkTxAcrossQuorum: vi.fn().mockResolvedValue({
+          found: true,
+          seenOnServers: ['wss://server2:50004'],
+          totalConnected: 2,
+        }),
+        broadcast: vi.fn().mockResolvedValue(lockTxId),
+        getHistory: vi.fn().mockResolvedValue([]),
+        getTransaction: vi.fn().mockResolvedValue({ hex: lockTxHex }),
+        listUnspent: vi.fn().mockResolvedValue([]),
+      } as unknown as BchQuorumClient;
+
+      const engine = new SolverEngine(
+        db,
+        {} as EvmChainAdapter,
+        mockBchClient,
+        solverEvmKey,
+        sampleWif,
+        'testnet',
+      );
+
+      let rebuildCalled = false;
+      const result = await engine.executeOrAdoptBchTx({
+        orderId,
+        actionType: 'SOLVER_LOCK',
+        buildTx: async () => {
+          rebuildCalled = true;
+          return { txid: 'rebuilt', txHex: '0200...' };
+        },
+        isOnChain: async () => false,
+      });
+
+      // Crucial: NOT rebuilt!
+      expect(rebuildCalled).toBe(false);
+      expect(result.txid).toBe(lockTxId);
+      expect(result.adopted).toBe(false);
+
+      // Rebroadcast attempted to help propagation to lagging peer
+      expect(mockBchClient.broadcast).toHaveBeenCalledWith(lockTxHex);
+
+      // Action in DB still preserved
+      const action = db.getAction(orderId, 'SOLVER_LOCK');
+      expect(action).not.toBeNull();
+      expect(action?.status).toBe('BROADCAST');
+      expect(action?.txId).toBe(lockTxId);
+    });
+
+    it('node that lags: lagging quorum node does not cause premature rebuild if peer has tx', async () => {
+      const terms = createTestTerms('COUNTER_TO_BCH');
+      const orderId = computeOrderId(terms);
+
+      db.saveOrder({
+        id: orderId,
+        direction: 'COUNTER_TO_BCH',
+        status: 'SOLVER_LOCK_BROADCAST',
+        terms,
+        hashLock,
+        createdAt: Date.now() - 15 * 60 * 1000,
+        updatedAt: Date.now() - 15 * 60 * 1000,
+      });
+
+      const lockTxId = '22'.repeat(32);
+      const lockTxHex = '0200000001mockhex2';
+      db.recordActionIntent(orderId, 'SOLVER_LOCK', {
+        txid: lockTxId,
+        txHex: lockTxHex,
+      });
+      db.recordActionBroadcast(orderId, 'SOLVER_LOCK', lockTxId);
+      db.db
+        .prepare('UPDATE actions SET updated_at = ? WHERE order_id = ?')
+        .run(Date.now() - 15 * 60 * 1000, orderId);
+
+      const mockBchClient = {
+        checkTxAcrossQuorum: vi.fn().mockResolvedValue({
+          found: true,
+          seenOnServers: ['wss://node-healthy:50004'],
+          totalConnected: 2,
+        }),
+        broadcast: vi.fn().mockResolvedValue(lockTxId),
+        getHistory: vi.fn().mockResolvedValue([]),
+        getTransaction: vi.fn().mockResolvedValue({ hex: lockTxHex }),
+        listUnspent: vi.fn().mockResolvedValue([]),
+      } as unknown as BchQuorumClient;
+
+      const engine = new SolverEngine(
+        db,
+        {} as EvmChainAdapter,
+        mockBchClient,
+        solverEvmKey,
+        sampleWif,
+        'testnet',
+      );
+
+      let rebuildCalled = false;
+      const result = await engine.executeOrAdoptBchTx({
+        orderId,
+        actionType: 'SOLVER_LOCK',
+        buildTx: async () => {
+          rebuildCalled = true;
+          return { txid: 'rebuilt2', txHex: '0200...' };
+        },
+        isOnChain: async () => false,
+      });
+
+      expect(rebuildCalled).toBe(false);
+      expect(result.txid).toBe(lockTxId);
+    });
+
+    it('lock replaced by different spend of same inputs: adopts winning spend from HTLC history', async () => {
+      const terms = createTestTerms('COUNTER_TO_BCH');
+      const orderId = computeOrderId(terms);
+
+      db.saveOrder({
+        id: orderId,
+        direction: 'COUNTER_TO_BCH',
+        status: 'SOLVER_LOCK_BROADCAST',
+        terms,
+        hashLock,
+        createdAt: Date.now() - 15 * 60 * 1000,
+        updatedAt: Date.now() - 15 * 60 * 1000,
+      });
+
+      // Build real lock tx so decodeTransaction works
+      const utxos = [
+        {
+          txid: '33'.repeat(32),
+          vout: 0,
+          satoshis: 10000n,
+          token: {
+            category: terms.bchTokenCategory.replace(/^0x/, ''),
+            amount: terms.bchTokenAmount,
+          },
+        },
+        {
+          txid: '88'.repeat(32),
+          vout: 0,
+          satoshis: 50000n,
+        },
+      ];
+      const builtLock = buildLockTransaction({
+        params: terms,
+        utxos,
+        changeAddress: 'bchtest:qqau9rtdjtvsw0a4uwklfqtet6h5g67wa5zg9v08d8',
+        bchCarrySats: terms.bchCarrySats,
+        wif: sampleWif,
+        network: 'chipnet',
+      });
+      const originalTxId = builtLock.signed!.txid;
+      const originalTxHex = builtLock.signed!.txHex;
+
+      db.recordActionIntent(orderId, 'SOLVER_LOCK', {
+        txid: originalTxId,
+        txHex: originalTxHex,
+      });
+      db.recordActionBroadcast(orderId, 'SOLVER_LOCK', originalTxId);
+      db.db
+        .prepare('UPDATE actions SET updated_at = ? WHERE order_id = ?')
+        .run(Date.now() - 15 * 60 * 1000, orderId);
+
+      // Now simulate:
+      // 1. Quorum check: originalTxId is NOT found on any quorum server
+      // 2. listUnspent: input '33...:0' is GONE (spent!)
+      // 3. HTLC history: contains a winning spend '44'.repeat(32) that spent input '33...:0'
+      const winningTxId = '44'.repeat(32);
+
+      const mockBchClient = {
+        checkTxAcrossQuorum: vi.fn().mockResolvedValue({
+          found: false,
+          seenOnServers: [],
+          totalConnected: 2,
+        }),
+        broadcast: vi.fn(),
+        listUnspent: vi.fn().mockResolvedValue([]), // Input is spent!
+        getHistory: vi.fn().mockImplementation(() => {
+          // Return winningTxId in HTLC history
+          return Promise.resolve([{ tx_hash: winningTxId, height: 320000 }]);
+        }),
+        getTransaction: vi.fn().mockImplementation((txHash) => {
+          if (txHash === winningTxId) {
+            // Returns raw tx hex that spent '33...:0'
+            return Promise.resolve(originalTxHex);
+          }
+          return Promise.reject(new Error('not found'));
+        }),
+      } as unknown as BchQuorumClient;
+
+      const engine = new SolverEngine(
+        db,
+        {} as EvmChainAdapter,
+        mockBchClient,
+        solverEvmKey,
+        sampleWif,
+        'testnet',
+      );
+
+      let rebuildCalled = false;
+      const result = await engine.executeOrAdoptBchTx({
+        orderId,
+        actionType: 'SOLVER_LOCK',
+        buildTx: async () => {
+          rebuildCalled = true;
+          return { txid: 'rebuilt_bad', txHex: '0200...' };
+        },
+        isOnChain: async () => false,
+      });
+
+      // Must NOT rebuild! Must adopt winning spend from history!
+      expect(rebuildCalled).toBe(false);
+      expect(result.adopted).toBe(true);
+      expect(result.txid).toBe(winningTxId);
+
+      // Order solverLockTxId updated to winningTxId
+      const updatedOrder = db.getOrder(orderId)!;
+      expect(updatedOrder.solverLockTxId).toBe(winningTxId);
+    });
+
+    it('lock replaced by conflicting spend: detects conflict, surfaces needsAttention, refuses blind rebuild', async () => {
+      const terms = createTestTerms('COUNTER_TO_BCH');
+      const orderId = computeOrderId(terms);
+
+      db.saveOrder({
+        id: orderId,
+        direction: 'COUNTER_TO_BCH',
+        status: 'SOLVER_LOCK_BROADCAST',
+        terms,
+        hashLock,
+        createdAt: Date.now() - 15 * 60 * 1000,
+        updatedAt: Date.now() - 15 * 60 * 1000,
+      });
+
+      const utxos = [
+        {
+          txid: '55'.repeat(32),
+          vout: 0,
+          satoshis: 10000n,
+          token: {
+            category: terms.bchTokenCategory.replace(/^0x/, ''),
+            amount: terms.bchTokenAmount,
+          },
+        },
+        {
+          txid: '88'.repeat(32),
+          vout: 0,
+          satoshis: 50000n,
+        },
+      ];
+      const builtLock = buildLockTransaction({
+        params: terms,
+        utxos,
+        changeAddress: 'bchtest:qqau9rtdjtvsw0a4uwklfqtet6h5g67wa5zg9v08d8',
+        bchCarrySats: terms.bchCarrySats,
+        wif: sampleWif,
+        network: 'chipnet',
+      });
+      const originalTxId = builtLock.signed!.txid;
+      const originalTxHex = builtLock.signed!.txHex;
+
+      db.recordActionIntent(orderId, 'SOLVER_LOCK', {
+        txid: originalTxId,
+        txHex: originalTxHex,
+      });
+      db.recordActionBroadcast(orderId, 'SOLVER_LOCK', originalTxId);
+      db.db
+        .prepare('UPDATE actions SET updated_at = ? WHERE order_id = ?')
+        .run(Date.now() - 15 * 60 * 1000, orderId);
+
+      const conflictingTxId = '66'.repeat(32);
+      const solverKeys = await deriveBchKeyDetails(sampleWif);
+
+      const mockBchClient = {
+        checkTxAcrossQuorum: vi.fn().mockResolvedValue({
+          found: false,
+          seenOnServers: [],
+          totalConnected: 2,
+        }),
+        broadcast: vi.fn(),
+        listUnspent: vi.fn().mockResolvedValue([]), // Input '55...' is spent!
+        getHistory: vi.fn().mockImplementation((sh: string) => {
+          // HTLC history is empty, but solver address history has conflictingTxId
+          if (sh === solverKeys.scriptHash) {
+            return Promise.resolve([
+              { tx_hash: conflictingTxId, height: 320000 },
+            ]);
+          }
+          return Promise.resolve([]);
+        }),
+        getTransaction: vi.fn().mockImplementation((txHash) => {
+          if (txHash === conflictingTxId) {
+            // Conflicting tx that spent '55...:0'
+            return Promise.resolve(originalTxHex);
+          }
+          return Promise.reject(new Error('not found'));
+        }),
+      } as unknown as BchQuorumClient;
+
+      const engine = new SolverEngine(
+        db,
+        {} as EvmChainAdapter,
+        mockBchClient,
+        solverEvmKey,
+        sampleWif,
+        'testnet',
+      );
+
+      let rebuildCalled = false;
+      await expect(
+        engine.executeOrAdoptBchTx({
+          orderId,
+          actionType: 'SOLVER_LOCK',
+          buildTx: async () => {
+            rebuildCalled = true;
+            return { txid: 'rebuilt_bad', txHex: '0200...' };
+          },
+          isOnChain: async () => false,
+        }),
+      ).rejects.toThrow(/conflicting transaction/);
+
+      // Must NOT rebuild with spent inputs!
+      expect(rebuildCalled).toBe(false);
+
+      // Order must be marked needsAttention = true
+      const updatedOrder = db.getOrder(orderId)!;
+      expect(updatedOrder.needsAttention).toBe(true);
+      expect(updatedOrder.rejectionReason).toContain('conflicting transaction');
+    });
+
+    it('lock with unspent inputs after stale timeout is deleted and rebuilt cleanly', async () => {
+      const terms = createTestTerms('COUNTER_TO_BCH');
+      const orderId = computeOrderId(terms);
+
+      db.saveOrder({
+        id: orderId,
+        direction: 'COUNTER_TO_BCH',
+        status: 'SOLVER_LOCK_BROADCAST',
+        terms,
+        hashLock,
+        createdAt: Date.now() - 15 * 60 * 1000,
+        updatedAt: Date.now() - 15 * 60 * 1000,
+      });
+
+      const utxos = [
+        {
+          txid: '77'.repeat(32),
+          vout: 0,
+          satoshis: 10000n,
+          token: {
+            category: terms.bchTokenCategory.replace(/^0x/, ''),
+            amount: terms.bchTokenAmount,
+          },
+        },
+        {
+          txid: '88'.repeat(32),
+          vout: 0,
+          satoshis: 50000n,
+        },
+      ];
+      const builtLock = buildLockTransaction({
+        params: terms,
+        utxos,
+        changeAddress: 'bchtest:qqau9rtdjtvsw0a4uwklfqtet6h5g67wa5zg9v08d8',
+        bchCarrySats: terms.bchCarrySats,
+        wif: sampleWif,
+        network: 'chipnet',
+      });
+      const originalTxId = builtLock.signed!.txid;
+      const originalTxHex = builtLock.signed!.txHex;
+
+      db.recordActionIntent(orderId, 'SOLVER_LOCK', {
+        txid: originalTxId,
+        txHex: originalTxHex,
+      });
+      db.recordActionBroadcast(orderId, 'SOLVER_LOCK', originalTxId);
+      db.db
+        .prepare('UPDATE actions SET updated_at = ? WHERE order_id = ?')
+        .run(Date.now() - 15 * 60 * 1000, orderId);
+
+      const mockBchClient = {
+        checkTxAcrossQuorum: vi.fn().mockResolvedValue({
+          found: false,
+          seenOnServers: [],
+          totalConnected: 2,
+        }),
+        broadcast: vi.fn().mockResolvedValue('rebuilt_lock_txid'),
+        // Input '77...:0' is STILL UNSPENT!
+        listUnspent: vi.fn().mockResolvedValue([
+          {
+            tx_hash: '77'.repeat(32),
+            tx_pos: 0,
+            value: 10000,
+          },
+        ]),
+        getHistory: vi.fn().mockResolvedValue([]),
+        getTransaction: vi.fn().mockRejectedValue(new Error('not found')),
+      } as unknown as BchQuorumClient;
+
+      const engine = new SolverEngine(
+        db,
+        {} as EvmChainAdapter,
+        mockBchClient,
+        solverEvmKey,
+        sampleWif,
+        'testnet',
+      );
+
+      let rebuildCalled = false;
+      const result = await engine.executeOrAdoptBchTx({
+        orderId,
+        actionType: 'SOLVER_LOCK',
+        buildTx: async () => {
+          rebuildCalled = true;
+          return { txid: 'rebuilt_lock_txid', txHex: '020000rebuilt...' };
+        },
+        isOnChain: async () => false,
+      });
+
+      // Since inputs were still unspent and stale timeout reached on both quorum servers:
+      // It is safe to rebuild!
+      expect(rebuildCalled).toBe(true);
+      expect(result.txid).toBe('rebuilt_lock_txid');
+      expect(mockBchClient.broadcast).toHaveBeenCalledWith('020000rebuilt...');
     });
   });
 });

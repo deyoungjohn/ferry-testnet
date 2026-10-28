@@ -29,6 +29,9 @@ import {
   extractSecretFromClaimUnlock,
 } from '../bch/lock-builder.js';
 
+export const STALE_CLAIM_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+export const STALE_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes (longer for locks than claims)
+
 export interface SolverMetrics {
   reactionTimesMs: number[];
   lastReactionTimeMs: number;
@@ -401,6 +404,203 @@ export class SolverEngine {
     }
   }
 
+  public async isBchTxInMempoolOrChainAcrossQuorum(
+    txid: string,
+    scriptHash?: string,
+  ): Promise<{
+    found: boolean;
+    seenOnServers: string[];
+    totalConnected: number;
+  }> {
+    if (
+      typeof (this.bchClient as unknown as { checkTxAcrossQuorum?: unknown })
+        .checkTxAcrossQuorum === 'function'
+    ) {
+      return (
+        this.bchClient as unknown as {
+          checkTxAcrossQuorum: (
+            id: string,
+            sh?: string,
+          ) => Promise<{
+            found: boolean;
+            seenOnServers: string[];
+            totalConnected: number;
+          }>;
+        }
+      ).checkTxAcrossQuorum(txid, scriptHash);
+    }
+    const found = await this.isBchTxInMempoolOrChain(txid, scriptHash);
+    return {
+      found,
+      seenOnServers: found ? ['default'] : [],
+      totalConnected: 1,
+    };
+  }
+
+  public async checkLockInputsSpentState(
+    orderId: string,
+    txid: string,
+    txHex: string,
+  ): Promise<{
+    handled: boolean;
+    adoptedTx?: { txid: string; txHex: string; adopted: boolean };
+    error?: string;
+  }> {
+    const order = this.db.getOrder(orderId);
+    if (!order) return { handled: false };
+
+    let decoded: ReturnType<typeof decodeTransaction>;
+    try {
+      decoded = decodeTransaction(Buffer.from(txHex, 'hex'));
+    } catch {
+      return { handled: false };
+    }
+    if (typeof decoded === 'string') {
+      return { handled: false };
+    }
+
+    const inputs = decoded.inputs.map((inp) => ({
+      txid: Buffer.from(inp.outpointTransactionHash).reverse().toString('hex'),
+      vout: inp.outpointIndex,
+    }));
+
+    const solverKeys = await deriveBchKeyDetails(this.solverBchWif);
+    const unspent = await this.bchClient.listUnspent(
+      solverKeys.scriptHash,
+      'include_tokens',
+    );
+
+    const allInputsUnspent = inputs.every((inp) =>
+      unspent.some((u) => u.tx_hash === inp.txid && u.tx_pos === inp.vout),
+    );
+
+    if (allInputsUnspent) {
+      // Inputs are still unspent! It is safe for the caller to delete the action and rebuild with fresh UTXOs.
+      return { handled: false };
+    }
+
+    // At least one input was spent! An alternative spend exists on the network: find it by history instead of rebuilding!
+    this.logger.info(
+      { orderId, txid, inputs },
+      'Solver lock input is no longer unspent; searching history for alternative spend instead of rebuilding',
+    );
+
+    const htlcScriptHash = await this.ensureBchSubscription(order);
+
+    // 1. Check HTLC history to see if an alternative transaction funded this order's HTLC
+    try {
+      const htlcHistory = await this.bchClient.getHistory(htlcScriptHash);
+      for (const h of htlcHistory) {
+        try {
+          const txData = await this.bchClient.getTransaction(h.tx_hash, false);
+          const rawHex =
+            typeof txData === 'string'
+              ? txData
+              : (txData as { hex?: string })?.hex;
+          if (rawHex) {
+            const hDecoded = decodeTransaction(Buffer.from(rawHex, 'hex'));
+            if (typeof hDecoded !== 'string') {
+              const spendsOurInput = hDecoded.inputs.some((inp) => {
+                const inTxId = Buffer.from(inp.outpointTransactionHash)
+                  .reverse()
+                  .toString('hex');
+                return inputs.some(
+                  (myInp) =>
+                    myInp.txid === inTxId && myInp.vout === inp.outpointIndex,
+                );
+              });
+              if (spendsOurInput) {
+                this.logger.info(
+                  { orderId, originalTxid: txid, winningTxid: h.tx_hash },
+                  'Found alternative winning lock transaction in HTLC history; adopting',
+                );
+                order.solverLockTxId = h.tx_hash;
+                this.db.saveOrder(order);
+                this.db.recordActionIntent(orderId, 'SOLVER_LOCK', {
+                  txid: h.tx_hash,
+                  txHex: rawHex,
+                });
+                this.db.recordActionBroadcast(
+                  orderId,
+                  'SOLVER_LOCK',
+                  h.tx_hash,
+                );
+                return {
+                  handled: true,
+                  adoptedTx: { txid: h.tx_hash, txHex: rawHex, adopted: true },
+                };
+              }
+            }
+          }
+        } catch {
+          // Continue checking next history entry
+        }
+      }
+    } catch (err) {
+      this.logger.warn({ err, orderId }, 'Failed checking HTLC history');
+    }
+
+    // 2. If not in HTLC history, check solver's address history to find the conflicting spend
+    try {
+      const solverHistory = await this.bchClient.getHistory(
+        solverKeys.scriptHash,
+      );
+      for (const h of solverHistory) {
+        if (h.tx_hash === txid) continue;
+        try {
+          const txData = await this.bchClient.getTransaction(h.tx_hash, false);
+          const rawHex =
+            typeof txData === 'string'
+              ? txData
+              : (txData as { hex?: string })?.hex;
+          if (rawHex) {
+            const hDecoded = decodeTransaction(Buffer.from(rawHex, 'hex'));
+            if (typeof hDecoded !== 'string') {
+              const spendsOurInput = hDecoded.inputs.some((inp) => {
+                const inTxId = Buffer.from(inp.outpointTransactionHash)
+                  .reverse()
+                  .toString('hex');
+                return inputs.some(
+                  (myInp) =>
+                    myInp.txid === inTxId && myInp.vout === inp.outpointIndex,
+                );
+              });
+              if (spendsOurInput) {
+                const errMessage = `Solver lock inputs were spent by conflicting transaction ${h.tx_hash} which does not fund the HTLC`;
+                this.logger.error(
+                  { orderId, txid, conflictingTxid: h.tx_hash },
+                  errMessage,
+                );
+                order.needsAttention = true;
+                order.rejectionReason = errMessage;
+                this.db.saveOrder(order);
+                return {
+                  handled: true,
+                  error: errMessage,
+                };
+              }
+            }
+          }
+        } catch {
+          // Continue
+        }
+      }
+    } catch (err) {
+      this.logger.warn({ err, orderId }, 'Failed checking solver history');
+    }
+
+    // 3. Inputs are missing from listUnspent, but not yet identified in history
+    const errMessage = `Solver lock inputs for order ${orderId} are no longer unspent, but winning spend not yet identified in history`;
+    this.logger.error({ orderId, txid }, errMessage);
+    order.needsAttention = true;
+    order.rejectionReason = errMessage;
+    this.db.saveOrder(order);
+    return {
+      handled: true,
+      error: errMessage,
+    };
+  }
+
   public async executeOrAdoptBchTx(params: {
     orderId: string;
     actionType: 'SOLVER_LOCK' | 'SOLVER_REFUND' | 'SOLVER_CLAIM';
@@ -457,27 +657,86 @@ export class SolverEngine {
       }
 
       // 2. Check if stale broadcast (not in mempool and not in block after N minutes)
-      const staleTimeoutMs = params.staleBroadcastTimeoutMs ?? 3 * 60 * 1000;
+      const defaultTimeout =
+        params.actionType === 'SOLVER_LOCK'
+          ? STALE_LOCK_TIMEOUT_MS
+          : STALE_CLAIM_TIMEOUT_MS;
+      const staleTimeoutMs = params.staleBroadcastTimeoutMs ?? defaultTimeout;
       const actionAge = Date.now() - (existingAction?.updatedAt ?? 0);
       if (
         existingAction?.status === 'BROADCAST' &&
         actionAge > staleTimeoutMs
       ) {
-        const inMempoolOrChain = await this.isBchTxInMempoolOrChain(txid);
-        if (!inMempoolOrChain) {
-          this.logger.warn(
-            {
-              orderId: params.orderId,
-              actionType: params.actionType,
-              txid,
-              actionAgeMs: actionAge,
-            },
-            'BCH broadcast action is stale (not in mempool or chain); deleting action to allow rebuild',
-          );
-          this.db.deleteAction(params.orderId, params.actionType);
-          txid = '';
-          txHex = '';
+        let htlcScriptHash: string | undefined;
+        const order = this.db.getOrder(params.orderId);
+        if (order) {
+          htlcScriptHash = await this.ensureBchSubscription(order);
         }
+
+        const quorumCheck = await this.isBchTxInMempoolOrChainAcrossQuorum(
+          txid,
+          htlcScriptHash,
+        );
+
+        if (quorumCheck.found) {
+          if (
+            quorumCheck.totalConnected > 1 &&
+            quorumCheck.seenOnServers.length < quorumCheck.totalConnected
+          ) {
+            this.logger.info(
+              {
+                orderId: params.orderId,
+                txid,
+                seenOn: quorumCheck.seenOnServers,
+              },
+              'BCH tx found on quorum server but missing on peer(s); rebroadcasting to assist propagation',
+            );
+            if (txHex) {
+              try {
+                await this.bchClient.broadcast(txHex);
+              } catch {
+                // Ignore broadcast error on peer
+              }
+            }
+          }
+          this.db.recordActionBroadcast(
+            params.orderId,
+            params.actionType,
+            txid,
+          );
+          return { txid, txHex, adopted: false };
+        }
+
+        // For SOLVER_LOCK: check spent state of inputs before declaring stale!
+        if (params.actionType === 'SOLVER_LOCK' && txHex) {
+          const inputCheck = await this.checkLockInputsSpentState(
+            params.orderId,
+            txid,
+            txHex,
+          );
+          if (inputCheck.handled) {
+            if (inputCheck.adoptedTx) {
+              return inputCheck.adoptedTx;
+            }
+            throw new Error(
+              inputCheck.error ||
+                'Solver lock inputs spent by conflicting transaction',
+            );
+          }
+        }
+
+        this.logger.warn(
+          {
+            orderId: params.orderId,
+            actionType: params.actionType,
+            txid,
+            actionAgeMs: actionAge,
+          },
+          'BCH broadcast action is stale (not in mempool or chain across quorum nodes, inputs unspent); deleting action to allow rebuild',
+        );
+        this.db.deleteAction(params.orderId, params.actionType);
+        txid = '';
+        txHex = '';
       }
     }
 
@@ -671,19 +930,39 @@ export class SolverEngine {
           // Solver was locking BCH tokens
           const shHex = await this.ensureBchSubscription(order);
           const txid = order.solverLockTxId;
-          const inMempoolOrChain = txid
-            ? await this.isBchTxInMempoolOrChain(txid, shHex)
-            : false;
-          if (!inMempoolOrChain) {
+          const quorumCheck = txid
+            ? await this.isBchTxInMempoolOrChainAcrossQuorum(txid, shHex)
+            : { found: false, seenOnServers: [], totalConnected: 0 };
+          if (!quorumCheck.found) {
             const utxos = await this.bchClient.listUnspent(
               shHex,
               'include_tokens',
             );
             const lockExists = utxos.some((u) => u.tx_hash === txid);
             if (!lockExists) {
+              const action = this.db.getAction(order.id, 'SOLVER_LOCK');
+              let parsedTxHex = '';
+              if (action?.intentPayload) {
+                try {
+                  parsedTxHex = JSON.parse(action.intentPayload).txHex || '';
+                } catch {
+                  // Ignore JSON parse error
+                }
+              }
+              if (parsedTxHex && txid) {
+                const inputCheck = await this.checkLockInputsSpentState(
+                  order.id,
+                  txid,
+                  parsedTxHex,
+                );
+                if (inputCheck.handled) {
+                  continue; // Either adopted winning spend or flagged needsAttention
+                }
+              }
+
               this.logger.warn(
                 { orderId: order.id, txid },
-                'Startup self-heal: forward SOLVER_LOCK_BROADCAST tx not found in mempool or chain; resetting to USER_LOCK_FINAL to re-lock',
+                'Startup self-heal: forward SOLVER_LOCK_BROADCAST tx not found in mempool or chain (inputs unspent); resetting to USER_LOCK_FINAL to re-lock',
               );
               this.db.deleteAction(order.id, 'SOLVER_LOCK');
               order.status = 'USER_LOCK_FINAL';

@@ -274,3 +274,35 @@ Order `0xe8878b7edfeff55bfae73838666bec4f47f26688c08fb5ba492833cd2fa7a462`, fast
   - Explorer: `https://blockexplorer.cash/chipnet/tx/feb06279505c4b32adbc06592db4dd9b7c72b5a83558a4c18dc865e7ad896775`
 - **Timings:** quote + BCH lock broadcast 3.807 s; BCH lock to gasless claim available 16.068 s; claim click to `DONE` 6.037 s; total 25.912 s.
 - **UI defect found and fixed before this successful run:** reverse transaction labels/chains were derived with forward semantics, so an earlier completed order linked EVM hashes to the BCH explorer and omitted the Base claim. See an earlier issue.
+
+---
+
+## 2026-10-28 · Live Chipnet End-to-End Reverse Swap Proof: Relay-Claim Racing Watcher
+
+Executed end-to-end against live solver daemon with the fixes using testnet keys from root `.env.local`. Tested the exact failing sequence from the original failure (user script lock, relay-claim racing the watcher).
+
+### Fast Lane Reverse Swap (Order `0x160edccd679396a545b186b28795621349db404daaf1772ccbbdfcfb57c8fae1`)
+- **TX 1: User BCH Lock (`buildLockTransaction`):**
+  - TXID: `393978dec8b3bc939f50d858a350894032ab3bbd630f483ee7b1b944797ea586`
+  - Output: 1.00 tPUSD (`ec335fd3ffa45f80cef7217cf98e8adf562df5a3e33f354f69df2951703586ac`) + 3000 satoshis carry locked into covenant P2SH32.
+  - Explorer: `https://chipnet.imaginary.cash/tx/393978dec8b3bc939f50d858a350894032ab3bbd630f483ee7b1b944797ea586`
+  - Duration: 0.62s
+- **TX 2: Solver EVM Counter-Lock (Base Sepolia):**
+  - TXID: `0x40db79e13904b5db0407c0c4bb877cb5f7b134ab4b6a30230c15c7bcfce2f53a`
+  - Block: 51277458
+  - Duration: 12.47s
+- **TX 3: User EVM Claim via Gasless Relay Claim (`POST /v1/orders/:id/relay-claim`):**
+  - TXID: `0xa35c5dbea196867bda54cefa80dd883ac98627304d618ac32ac4396912508371`
+  - Block: 51277479
+  - Secret: Valid 32-byte preimage matching hashLock
+  - Duration: 3.26s
+- **TX 4: Solver BCH Claim (`buildClaimTransaction`):**
+  - TXID: `1785d1a2e9d30f76c3ec743401173d3140ef6645f6308affb1be6fff72c79137`
+  - Output: Solver token address claiming 1.00 tPUSD. Unlocking script validated by Libauth script VM before broadcast.
+  - Explorer: `https://chipnet.imaginary.cash/tx/1785d1a2e9d30f76c3ec743401173d3140ef6645f6308affb1be6fff72c79137`
+  - Duration: 4.03s
+- **Status & Timings:**
+  - Final status: `DONE`
+  - Total swap duration: **20.94s**
+  - Result: The relay-claim and EVM watcher raced without causing `getLock` zero-secret fallback. The real preimage was safely received and validated, VM verification passed, and the claim was accepted into Chipnet mempool and confirmed without error.
+
