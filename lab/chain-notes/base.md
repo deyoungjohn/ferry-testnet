@@ -171,3 +171,14 @@ All four live UI walks ended `DONE` against the isolated solver on `127.0.0.1:87
 | Reverse | Fast | `0xb2bce4bd321cc7f5ed89cb9237f3d0851a8e9c397c26b246f82daef3865d4bea` | — (solver lock) | solver lock `0xc934fafd95b94c50281ee4c118b986387d4357393398e1609a121da89f9c1494`; user claim `0x35d6fd3fd82a091b359c3c762d16437d416ebc7bdc79d55153a0151a06b1762b` |
 | Reverse | Safe | `0x71240d04eb8389b1be6ee2187263d7109661c1a96fd9b1dd37b9e989ba248fba` | — (solver lock) | solver lock `0xec4ca08bcb572282669612d48a3b7f3aca986522eabae51c29a04e26b9740df6`; user claim `0xf270cf631b9beed96c2c33bce61ffe77650dd34f114281be7142d09b0dc90a3d` |
 - All Base links resolve under `https://sepolia.basescan.org/tx/<txid>`.
+
+---
+
+## 2026-10-28 · Base Mainnet Live Read-Only Verification
+
+- Endpoint tested: `https://mainnet.base.org` over HTTPS JSON-RPC.
+- `eth_chainId`: Verified returns `0x2105` (chain ID `8453`).
+- Circle USDC on Base Mainnet (`0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`): `eth_getCode` returns active deployed bytecode (length > 10 bytes).
+- Solver startup self-check (`runStartupSelfCheck`) with throwaway key connects, verifies chain ID 8453 and USDC bytecode, and halts cleanly on empty inventory with zero transactions and zero real funds.
+- Test coverage: `packages/solver/test/mainnet-refusals.test.ts` opt-in via `FERRY_LIVE_TESTS=1` (with 20s transport timeout and 30s test timeout). Default test suite skips with an informative message to guarantee 100% offline runs.
+

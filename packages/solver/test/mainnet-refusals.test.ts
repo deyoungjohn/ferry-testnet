@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, type TestContext } from 'vitest';
 import { loadConfigFromEnv, SolverConfigSchema } from '../src/config.js';
 import {
   runStartupSelfCheck,
@@ -504,59 +504,76 @@ describe('Solver Mainnet Refusal Paths', () => {
   });
 
   // --------------------------------------------------------------------------
-  // Live Read-Only Public Mainnet Verification
+  // Live Read-Only Public Mainnet Verification (Opt-in via FERRY_LIVE_TESTS=1)
   // --------------------------------------------------------------------------
-  it('Live Proof: starting against real read-only public mainnet endpoints with throwaway key rejects on empty inventory', async () => {
-    // 1. Connect real read-only public clients
-    const realBasePublicClient = createPublicClient({
-      transport: http('https://mainnet.base.org'),
-    });
+  it(
+    'Live Proof: starting against real read-only public mainnet endpoints with throwaway key rejects on empty inventory',
+    { timeout: 30_000 },
+    async (ctx: TestContext) => {
+      if (process.env.FERRY_LIVE_TESTS !== '1') {
+        console.log(
+          'Skipping live mainnet read-only verification: opt-in by setting FERRY_LIVE_TESTS=1',
+        );
+        ctx.skip();
+        return;
+      }
 
-    const chainId = await realBasePublicClient.getChainId();
-    expect(chainId).toBe(8453);
+      // 1. Connect real read-only public clients with proper timeouts
+      const realBasePublicClient = createPublicClient({
+        transport: http('https://mainnet.base.org', {
+          timeout: 20_000,
+          retryCount: 2,
+        }),
+      });
 
-    // 2. Query real Base USDC token code
-    const usdcBytecode = await realBasePublicClient.getBytecode({
-      address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-    });
-    expect(usdcBytecode).toBeDefined();
-    expect(usdcBytecode!.length).toBeGreaterThan(10);
+      const chainId = await realBasePublicClient.getChainId();
+      expect(chainId).toBe(8453);
 
-    // 3. Connect real read-only BCH Fulcrum client
-    const bchQuorum = new BchQuorumClient(
-      ['wss://bch.imaginary.cash:50004', 'wss://blackie.c3-soft.com:50004'],
-      'mainnet',
-    );
-    await bchQuorum.connect();
-    const quorumStatus = bchQuorum.getQuorumStatus();
-    expect(quorumStatus.quorumTip).toBeGreaterThan(800000);
-    expect(bchQuorum.expectedNetwork).toBe('mainnet');
+      // 2. Query real Base USDC token code
+      const usdcBytecode = await realBasePublicClient.getBytecode({
+        address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      });
+      expect(usdcBytecode).toBeDefined();
+      expect(usdcBytecode!.length).toBeGreaterThan(10);
 
-    // 4. Run startup self-check with throwaway key:
-    // It verifies genesis, verifies chainId 8453, verifies USDC bytecode, and refuses startup
-    // because the throwaway address has zero inventory!
-    const liveConfig = SolverConfigSchema.parse({
-      network: 'mainnet',
-      baseRpcUrl: 'https://mainnet.base.org',
-      baseChainId: 8453,
-      baseHtlcAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // point to deployed code
-      baseUsdcAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-      bchElectrumUrls: twoFulcrumHosts,
-      solverEvmPrivateKey: throwawayEvmKey,
-      solverBchWif: throwawayMainnetBchWif,
-      operatorToken: validOperatorToken,
-    });
+      // 3. Connect real read-only BCH Fulcrum client
+      const bchQuorum = new BchQuorumClient(
+        ['wss://bch.imaginary.cash:50004', 'wss://blackie.c3-soft.com:50004'],
+        'mainnet',
+      );
+      try {
+        await bchQuorum.connect();
+        const quorumStatus = bchQuorum.getQuorumStatus();
+        expect(quorumStatus.quorumTip).toBeGreaterThan(800000);
+        expect(bchQuorum.expectedNetwork).toBe('mainnet');
 
-    await expect(
-      runStartupSelfCheck({
-        config: liveConfig,
-        publicClient: realBasePublicClient,
-        bchClient: bchQuorum,
-        solverEvmAddress: throwawayEvmAddress,
-        solverBchWif: throwawayMainnetBchWif,
-      }),
-    ).rejects.toThrowError(/Empty solver inventory on mainnet/);
+        // 4. Run startup self-check with throwaway key:
+        // It verifies genesis, verifies chainId 8453, verifies USDC bytecode, and refuses startup
+        // because the throwaway address has zero inventory!
+        const liveConfig = SolverConfigSchema.parse({
+          network: 'mainnet',
+          baseRpcUrl: 'https://mainnet.base.org',
+          baseChainId: 8453,
+          baseHtlcAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // point to deployed code
+          baseUsdcAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+          bchElectrumUrls: twoFulcrumHosts,
+          solverEvmPrivateKey: throwawayEvmKey,
+          solverBchWif: throwawayMainnetBchWif,
+          operatorToken: validOperatorToken,
+        });
 
-    bchQuorum.close();
-  });
+        await expect(
+          runStartupSelfCheck({
+            config: liveConfig,
+            publicClient: realBasePublicClient,
+            bchClient: bchQuorum,
+            solverEvmAddress: throwawayEvmAddress,
+            solverBchWif: throwawayMainnetBchWif,
+          }),
+        ).rejects.toThrowError(/Empty solver inventory on mainnet/);
+      } finally {
+        bchQuorum.close();
+      }
+    },
+  );
 });
