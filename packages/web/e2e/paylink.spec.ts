@@ -64,3 +64,36 @@ test('PL reserved invoice blocks a second payer', async ({ page }) => {
     fullPage: true,
   });
 });
+
+test('pay link form fits a 390px phone viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/pay?mock=1');
+
+  await expect(
+    page.getByRole('heading', {
+      level: 1,
+      name: /get paid in dollars on bitcoin cash/i,
+    }),
+  ).toBeVisible();
+
+  const formBox = await page.locator('form').first().boundingBox();
+  expect(formBox).not.toBeNull();
+  expect((formBox?.x ?? 0) + (formBox?.width ?? 0)).toBeLessThanOrEqual(390);
+
+  for (const name of [/^invoice$/i, /^open$/i]) {
+    const box = await page.getByRole('button', { name }).boundingBox();
+    expect(box).not.toBeNull();
+    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
+  }
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+
+  await page.screenshot({
+    path: 'test-results/pay-links-phone.png',
+    fullPage: true,
+    animations: 'disabled',
+  });
+});

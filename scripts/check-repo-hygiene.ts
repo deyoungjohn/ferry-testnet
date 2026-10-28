@@ -112,6 +112,10 @@ export function checkTrackedContent(
 
   // Match Solana secret key arrays [1, 2, ..., 64]
   const solanaArrayRegex = /\[\s*(?:\d{1,3}\s*,\s*){63}\d{1,3}\s*\]/;
+  // A 32-byte seed is secret too. Require a sensitive identifier so generated
+  // lookup/mask arrays in bundles (for example recover.html) are not flagged.
+  const solanaSeedArrayRegex =
+    /(?:secretKey|secret_key|seed|privateKey|keypair|mnemonic)\s*[:=]\s*\[\s*(?:\d{1,3}\s*,\s*){31}\d{1,3}\s*\]/i;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -143,7 +147,7 @@ export function checkTrackedContent(
     }
 
     // Check Solana key arrays
-    if (solanaArrayRegex.test(line)) {
+    if (solanaArrayRegex.test(line) || solanaSeedArrayRegex.test(line)) {
       violations.push({
         file: filePath,
         line: i + 1,

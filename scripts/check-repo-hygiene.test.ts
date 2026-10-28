@@ -123,11 +123,24 @@ describe('Repository Hygiene Content Checker', () => {
     expect(first.message).not.toContain('42, 42');
   });
 
-  it('does not flag shorter numeric arrays from generated bundles', () => {
+  it('does not flag anonymous shorter numeric arrays from generated bundles', () => {
     const bytes = Array(32).fill(255).join(', ');
     expect(
       checkTrackedContent('recover.html', `const mask = [${bytes}];`),
     ).toHaveLength(0);
+  });
+
+  it('still flags a 32-byte seed array assigned to a sensitive name', () => {
+    const bytes = Array(32).fill(42).join(', ');
+    const badCode = `const seed = [${bytes}];`;
+    const violations = checkTrackedContent(
+      'packages/chain-solana/src/signer.ts',
+      badCode,
+    );
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.rule).toBe('SUSPECTED_SOLANA_KEYPAIR');
+    expect(violations[0]?.message).not.toContain('42, 42');
   });
 
   it('ignores test files and markdown documentation from content flagging', () => {
