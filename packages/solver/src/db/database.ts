@@ -23,6 +23,15 @@ export interface ActionRecord {
   updatedAt: number;
 }
 
+/**
+ * Normalizes any timestamp to Unix timestamp in seconds.
+ * Values >= 1e11 are treated as milliseconds and converted to seconds.
+ */
+export function toSeconds(ts: number | null | undefined): number {
+  if (ts === null || ts === undefined || isNaN(ts)) return 0;
+  return ts > 100_000_000_000 ? Math.floor(ts / 1000) : Math.floor(ts);
+}
+
 export interface PayLinkRecord {
   id: string;
   kind: 'invoice' | 'open';
@@ -258,8 +267,8 @@ export class SolverDatabase {
       needs_attention: order.needsAttention ? 1 : 0,
       rejection_reason: order.rejectionReason ?? null,
       pay_link_id: order.payLinkId ?? null,
-      created_at: order.createdAt,
-      updated_at: order.updatedAt,
+      created_at: toSeconds(order.createdAt || Math.floor(Date.now() / 1000)),
+      updated_at: toSeconds(order.updatedAt || Math.floor(Date.now() / 1000)),
     });
   }
 
@@ -296,7 +305,7 @@ export class SolverDatabase {
   }
 
   markNeedsAttention(orderId: string, reason?: string): void {
-    const now = Date.now();
+    const now = Math.floor(Date.now() / 1000);
     const stmt = this.db.prepare(`
       UPDATE orders
       SET needs_attention = 1,
@@ -412,7 +421,7 @@ export class SolverDatabase {
   }
 
   getOldestNonTerminalOrderAgeSeconds(
-    nowMs: number = Date.now(),
+    nowInput: number = Date.now(),
   ): number | null {
     const stmt = this.db.prepare(`
       SELECT MIN(created_at) as oldest_created_at
@@ -427,7 +436,9 @@ export class SolverDatabase {
     ) {
       return null;
     }
-    return Math.max(0, Math.floor((nowMs - row.oldest_created_at) / 1000));
+    const nowSec = toSeconds(nowInput);
+    const oldestSec = toSeconds(row.oldest_created_at);
+    return Math.max(0, nowSec - oldestSec);
   }
 
   countNeedsAttentionOrders(): number {
@@ -437,7 +448,7 @@ export class SolverDatabase {
     return row?.count ?? 0;
   }
 
-  getNeedsAttentionOrdersSummary(nowMs: number = Date.now()): Array<{
+  getNeedsAttentionOrdersSummary(nowInput: number = Date.now()): Array<{
     orderId: string;
     direction: 'BCH_TO_COUNTER' | 'COUNTER_TO_BCH';
     status: ForwardOrderStatus;
@@ -463,17 +474,20 @@ export class SolverDatabase {
       solverRefundTxId?: string | undefined;
     };
   }> {
+    const nowSec = toSeconds(nowInput);
     const orders = this.listNeedsAttentionOrders();
     return orders.map((order) => {
       // STRICT PRIVACY: secret is NEVER included in operator listing
+      const createdAtSec = toSeconds(order.createdAt);
+      const updatedAtSec = toSeconds(order.updatedAt);
       return {
         orderId: order.id,
         direction: order.direction,
         status: order.status,
         lane: order.lane,
-        createdAt: order.createdAt,
-        updatedAt: order.updatedAt,
-        ageSeconds: Math.max(0, Math.floor((nowMs - order.createdAt) / 1000)),
+        createdAt: createdAtSec,
+        updatedAt: updatedAtSec,
+        ageSeconds: Math.max(0, nowSec - createdAtSec),
         rejectionReason: order.rejectionReason,
         terms: {
           counterAsset: {
@@ -608,8 +622,8 @@ export class SolverDatabase {
       needsAttention: row.needs_attention === 1,
       rejectionReason: (row.rejection_reason as string) || undefined,
       payLinkId: (row.pay_link_id as string) || undefined,
-      createdAt: row.created_at as number,
-      updatedAt: row.updated_at as number,
+      createdAt: toSeconds(row.created_at as number),
+      updatedAt: toSeconds(row.updated_at as number),
     };
   }
 
@@ -652,12 +666,13 @@ export class SolverDatabase {
         link.minAmountOut !== undefined ? link.minAmountOut.toString(10) : null,
       memo: link.memo ?? null,
       reference: link.reference ?? null,
-      expires_at: link.expiresAt ?? null,
+      expires_at:
+        link.expiresAt !== undefined ? toSeconds(link.expiresAt) : null,
       verified: link.verified ? 1 : 0,
       status: link.status,
       order_id: link.orderId ?? null,
-      created_at: link.createdAt,
-      updated_at: link.updatedAt,
+      created_at: toSeconds(link.createdAt || Math.floor(Date.now() / 1000)),
+      updated_at: toSeconds(link.updatedAt || Math.floor(Date.now() / 1000)),
     });
   }
 
@@ -747,12 +762,15 @@ export class SolverDatabase {
           : undefined,
       memo: (row.memo as string) || undefined,
       reference: (row.reference as string) || undefined,
-      expiresAt: (row.expires_at as number) || undefined,
+      expiresAt:
+        row.expires_at !== null && row.expires_at !== undefined
+          ? toSeconds(row.expires_at as number)
+          : undefined,
       verified: row.verified === 1,
       status: row.status as PayLinkRecord['status'],
       orderId: (row.order_id as string) || undefined,
-      createdAt: row.created_at as number,
-      updatedAt: row.updated_at as number,
+      createdAt: toSeconds(row.created_at as number),
+      updatedAt: toSeconds(row.updated_at as number),
     };
   }
 
@@ -807,7 +825,7 @@ export class SolverDatabase {
       if (row.lane === 'fast') {
         const duration = Math.max(
           0,
-          Math.floor((row.updated_at - row.created_at) / 1000),
+          toSeconds(row.updated_at) - toSeconds(row.created_at),
         );
         fastDurations.push(duration);
       }
@@ -896,12 +914,12 @@ export class SolverDatabase {
 
       const durationSeconds = Math.max(
         0,
-        Math.floor((order.updatedAt - order.createdAt) / 1000),
+        toSeconds(order.updatedAt) - toSeconds(order.createdAt),
       );
 
       result.push({
         orderId: order.id as `0x${string}`,
-        settledAt: Math.floor(order.updatedAt / 1000),
+        settledAt: toSeconds(order.updatedAt),
         direction: order.direction,
         counterSymbol: order.terms.counterAsset.symbol,
         counterDecimals: order.terms.counterAsset.decimals,

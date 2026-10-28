@@ -871,7 +871,7 @@ export class SolverEngine {
             this.db.deleteAction(order.id, 'SOLVER_CLAIM');
             order.status = 'USER_CLAIM_SEEN';
             order.solverClaimTxId = undefined;
-            order.updatedAt = Date.now();
+            order.updatedAt = Math.floor(Date.now() / 1000);
             this.db.saveOrder(order);
           }
         } else {
@@ -900,7 +900,7 @@ export class SolverEngine {
               this.db.deleteAction(order.id, 'SOLVER_CLAIM');
               order.status = 'USER_CLAIM_SEEN';
               order.solverClaimTxId = undefined;
-              order.updatedAt = Date.now();
+              order.updatedAt = Math.floor(Date.now() / 1000);
               this.db.saveOrder(order);
             }
           }
@@ -932,7 +932,7 @@ export class SolverEngine {
               this.db.deleteAction(order.id, 'SOLVER_LOCK');
               order.status = 'USER_LOCK_FINAL';
               order.solverLockTxId = undefined;
-              order.updatedAt = Date.now();
+              order.updatedAt = Math.floor(Date.now() / 1000);
               this.db.saveOrder(order);
             }
           }
@@ -977,7 +977,7 @@ export class SolverEngine {
               this.db.deleteAction(order.id, 'SOLVER_LOCK');
               order.status = 'USER_LOCK_FINAL';
               order.solverLockTxId = undefined;
-              order.updatedAt = Date.now();
+              order.updatedAt = Math.floor(Date.now() / 1000);
               this.db.saveOrder(order);
             }
           }
@@ -1997,7 +1997,7 @@ export class SolverEngine {
     if (res.mutations) {
       Object.assign(order, res.mutations);
     }
-    order.updatedAt = Date.now();
+    order.updatedAt = Math.floor(Date.now() / 1000);
     this.db.saveOrder(order);
 
     // Sync pay link status if this order is linked to a pay link

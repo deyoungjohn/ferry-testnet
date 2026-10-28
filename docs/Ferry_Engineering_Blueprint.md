@@ -521,11 +521,26 @@ The reverse direction mirrors this with the chains swapped.
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/v1/quotes` | Request a quote: `{direction, token, amountIn, userEvmAddress, userBchLockingBytecode, hashLock, lane}` → signed terms |
-| `GET` | `/v1/orders/:orderId` | State, txids, deadlines |
+| `GET` | `/v1/orders/:orderId` | State, txids, deadlines (`quoteExpiry`, `counterDeadline`, `bchRefundHeight`), `updatedAt` (Unix timestamp in seconds) |
 | `POST` | `/v1/orders/:orderId/secret` | Cooperative reveal. Accepted only once the counterparty lock meets the reveal policy; the server re-verifies it. |
 | `POST` | `/v1/orders/:orderId/relay-lock` | Forward direction: submit the user's permit + EIP-712 intent via `lockWithIntent` (gas-free for the user). The server checks the intent matches the signed terms before relaying. |
 | `POST` | `/v1/orders/:orderId/relay-claim` | Reverse direction: the solver broadcasts the user's Base `claim` and pays gas, recovered in the spread |
-| `GET` | `/v1/health` | Tips, tip age, inventory, quoting flag |
+| `GET` | `/v1/health` | Tips, tip ages (`ageSeconds`), inventory, quoting flag, `timestamp` (Unix timestamp in seconds) |
+| `GET` | `/v1/stats` | Summary of completed swaps, total volume, `medianFastSeconds`, quote policy, `asOf` (Unix timestamp in seconds) |
+| `GET` | `/v1/orders/recent` | Recent settled swaps with `settledAt` (Unix timestamp in seconds) and `durationSeconds` |
+| `GET` | `/v1/pegs` | Token peg price history with `asOf` and point timestamps `at` (Unix timestamps in seconds) |
+| `POST` | `/v1/links` | Create pay link: `expiresAt` (Unix timestamp in seconds optional), returns `createdAt` (Unix timestamp in seconds) |
+| `GET` | `/v1/links` | List pay links for recipient |
+| `GET` | `/v1/links/:id` | Get pay link status with `createdAt` and `expiresAt` (Unix timestamps in seconds) |
+| `POST` | `/v1/links/:id/quote` | Request quote for a pay link |
+| `POST` | `/v1/links/:id/cancel` | Cancel pay link |
+| `GET` | `/v1/metrics` | Operational metrics (exposure, unfunded quotes, tip ages, error counts, `lastConfirmedAt`, `timestamp` in Unix seconds) |
+| `GET` | `/v1/operator/needs-attention` | Operator alerts and orders requiring intervention with `createdAt`, `updatedAt`, `ageSeconds`, `timestamp` in Unix seconds (requires Bearer token) |
+
+**Time Units Specification:**
+- **All timestamps** across all API request payloads and response bodies (`updatedAt`, `createdAt`, `quoteExpiry`, `counterDeadline`, `settledAt`, `expiresAt`, `asOf`, `timestamp`, `lastConfirmedAt`, `at`) are strictly **Unix timestamps in seconds** (integer seconds since Jan 1, 1970 UTC). Values ≥ `1e11` are rejected by core schemas as millisecond misuse (`unixTimestampSeconds`).
+- **All durations and ages** (`ageSeconds`, `durationSeconds`, `medianFastSeconds`, `livenessAgeSeconds`) are non-negative integer seconds.
+
 
 ### 5.4 `@ferry/web`: the frontend
 

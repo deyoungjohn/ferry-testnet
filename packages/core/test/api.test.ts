@@ -43,6 +43,7 @@ import {
   parseApiJson,
   parseOrderTerms,
   serializeApiJson,
+  unixTimestampSeconds,
 } from '../src/index.js';
 import { baseTerms } from './fixtures/terms.js';
 
@@ -605,6 +606,46 @@ describe('API schemas and wire helpers', () => {
     );
     expect(PegPointSchema.parse(pegsPayload.pegs[0]!.points[0]!)).toEqual(
       pegsPayload.pegs[0]!.points[0]!,
+    );
+  });
+
+  it('validates Unix timestamps in seconds and rejects milliseconds misuse', () => {
+    const validSec = 1_730_000_000;
+    const invalidMs = 1_730_000_000_000;
+
+    expect(unixTimestampSeconds.parse(validSec)).toBe(validSec);
+    expect(() => unixTimestampSeconds.parse(invalidMs)).toThrow(
+      /Expected Unix timestamp in seconds, got milliseconds/,
+    );
+    expect(() => unixTimestampSeconds.parse(0)).toThrow();
+    expect(() => unixTimestampSeconds.parse(-1)).toThrow();
+
+    // In OrderStatusResponseSchema, updatedAt must be in seconds
+    const validStatus = {
+      orderId: id,
+      status: 'QUOTED' as const,
+      lane: 'safe' as const,
+      terms,
+      signature: `0x${'11'.repeat(65)}` as const,
+      signerAddress: '0x0000000000000000000000000000000000000001' as const,
+      txIds: {},
+      deadlines: {
+        quoteExpiry: terms.quoteExpiry,
+        counterDeadline: terms.counterDeadline,
+        bchRefundHeight: terms.bchRefundHeight,
+      },
+      updatedAt: validSec,
+    };
+    expect(OrderStatusResponseSchema.parse(validStatus).updatedAt).toBe(
+      validSec,
+    );
+
+    const invalidStatus = {
+      ...validStatus,
+      updatedAt: invalidMs,
+    };
+    expect(() => OrderStatusResponseSchema.parse(invalidStatus)).toThrow(
+      /Expected Unix timestamp in seconds, got milliseconds/,
     );
   });
 });

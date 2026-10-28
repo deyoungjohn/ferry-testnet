@@ -3,8 +3,11 @@ import {
   COUNTER_CHAINS,
   OrderTermsSchema,
   orderId as computeOrderId,
+  unixTimestampSeconds,
 } from '../terms.js';
 import type { CounterChain, Hex, OrderTerms } from '../terms.js';
+
+export { unixTimestampSeconds };
 
 const wellFormed = (value: string) =>
   !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(
@@ -270,8 +273,8 @@ export const OrderTxIdsSchema = z.strictObject({
 export type OrderTxIds = z.infer<typeof OrderTxIdsSchema>;
 
 export const OrderDeadlinesSchema = z.strictObject({
-  quoteExpiry: uint.positive(),
-  counterDeadline: uint.positive(),
+  quoteExpiry: unixTimestampSeconds,
+  counterDeadline: unixTimestampSeconds,
   bchRefundHeight: uint.positive().max(499999999),
 });
 export type OrderDeadlines = z.infer<typeof OrderDeadlinesSchema>;
@@ -296,7 +299,7 @@ export const OrderStatusResponseSchema = z
     secret: hex32.optional(),
     deadlines: OrderDeadlinesSchema,
     rejectionReason: text.optional(),
-    updatedAt: uint.positive(),
+    updatedAt: unixTimestampSeconds,
   })
   .superRefine((res, ctx) => {
     if (computeOrderId(res.terms) !== res.orderId) {
@@ -414,7 +417,7 @@ export const HealthResponseSchema = z.strictObject({
   bchTip: BchTipStatusSchema,
   counterTips: z.partialRecord(z.enum(COUNTER_CHAINS), ChainTipStatusSchema),
   inventory: z.array(InventoryItemSchema),
-  timestamp: uint.positive(),
+  timestamp: unixTimestampSeconds,
 });
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 
@@ -482,10 +485,10 @@ export const PayLinkSchema = z
     minAmountOut: positiveUint256.optional(),
     memo: memoText.optional(),
     reference: text.optional(),
-    expiresAt: uint.positive().optional(),
+    expiresAt: unixTimestampSeconds.optional(),
     verified: z.boolean(),
     status: PayLinkStatusSchema,
-    createdAt: uint.positive(),
+    createdAt: unixTimestampSeconds,
     orderId: hex32.optional(),
   })
   .superRefine(validateLinkAmounts);
@@ -506,7 +509,7 @@ export const CreatePayLinkRequestSchema = z
     minAmountOut: positiveUint256.optional(),
     memo: memoText.optional(),
     reference: text.optional(),
-    expiresAt: uint.positive().optional(),
+    expiresAt: unixTimestampSeconds.optional(),
     verification: z
       .strictObject({
         challenge: text,
@@ -594,13 +597,13 @@ export const StatsSummarySchema = z.strictObject({
   volumeUsdMicros: wireBigInt.nullable(),
   medianFastSeconds: uint.nullable(),
   quotePolicy: QuotePolicySchema.nullable(),
-  asOf: uint.nullable(),
+  asOf: unixTimestampSeconds.nullable(),
 });
 export type StatsSummary = z.infer<typeof StatsSummarySchema>;
 
 export const RecentSwapSchema = z.strictObject({
   orderId: hex32,
-  settledAt: uint,
+  settledAt: unixTimestampSeconds,
   direction: z.enum(['COUNTER_TO_BCH', 'BCH_TO_COUNTER']),
   counterSymbol: z.string().min(1).max(12),
   counterDecimals: z.number().int().min(0).max(18),
@@ -622,7 +625,7 @@ export const RecentSwapsResponseSchema = z.strictObject({
 export type RecentSwapsResponse = z.infer<typeof RecentSwapsResponseSchema>;
 
 export const PegPointSchema = z.strictObject({
-  at: uint,
+  at: unixTimestampSeconds,
   priceUsdMicros: wireBigInt.refine(
     (value) => value > 0n,
     'Peg price must be positive',
@@ -637,7 +640,7 @@ export const PegSnapshotSchema = z.strictObject({
     .nullable(),
   points: z.array(PegPointSchema).max(1_440),
   source: z.string().min(1).nullable(),
-  asOf: uint.nullable(),
+  asOf: unixTimestampSeconds.nullable(),
 });
 export type PegSnapshot = z.infer<typeof PegSnapshotSchema>;
 export type PegToken = PegSnapshot['token'];

@@ -35,6 +35,15 @@ const amount = z
   .max((1n << 256n) - 1n);
 const evmAddress = /^0x[0-9a-fA-F]{40}$/;
 
+/**
+ * Strict Unix timestamp in seconds (integer seconds since Jan 1, 1970 UTC).
+ * Values >= 1e11 are rejected to catch milliseconds misuse.
+ */
+export const unixTimestampSeconds = uint
+  .positive()
+  .max(100_000_000_000, 'Expected Unix timestamp in seconds, got milliseconds')
+  .describe('Unix timestamp in seconds');
+
 /** Strict wire-independent terms: monetary amounts are bigint base units, never floats. */
 export const OrderTermsSchema = z
   .strictObject({
@@ -57,12 +66,12 @@ export const OrderTermsSchema = z
     userBchLockingBytecode: hex,
     solverBchLockingBytecode: hex,
     hashLock: hex32,
-    counterDeadline: uint.positive(),
+    counterDeadline: unixTimestampSeconds,
     bchRefundHeight: uint.positive().max(499999999),
     bchCarrySats: amount.max((1n << 64n) - 1n),
     bchMaxFee: z.bigint().nonnegative(),
     quoteId: text,
-    quoteExpiry: uint.positive(),
+    quoteExpiry: unixTimestampSeconds,
   })
   .superRefine((terms, ctx) => {
     if (terms.bchMaxFee > terms.bchCarrySats)

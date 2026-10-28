@@ -42,7 +42,7 @@ import {
 import type { OrderTerms } from '@ferry/core';
 import type { EvmChainAdapter } from '@ferry/chain-evm';
 import { deriveBchKeyDetails } from '../bch/lock-builder.js';
-import type { SolverDatabase } from '../db/database.js';
+import { toSeconds, type SolverDatabase } from '../db/database.js';
 import type { BchQuorumClient } from '../bch/quorum-client.js';
 import type { SolverConfig } from '../config.js';
 import type { SolverEngine } from '../engine/runner.js';
@@ -104,10 +104,12 @@ function toPayLinkWire(link: PayLinkRecord) {
       : {}),
     ...(link.memo !== undefined ? { memo: link.memo } : {}),
     ...(link.reference !== undefined ? { reference: link.reference } : {}),
-    ...(link.expiresAt !== undefined ? { expiresAt: link.expiresAt } : {}),
+    ...(link.expiresAt !== undefined
+      ? { expiresAt: toSeconds(link.expiresAt) }
+      : {}),
     verified: link.verified,
     status: link.status,
-    createdAt: link.createdAt,
+    createdAt: toSeconds(link.createdAt),
     ...(link.orderId !== undefined ? { orderId: link.orderId } : {}),
   };
 }
@@ -561,6 +563,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
     const orderId = computeOrderId(terms);
     const signature = await signOrderId(orderId, solverAccount);
 
+    const nowSec = Math.floor(Date.now() / 1000);
     // Save initial QUOTED order in DB
     const orderRecord: SolverOrderRecord = {
       id: orderId,
@@ -570,8 +573,8 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       fastOptIn: request.fastOptIn ?? false,
       terms,
       hashLock: terms.hashLock,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: nowSec,
+      updatedAt: nowSec,
     };
     db.saveOrder(orderRecord);
 
@@ -644,7 +647,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
         bchRefundHeight: order.terms.bchRefundHeight,
       },
       rejectionReason: order.rejectionReason,
-      updatedAt: order.updatedAt,
+      updatedAt: toSeconds(order.updatedAt),
     };
 
     return reply.status(200).send(OrderStatusResponseSchema.parse(response));
@@ -1173,7 +1176,11 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
           height: quorum.quorumTip,
           ageSeconds: bchAge,
           lastConfirmedAt:
-            quorum.lastConfirmedAt ?? (bchAge > 0 ? now - bchAge : now),
+            quorum.lastConfirmedAt && quorum.lastConfirmedAt > 0
+              ? toSeconds(quorum.lastConfirmedAt)
+              : bchAge > 0
+                ? now - bchAge
+                : now,
           stale: bchHealth.stale,
           quorum: quorum.isQuorumHealthy,
         },
@@ -1692,6 +1699,7 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       const orderId = computeOrderId(terms);
       const signature = await signOrderId(orderId, solverAccount);
 
+      const nowSec = Math.floor(Date.now() / 1000);
       // Save order
       db.saveOrder({
         id: orderId,
@@ -1703,8 +1711,8 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
         hashLock: request.hashLock as `0x${string}`,
         needsAttention: false,
         payLinkId: link.id,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        createdAt: nowSec,
+        updatedAt: nowSec,
       });
 
       if (link.kind === 'invoice') {
