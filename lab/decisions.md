@@ -748,3 +748,4 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Consequence for rebuild:** Plan on WizardConnect only; the QR must stay open until scanned and a stuck approval needs a cancel.
 - **Revisit if:** Paytaca documents and ships a page-injected provider, verified again with the same probe.
 - **Source:** Human console output, 2026-10-28.
+
