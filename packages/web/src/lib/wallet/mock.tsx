@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { keccak256, sha256, toBytes } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import type { Hex, TypedDataDefinition } from 'viem';
+import type { Address, Hex, TypedDataDefinition } from 'viem';
 import { parseBchAddress, parseBchAddressAnyNetwork } from '../bch/address';
 import { MOCK_BCH_USER_ADDRESS, PUSD_CATEGORY } from '../config';
 import { WalletContext } from './context';
 import { sourceOutputToRelay } from './relay-format';
+import { getScriptEvmBridge } from './script-evm';
 import { getScriptWalletBridge } from './script-wallet';
 import type {
   BchSignedTransaction,
@@ -59,6 +60,7 @@ export function MockWalletProvider({
   const claimConflict = query?.get('claimConflict') === '1';
   const claimSpentButKnown = query?.get('claimSpentButKnown') === '1';
   const broadcastCount = useRef(0);
+  const scriptEvm = useMemo(() => getScriptEvmBridge(), []);
   const scriptWallet = useMemo(() => getScriptWalletBridge(), []);
   const scriptBch = useMemo(() => {
     if (!scriptWallet) return null;
@@ -72,7 +74,10 @@ export function MockWalletProvider({
   const evm = useMemo<EvmWallet>(
     () => ({
       status: evmStatus,
-      address: evmStatus === 'connected' ? mockUser.address : null,
+      address:
+        evmStatus === 'connected'
+          ? ((scriptEvm?.address as Address) ?? mockUser.address)
+          : null,
       error: null,
       pendingRequest: evmPending,
       connect: () => {
@@ -96,16 +101,23 @@ export function MockWalletProvider({
           if (rejectSigning) {
             throw new Error('User rejected the request.');
           }
+          if (scriptEvm) {
+            const wire = JSON.stringify(params, (_key, value) =>
+              typeof value === 'bigint' ? `<bigint: ${value}n>` : value,
+            );
+            return (await scriptEvm.signTypedData(wire)) as Hex;
+          }
           return mockUser.signTypedData(params as never);
         } finally {
           setEvmPending(null);
         }
       },
-      readPermitNonce: async () => 0n,
+      readPermitNonce: async () =>
+        scriptEvm ? BigInt(await scriptEvm.readPermitNonce()) : 0n,
       refundLock: async (id: Hex) => sha256(id),
       claimLock: async (id: Hex) => sha256(id),
     }),
-    [evmStatus, evmPending, rejectSigning, signingDelayMs],
+    [evmStatus, evmPending, rejectSigning, scriptEvm, signingDelayMs],
   );
 
   const bch = useMemo<BchWallet>(
