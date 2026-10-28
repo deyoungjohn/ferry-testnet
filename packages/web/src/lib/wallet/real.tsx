@@ -183,9 +183,21 @@ function useRealBchWallet(
       window.clearTimeout(timer);
     };
   }, [startFresh]);
-  const reconnectTimedOut = useBchReconnectTimeout(wizard.state, () =>
-    wizard.disconnect(),
+  // A pairing the user started waits for the scan; only a restored session is
+  // dropped by the 8 s limit.
+  const [userStarted, setUserStarted] = useState(false);
+  useEffect(() => {
+    if (wizard.state === 'connected' || wizard.state === 'disconnected') {
+      setUserStarted(false);
+    }
+  }, [wizard.state]);
+  const reconnectTimedOut = useBchReconnectTimeout(
+    wizard.state,
+    () => wizard.disconnect(),
+    undefined,
+    !userStarted,
   );
+  const signAbort = useRef<AbortController | null>(null);
   const [pendingRequest, setPendingRequest] = useState<string | null>(null);
   const [remembered, setRemembered] = useState<RememberedBchWallet | null>(() =>
     readRememberedBchWallet(),
@@ -232,6 +244,7 @@ function useRealBchWallet(
     walletName: wizard.walletName ?? remembered?.name ?? null,
     pairing: wizard.state === 'connecting' && wizard.uri !== null,
     connect: () => {
+      setUserStarted(true);
       // Normal case: open the QR dialog directly. Only a stale restored
       // attempt needs the clear-and-remount path.
       if (wizard.state === 'connecting' || wizard.state === 'reconnecting') {
@@ -298,27 +311,32 @@ function useRealBchWallet(
       if (!wizard.manager)
         throw new Error('Connect a WizardConnect wallet first');
       setPendingRequest(request.userPrompt ?? 'Sign the BCH transaction');
+      const controller = new AbortController();
+      signAbort.current = controller;
       try {
-        const response = await wizard.manager.signTransaction({
-          transaction: {
-            transaction: request.transaction,
-            // JSON transport: bigint and bytes must use the relay wire format.
-            sourceOutputs: request.sourceOutputs.map(
-              sourceOutputToRelay,
-            ) as never,
-            ...(request.broadcast !== undefined
-              ? { broadcast: request.broadcast }
-              : {}),
-            ...(request.userPrompt !== undefined
-              ? { userPrompt: request.userPrompt }
-              : {}),
+        const response = await wizard.manager.signTransaction(
+          {
+            transaction: {
+              transaction: request.transaction,
+              // JSON transport: bigint and bytes must use the relay wire format.
+              sourceOutputs: request.sourceOutputs.map(
+                sourceOutputToRelay,
+              ) as never,
+              ...(request.broadcast !== undefined
+                ? { broadcast: request.broadcast }
+                : {}),
+              ...(request.userPrompt !== undefined
+                ? { userPrompt: request.userPrompt }
+                : {}),
+            },
+            inputPaths: buildInputPaths(
+              request.sourceOutputs,
+              derived?.lockingBytecode,
+              derivedChange?.lockingBytecode,
+            ),
           },
-          inputPaths: buildInputPaths(
-            request.sourceOutputs,
-            derived?.lockingBytecode,
-            derivedChange?.lockingBytecode,
-          ),
-        });
+          { signal: controller.signal },
+        );
         const txHex = response.signedTransaction;
         const report = inspectSignedTransaction(
           request.transaction,
@@ -333,9 +351,21 @@ function useRealBchWallet(
           throw new WalletSignedTransactionError(report);
         }
         return { txHex, txid: txidOf(txHex) };
+      } catch (cause) {
+        if (controller.signal.aborted) {
+          throw new Error(
+            'Request cancelled. Nothing was sent to the network. Start again when your wallet is awake.',
+            { cause },
+          );
+        }
+        throw cause;
       } finally {
+        signAbort.current = null;
         setPendingRequest(null);
       }
+    },
+    cancelPendingRequest: () => {
+      signAbort.current?.abort('Cancelled in Ferry');
     },
     broadcastTransaction: async (txHex: string) => {
       const electrum = new ElectrumClient(BCH_ELECTRUM_URL);

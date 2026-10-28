@@ -6,6 +6,7 @@ export function useBchReconnectTimeout(
   state: string,
   disconnect: () => Promise<unknown> | void,
   timeoutMs = BCH_RECONNECT_TIMEOUT_MS,
+  enabled = true,
 ): boolean {
   const [timedOut, setTimedOut] = useState(false);
   const disconnectRef = useRef(disconnect);
@@ -15,7 +16,9 @@ export function useBchReconnectTimeout(
   }, [disconnect]);
 
   useEffect(() => {
-    if (state !== 'connecting' && state !== 'reconnecting') {
+    // Only a restored session is dropped; a pairing the user started waits for
+    // the scan.
+    if (!enabled || (state !== 'connecting' && state !== 'reconnecting')) {
       setTimedOut(false);
       return;
     }
@@ -25,7 +28,7 @@ export function useBchReconnectTimeout(
       void Promise.resolve(disconnectRef.current()).catch(() => undefined);
     }, timeoutMs);
     return () => window.clearTimeout(timer);
-  }, [state, timeoutMs]);
+  }, [enabled, state, timeoutMs]);
 
   return timedOut;
 }

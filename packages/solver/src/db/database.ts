@@ -28,6 +28,8 @@ export interface ActionRecord {
  * Note: Schema migration v3 rewrites all historical millisecond values to seconds in SQLite,
  * so unit sniffing (> 1e11) is removed and database timestamps are strictly integer seconds.
  */
+const SUPPORTED_SCHEMA_VERSION = 3;
+
 export function toSeconds(ts: number | null | undefined): number {
   if (ts === null || ts === undefined || isNaN(ts)) return 0;
   return Math.floor(ts);
@@ -146,6 +148,11 @@ export class SolverDatabase {
       const currentVersion = this.db.pragma('user_version', {
         simple: true,
       }) as number;
+      if (currentVersion > SUPPORTED_SCHEMA_VERSION) {
+        throw new Error(
+          `Database schema v${currentVersion.toString()} is newer than this solver supports (v${SUPPORTED_SCHEMA_VERSION.toString()}); refusing to open it with older code.`,
+        );
+      }
 
       const columns = this.db.pragma('table_info(orders)') as Array<{
         name: string;
@@ -239,6 +246,29 @@ export class SolverDatabase {
 
     // Record schema user_version
     this.db.pragma('user_version = 3');
+    this.normalizeTimestampUnits();
+  }
+
+  /**
+   * Idempotent unit guard: an older solver process may have written
+   * millisecond values after the one-off v3 migration. Seconds never exceed
+   * 1e11 before the year 5000, so anything above is milliseconds. first_seen_at
+   * is deliberately excluded: it is stored in milliseconds.
+   */
+  normalizeTimestampUnits(): number {
+    const run = (sql: string): number => this.db.prepare(sql).run().changes;
+    let changed = 0;
+    for (const table of ['orders', 'pay_links', 'actions']) {
+      for (const column of ['created_at', 'updated_at']) {
+        changed += run(
+          `UPDATE ${table} SET ${column} = CAST(${column} / 1000 AS INTEGER) WHERE ${column} > 100000000000`,
+        );
+      }
+    }
+    changed += run(
+      'UPDATE pay_links SET expires_at = CAST(expires_at / 1000 AS INTEGER) WHERE expires_at IS NOT NULL AND expires_at > 100000000000',
+    );
+    return changed;
   }
 
   saveOrder(order: SolverOrderRecord): void {

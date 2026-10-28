@@ -64,6 +64,8 @@ export interface BchWallet {
   readonly walletName: string | null;
   readonly pairing?: boolean;
   readonly pendingRequest?: string | null;
+  /** Abort the wallet request that is waiting for approval. */
+  cancelPendingRequest?(): void;
   connect(): void;
   disconnect(): Promise<void>;
   setAddress(address: BchAddressInfo): void;
