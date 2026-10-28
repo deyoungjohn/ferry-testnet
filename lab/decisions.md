@@ -741,3 +741,10 @@ Phase L6 probes EVM routes across four distinct ecosystems: Ethereum Sepolia, Ar
 - **Evidence:** Vitest tests in `packages/solver/test/time-unit-migration.test.ts` (2/2 passed) and `packages/solver/test/api-time-units.test.ts` (8/8 passed). Full offline solver test suite pass in unshared network namespace (`unshare -rn bash -c "ip link set lo up; pnpm --filter @ferry/solver test"`: 21 test files passed, 198 tests passed, 2 skipped).
 - **Consequence for rebuild:** Fix historical time unit discrepancies at the persistence layer via explicit schema migrations rather than runtime read-side guards to preserve relational query semantics (sorting, min/max aggregations).
 
+
+### 2026-10-28 · BCH wallet path: Paytaca over WizardConnect; no browser-extension adapter
+- **Decision:** Keep WizardConnect (QR) with Paytaca as the primary tested wallet. Do not build a browser-extension adapter. Selene is retried on mainnet.
+- **Evidence:** The human ran the 10-minute extension probe in Chrome with the Paytaca extension: `typeof window.paytaca` and `window.paytaca && Object.keys(window.paytaca)` both returned `undefined`, so the current extension injects no provider that a page can call. This confirms D-A1-030 by observation and contradicts the research note that said it injects `window.paytaca`. The human reported that Paytaca connects in one touch over WizardConnect, while another wallet (XO) was hard to connect.
+- **Consequence for rebuild:** Plan on WizardConnect only; the QR must stay open until scanned and a stuck approval needs a cancel.
+- **Revisit if:** Paytaca documents and ships a page-injected provider, verified again with the same probe.
+- **Source:** Human console output, 2026-10-28.
