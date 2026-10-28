@@ -23,6 +23,7 @@ export interface SolverOrderRecord {
   status: ForwardOrderStatus;
   lane?: 'safe' | 'fast' | undefined;
   fastOptIn?: boolean | undefined;
+  /** Milliseconds since the epoch (the DSProof window is measured in ms). */
   firstSeenAt?: number | undefined;
   terms: OrderTerms;
   hashLock: `0x${string}`;

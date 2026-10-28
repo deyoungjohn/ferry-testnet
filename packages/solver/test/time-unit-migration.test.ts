@@ -254,17 +254,17 @@ describe('Database Schema Migration v3: Time Unit Normalization', () => {
     expect(actionRow.created_at).toBe(1793000000);
     expect(actionRow.updated_at).toBe(1793000100);
 
-    // First seen at must be converted to seconds
+    // first_seen_at stays in MILLISECONDS (DSProof window arithmetic,)
     const orderRow = solverDb.db
       .prepare('SELECT first_seen_at FROM orders WHERE id = ?')
       .get('order-old-3h') as { first_seen_at: number };
-    expect(orderRow.first_seen_at).toBe(1793000000);
+    expect(orderRow.first_seen_at).toBe(1793000000000);
 
     // Domain getters return correct records in seconds
     const order = solverDb.getOrder('order-old-3h');
     expect(order?.createdAt).toBe(1793000000);
     expect(order?.updatedAt).toBe(1793000000);
-    expect(order?.firstSeenAt).toBe(1793000000);
+    expect(order?.firstSeenAt).toBe(1793000000000);
 
     const payLink = solverDb.getPayLink('link-ms-1');
     expect(payLink?.createdAt).toBe(1793000000);
@@ -322,7 +322,8 @@ describe('Database Schema Migration v3: Time Unit Normalization', () => {
         'SELECT COUNT(*) as c FROM orders WHERE first_seen_at IS NOT NULL AND first_seen_at > 100000000000',
       )
       .get() as { c: number };
-    expect(msFirstSeenAfter.c).toBe(0);
+    // first_seen_at is deliberately left in milliseconds
+    expect(msFirstSeenAfter.c).toBeGreaterThan(0);
 
     const msPayLinksAfter = solverDb.db
       .prepare(

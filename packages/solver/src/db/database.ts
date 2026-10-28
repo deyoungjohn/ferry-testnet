@@ -210,11 +210,12 @@ export class SolverDatabase {
       // Migration v2 -> v3: rewrite millisecond timestamps (> 1e11) to integer seconds.
       // This fixes raw SQL sorting (ORDER BY created_at) and age calculations (MIN(created_at))
       // which previously mixed milliseconds (~1.79e12) and seconds (~1.79e9).
+      // first_seen_at stays in MILLISECONDS: the fast-lane DSProof window is
+      // measured in ms. Only the columns below move to seconds.
       if (currentVersion < 3) {
         this.db.exec(`
           UPDATE orders SET created_at = CAST(created_at / 1000 AS INTEGER) WHERE created_at > 100000000000;
           UPDATE orders SET updated_at = CAST(updated_at / 1000 AS INTEGER) WHERE updated_at > 100000000000;
-          UPDATE orders SET first_seen_at = CAST(first_seen_at / 1000 AS INTEGER) WHERE first_seen_at IS NOT NULL AND first_seen_at > 100000000000;
           UPDATE pay_links SET created_at = CAST(created_at / 1000 AS INTEGER) WHERE created_at > 100000000000;
           UPDATE pay_links SET updated_at = CAST(updated_at / 1000 AS INTEGER) WHERE updated_at > 100000000000;
           UPDATE pay_links SET expires_at = CAST(expires_at / 1000 AS INTEGER) WHERE expires_at IS NOT NULL AND expires_at > 100000000000;

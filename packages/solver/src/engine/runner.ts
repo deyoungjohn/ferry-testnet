@@ -672,7 +672,10 @@ export class SolverEngine {
           ? STALE_LOCK_TIMEOUT_MS
           : STALE_CLAIM_TIMEOUT_MS;
       const staleTimeoutMs = params.staleBroadcastTimeoutMs ?? defaultTimeout;
-      const actionAge = Date.now() - (existingAction?.updatedAt ?? 0);
+      // actions.updated_at is Unix seconds; keep the age in ms.
+      const actionAge =
+        (Math.floor(Date.now() / 1000) - (existingAction?.updatedAt ?? 0)) *
+        1000;
       if (
         existingAction?.status === 'BROADCAST' &&
         actionAge > staleTimeoutMs
