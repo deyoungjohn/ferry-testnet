@@ -176,7 +176,12 @@ function useRealBchWallet(
     if (!startFresh || startedFresh.current) return;
     startedFresh.current = true;
     const timer = window.setTimeout(() => connectRef.current(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      // StrictMode tears down and remounts the effect; allow the second setup
+      // to schedule the fresh pairing instead of leaving the QR closed.
+      startedFresh.current = false;
+      window.clearTimeout(timer);
+    };
   }, [startFresh]);
   const reconnectTimedOut = useBchReconnectTimeout(wizard.state, () =>
     wizard.disconnect(),
@@ -225,6 +230,7 @@ function useRealBchWallet(
     error: wizard.error,
     pendingRequest,
     walletName: wizard.walletName ?? remembered?.name ?? null,
+    pairing: wizard.state === 'connecting' && wizard.uri !== null,
     connect: () => {
       // Normal case: open the QR dialog directly. Only a stale restored
       // attempt needs the clear-and-remount path.
