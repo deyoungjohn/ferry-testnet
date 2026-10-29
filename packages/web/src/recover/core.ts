@@ -428,10 +428,7 @@ export async function loadRecoverySnapshot(
         'The contract at the recovery address has different code',
       );
     }
-    const lockId = evmLockId(
-      validated.terms.userCounterAddress,
-      validated.terms.hashLock,
-    );
+    const lockId = evmLockIdForFile(validated);
     const [lock, blockTimestamp] = await Promise.all([
       base.getLock(validated.contracts.evm.address as Address, lockId),
       base.blockTimestamp(),
@@ -456,6 +453,11 @@ export async function broadcastBchClaim(
   electrumUrl: string,
 ): Promise<string> {
   assertRecoveryNetwork(file);
+  if (isReverseOrder(file)) {
+    throw new Error(
+      'This is a BCH to Base order: a BCH claim pays the solver. Refund after the refund height instead.',
+    );
+  }
   const built = buildClaimTransaction({
     params: bchParametersFromTerms(file.terms),
     network: file.contracts.bch.network,
@@ -501,8 +503,28 @@ export async function broadcastBchRefund(
   }
 }
 
+/** BCH→counter orders: the solver is the locker on the EVM side. */
+export function isReverseOrder(file: RecoveryFile): boolean {
+  return file.terms.direction === 'BCH_TO_COUNTER';
+}
+
+export function evmLockIdForFile(file: RecoveryFile): Hex32 {
+  const locker = isReverseOrder(file)
+    ? file.terms.solverCounterAddress
+    : file.terms.userCounterAddress;
+  return evmLockId(locker, file.terms.hashLock);
+}
+
+export function evmClaimCalldata(file: RecoveryFile): Hex {
+  return encodeFunctionData({
+    abi: ferryHtlcAbi,
+    functionName: 'claim',
+    args: [evmLockIdForFile(file), file.secret as Hex],
+  });
+}
+
 export function evmRefundCalldata(file: RecoveryFile): Hex {
-  const lockId = evmLockId(file.terms.userCounterAddress, file.terms.hashLock);
+  const lockId = evmLockIdForFile(file);
   return encodeFunctionData({
     abi: ferryHtlcAbi,
     functionName: 'refund',

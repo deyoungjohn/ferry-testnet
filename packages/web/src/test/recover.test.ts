@@ -9,9 +9,14 @@ import {
 import { createMockSolverClient } from '../lib/solver/mock';
 import { generateSecret, hashLockForSecret } from '../lib/swap';
 import { MOCK_BCH_USER_ADDRESS } from '../lib/config';
+import { evmLockId } from '@ferry/core';
 import {
+  broadcastBchClaim,
   electrumScripthash,
+  evmClaimCalldata,
+  evmLockIdForFile,
   evmRefundCalldata,
+  isReverseOrder,
   findHtlcUtxo,
   parseRecoveryJson,
   validateRecoveryFile,
@@ -203,5 +208,40 @@ describe('recovery helpers', () => {
       scripthash,
     );
     expect(evmRefundCalldata(file)).toMatch(/^0x[0-9a-f]{8}/);
+  });
+});
+
+describe('reverse (BCH to Base) recovery files', () => {
+  async function reverseFile(): Promise<RecoveryFile> {
+    const file = await recoveryFile();
+    return {
+      ...file,
+      terms: { ...file.terms, direction: 'BCH_TO_COUNTER' },
+    };
+  }
+
+  it('identifies the direction and uses the solver as the Base locker', async () => {
+    const forward = await recoveryFile();
+    const reverse = await reverseFile();
+    expect(isReverseOrder(forward)).toBe(false);
+    expect(isReverseOrder(reverse)).toBe(true);
+    expect(evmLockIdForFile(forward)).toBe(
+      evmLockId(forward.terms.userCounterAddress, forward.terms.hashLock),
+    );
+    expect(evmLockIdForFile(reverse)).toBe(
+      evmLockId(reverse.terms.solverCounterAddress, reverse.terms.hashLock),
+    );
+    expect(evmClaimCalldata(reverse)).not.toBe(evmRefundCalldata(reverse));
+  });
+
+  it('refuses to claim the BCH lock, which would pay the solver', async () => {
+    const reverse = await reverseFile();
+    await expect(
+      broadcastBchClaim(
+        reverse,
+        { txid: '00'.repeat(32), vout: 0, satoshis: 1000n } as ElectrumUtxo,
+        'wss://invalid.example',
+      ),
+    ).rejects.toThrow(/pays the solver/);
   });
 });

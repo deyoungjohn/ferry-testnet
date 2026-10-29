@@ -1,7 +1,9 @@
 import {
   broadcastBchClaim,
   broadcastBchRefund,
+  evmClaimCalldata,
   evmRefundCalldata,
+  isReverseOrder,
   loadRecoverySnapshot,
   parseRecoveryJson,
   sendEvmRefund,
@@ -11,6 +13,7 @@ import {
   type RecoveryEndpoints,
   type RecoverySnapshot,
 } from './core';
+import { formatUnits } from 'viem';
 import type { RecoveryFile } from '../lib/recovery';
 import {
   BASE_RPC_URL,
@@ -184,6 +187,23 @@ function startRecoveryPage(): void {
       : `${value.slice(0, left)}…${value.slice(-right)}`;
   }
 
+  function bchAmountText(f: RecoveryFile): string {
+    return `${formatUnits(BigInt(f.terms.bchTokenAmount), 2)} ${f.terms.bchToken} on BCH`;
+  }
+
+  function counterAmountText(f: RecoveryFile): string {
+    const asset = f.terms.counterAsset;
+    return `${formatUnits(BigInt(f.terms.counterAmount), asset.decimals)} ${asset.symbol} on ${f.terms.counterChain}`;
+  }
+
+  function sendText(f: RecoveryFile): string {
+    return isReverseOrder(f) ? bchAmountText(f) : counterAmountText(f);
+  }
+
+  function receiveText(f: RecoveryFile): string {
+    return isReverseOrder(f) ? counterAmountText(f) : bchAmountText(f);
+  }
+
   function renderSummary(): void {
     if (!file) return;
     const terms = file.terms;
@@ -193,11 +213,9 @@ function startRecoveryPage(): void {
         'Issued by',
         file.solverKind === 'mock' ? 'mock solver (simulation)' : 'live solver',
       ),
-      fact(
-        'You send',
-        `${terms.counterAmount} base units on ${terms.counterChain}`,
-      ),
-      fact('You receive', `${terms.bchTokenAmount} ${terms.bchToken} on BCH`),
+      fact('Direction', isReverseOrder(file) ? 'BCH → Base' : 'Base → BCH'),
+      fact('You send', sendText(file)),
+      fact('You receive', receiveText(file)),
       fact('BCH HTLC address', file.contracts.bch.htlcAddress),
       fact('BCH token address', file.contracts.bch.tokenAddress),
       fact('BCH refund height', String(terms.bchRefundHeight)),
@@ -217,7 +235,8 @@ function startRecoveryPage(): void {
     actionButtons.replaceChildren();
     actionCopy.replaceChildren();
     calldataBox.classList.add('hidden');
-    calldata.value = evmRefundCalldata(file);
+    const reverse = isReverseOrder(file);
+    calldata.value = reverse ? evmClaimCalldata(file) : evmRefundCalldata(file);
 
     const copy = document.createElement('p');
     const bch = snapshot.bch;
@@ -248,7 +267,14 @@ function startRecoveryPage(): void {
     }
     actionCopy.append(copy);
 
-    if (utxo && bch.ok) {
+    if (utxo && bch.ok && reverse) {
+      const note = document.createElement('p');
+      note.textContent = bchRefundReady
+        ? 'The solver never delivered, so you can take your tokens back with a BCH refund.'
+        : `Your tokens are locked on BCH. The solver claims them only after it delivers on Base. If it does not, you can refund from block ${file.terms.bchRefundHeight} (the chain is at ${bch.tipHeight}). Do not claim this lock yourself: a claim pays the solver.`;
+      actionCopy.append(note);
+    }
+    if (utxo && bch.ok && !reverse) {
       const claim = document.createElement('button');
       claim.type = 'button';
       claim.className = 'primary';
@@ -256,7 +282,8 @@ function startRecoveryPage(): void {
       claim.disabled = busy;
       claim.addEventListener('click', () => void handleClaim(utxo));
       actionButtons.append(claim);
-
+    }
+    if (utxo && bch.ok) {
       if (bchRefundReady) {
         const refund = document.createElement('button');
         refund.type = 'button';
@@ -268,7 +295,15 @@ function startRecoveryPage(): void {
       }
     }
 
-    if (evmRefundReady && evm.ok) {
+    if (reverse && evm.ok && evmLock?.state === 1) {
+      const claimNote = document.createElement('p');
+      claimNote.textContent =
+        'The solver has locked your USDC on Base. Send the calldata below from your Base wallet to claim it.';
+      actionCopy.append(claimNote);
+      calldataBox.classList.remove('hidden');
+    }
+
+    if (!reverse && evmRefundReady && evm.ok) {
       const injected = (window as unknown as { ethereum?: Eip1193Provider })
         .ethereum;
       if (injected) {
