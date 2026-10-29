@@ -27,6 +27,7 @@ import {
   parsePusdAmount,
   quoteRate,
   truncateAddress,
+  describeUsdcShortfall,
 } from '../lib/swap';
 import { bchElectrumUrls, bchQuoteConfigError } from '../lib/bch/tip';
 import { formatUsdMicros } from '../lib/format';
@@ -297,6 +298,15 @@ export function PayLinkPage() {
     setBusy(true);
     setError(null);
     try {
+      const shortfall = describeUsdcShortfall(
+        await evm.readTokenBalance(evm.address),
+        quote.terms.counterAmount,
+      );
+      if (shortfall) {
+        setBusy(false);
+        showMessage(shortfall);
+        return;
+      }
       const nonce = await evm.readPermitNonce(evm.address);
       const permitSignature = await evm.signTypedData(
         buildPermitTypedData(quote.terms, evm.address, nonce),

@@ -40,6 +40,7 @@ import {
   DEFAULT_REVEAL_CONFIG,
 } from '@ferry/core';
 import type { OrderTerms } from '@ferry/core';
+import { RelayLockRejectedError } from '@ferry/chain-evm';
 import type { EvmChainAdapter } from '@ferry/chain-evm';
 import { deriveBchKeyDetails } from '../bch/lock-builder.js';
 import { toSeconds, type SolverDatabase } from '../db/database.js';
@@ -849,8 +850,13 @@ export function buildServer(options: SolverServerOptions): FastifyInstance {
       return reply.status(200).send(response);
     } catch (err: unknown) {
       logger.error({ err, orderId: order.id }, 'Relay lock execution failed');
+      if (err instanceof RelayLockRejectedError) {
+        return reply
+          .status(err.code === 'INSUFFICIENT_USER_BALANCE' ? 400 : 422)
+          .send({ code: err.code, message: err.message });
+      }
       return reply.status(500).send({
-        code: 'RELAY_LOCK_FAILED',
+        code: 'INTERNAL_ERROR',
         message: (err as Error).message,
       });
     }

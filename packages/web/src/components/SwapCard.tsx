@@ -49,6 +49,7 @@ import {
   buildPermitTypedData,
   formatPusd,
   formatUsdc,
+  describeUsdcShortfall,
   generateSecret,
   hashLockForSecret,
   parsePusdAmount,
@@ -328,6 +329,15 @@ export function SwapCard() {
     setPhase('locking');
     setError(null);
     try {
+      const shortfall = describeUsdcShortfall(
+        await evm.readTokenBalance(evm.address),
+        quote.terms.counterAmount,
+      );
+      if (shortfall) {
+        setPhase('quoted');
+        showMessage(shortfall);
+        return;
+      }
       const nonce = await evm.readPermitNonce(evm.address);
       const permitSignature = await evm.signTypedData(
         buildPermitTypedData(quote.terms, evm.address, nonce),

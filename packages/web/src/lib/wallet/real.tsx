@@ -65,6 +65,16 @@ const noncesAbi = [
   },
 ] as const;
 
+const balanceOfAbi = [
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const;
+
 function useRealEvmWallet(): EvmWallet {
   const { address, chainId, isConnected, isConnecting, isReconnecting } =
     useAccount();
@@ -121,6 +131,15 @@ function useRealEvmWallet(): EvmWallet {
         address: USDC_ADDRESS,
         abi: noncesAbi,
         functionName: 'nonces',
+        args: [owner],
+      });
+    },
+    readTokenBalance: async (owner: Address) => {
+      if (!publicClient) throw new Error('Base RPC is not configured');
+      return publicClient.readContract({
+        address: USDC_ADDRESS,
+        abi: balanceOfAbi,
+        functionName: 'balanceOf',
         args: [owner],
       });
     },
@@ -416,6 +435,9 @@ const unavailableEvm: EvmWallet = {
     throw new Error('Wallet connect needs a Reown project ID');
   },
   readPermitNonce: async () => {
+    throw new Error('Wallet connect needs a Reown project ID');
+  },
+  readTokenBalance: async () => {
     throw new Error('Wallet connect needs a Reown project ID');
   },
   refundLock: async () => {

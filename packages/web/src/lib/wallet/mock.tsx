@@ -33,6 +33,9 @@ const MOCK_BCH_UTXOS: readonly BchUtxo[] = [
   },
 ];
 
+/** The mock wallet always holds enough USDC; shortfall tests override it. */
+const MOCK_TOKEN_BALANCE = 10n ** 18n;
+
 export function MockWalletProvider({
   children,
 }: {
@@ -114,6 +117,7 @@ export function MockWalletProvider({
       },
       readPermitNonce: async () =>
         scriptEvm ? BigInt(await scriptEvm.readPermitNonce()) : 0n,
+      readTokenBalance: async () => MOCK_TOKEN_BALANCE,
       refundLock: async (id: Hex) => sha256(id),
       claimLock: async (id: Hex) => sha256(id),
     }),

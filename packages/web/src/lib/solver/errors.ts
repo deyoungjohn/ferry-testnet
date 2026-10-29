@@ -105,6 +105,14 @@ const COPY: Readonly<Record<SolverFailureCode, SolverErrorCopy>> = {
     sentence: 'The solver cannot get a healthy Base tip right now.',
     nextStep: 'Retry in a minute and check the solver health line.',
   },
+  INSUFFICIENT_USER_BALANCE: {
+    sentence: 'Your wallet does not hold enough USDC for this swap.',
+    nextStep: 'Lower the amount or add USDC on Base, then get a new quote.',
+  },
+  RELAY_LOCK_REVERTED: {
+    sentence: 'The lock transaction was rejected by the chain.',
+    nextStep: 'Get a new quote and retry; the code explains the reason.',
+  },
   INSUFFICIENT_INVENTORY: {
     sentence: 'The solver does not have enough inventory for this swap.',
     nextStep: 'Try a smaller amount or retry later.',

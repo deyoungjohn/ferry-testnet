@@ -29,6 +29,7 @@ const baseEvm: EvmWallet = {
   disconnect: vi.fn(async () => undefined),
   signTypedData: vi.fn(),
   readPermitNonce: vi.fn(),
+  readTokenBalance: vi.fn(),
   refundLock: vi.fn(),
   claimLock: vi.fn(),
 };

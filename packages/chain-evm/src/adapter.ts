@@ -53,6 +53,16 @@ const erc20PermitAbi = parseAbi([
   'function balanceOf(address account) external view returns (uint256)',
 ]);
 
+export class RelayLockRejectedError extends Error {
+  constructor(
+    readonly code: 'INSUFFICIENT_USER_BALANCE' | 'RELAY_LOCK_REVERTED',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'RelayLockRejectedError';
+  }
+}
+
 export class EvmChainAdapter implements ChainAdapter {
   readonly id: CounterChain;
   readonly chainId: number;
@@ -202,7 +212,40 @@ export class EvmChainAdapter implements ChainAdapter {
       throw new Error('WalletClient with account required to relay lock');
     }
 
-    const hash = await this.walletClient.writeContract({
+    const balance = await this.client.readContract({
+      address: getAddress(payload.token),
+      abi: erc20PermitAbi,
+      functionName: 'balanceOf',
+      args: [getAddress(payload.owner)],
+    });
+    if (balance < payload.amount) {
+      throw new RelayLockRejectedError(
+        'INSUFFICIENT_USER_BALANCE',
+        `Owner holds ${balance} base units but the lock needs ${payload.amount}`,
+      );
+    }
+
+    let hash: Hash;
+    try {
+      hash = await this.sendRelayLock(payload);
+    } catch (err) {
+      throw new RelayLockRejectedError(
+        'RELAY_LOCK_REVERTED',
+        (err as { shortMessage?: string }).shortMessage ??
+          (err as Error).message,
+      );
+    }
+
+    await this.client.waitForTransactionReceipt({ hash });
+    this.lastSeenTxByAction.set(actionKey, hash);
+    return { chain: this.id, txId: hash };
+  }
+
+  private async sendRelayLock(payload: RelayLockPayload): Promise<Hash> {
+    if (!this.walletClient || !this.walletClient.account) {
+      throw new Error('WalletClient with account required to relay lock');
+    }
+    return this.walletClient.writeContract({
       address: this.htlcAddress,
       abi: ferryHtlcAbi,
       functionName: 'lockWithIntent',
@@ -223,10 +266,6 @@ export class EvmChainAdapter implements ChainAdapter {
       chain: null,
       account: this.walletClient.account,
     });
-
-    await this.client.waitForTransactionReceipt({ hash });
-    this.lastSeenTxByAction.set(actionKey, hash);
-    return { chain: this.id, txId: hash };
   }
 
   async lock(terms: OrderTerms): Promise<TxRef> {

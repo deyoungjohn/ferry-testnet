@@ -80,6 +80,15 @@ export function formatUsdc(amount: bigint): string {
   return formatUnits(amount, USDC_DECIMALS);
 }
 
+/** Say what is missing before any signature is requested. */
+export function describeUsdcShortfall(
+  balance: bigint,
+  required: bigint,
+): string | null {
+  if (balance >= required) return null;
+  return `You need ${formatUsdc(required)} USDC but this wallet holds ${formatUsdc(balance)} USDC on Base. Lower the amount or add USDC.`;
+}
+
 export function formatPusd(amount: bigint): string {
   return formatUnits(amount, 2);
 }

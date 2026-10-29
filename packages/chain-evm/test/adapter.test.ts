@@ -389,6 +389,57 @@ describe('EvmChainAdapter on local anvil', () => {
     expect(retryTx.txId).toBe(relayTx.txId);
   });
 
+  it('rejects relayLock with a typed error when the owner cannot cover the amount', async () => {
+    const hashLock = sha256(`0x${'56'.repeat(32)}` as const);
+    const signedLock = {
+      chain: 'base' as const,
+      orderId: hashLock,
+      payload: {
+        owner: userAccount.address,
+        token: usdcAddress,
+        recipient: solverAccount.address,
+        amount: 10n ** 30n,
+        hashLock,
+        deadline: BigInt(Math.floor(Date.now() / 1000) + 7200),
+        intentDeadline: BigInt(Math.floor(Date.now() / 1000) + 3600),
+        intentSig: `0x${'00'.repeat(65)}` as const,
+        permitDeadline: 0n,
+        v: 0,
+        r: `0x${'00'.repeat(32)}` as const,
+        s: `0x${'00'.repeat(32)}` as const,
+      },
+    };
+    await expect(adapter.relayLock(signedLock)).rejects.toMatchObject({
+      name: 'RelayLockRejectedError',
+      code: 'INSUFFICIENT_USER_BALANCE',
+    });
+  });
+
+  it('maps a reverting relayLock to RELAY_LOCK_REVERTED', async () => {
+    const hashLock = sha256(`0x${'57'.repeat(32)}` as const);
+    const signedLock = {
+      chain: 'base' as const,
+      orderId: hashLock,
+      payload: {
+        owner: userAccount.address,
+        token: usdcAddress,
+        recipient: solverAccount.address,
+        amount: 1n,
+        hashLock,
+        deadline: BigInt(Math.floor(Date.now() / 1000) + 7200),
+        intentDeadline: BigInt(Math.floor(Date.now() / 1000) - 60),
+        intentSig: `0x${'00'.repeat(65)}` as const,
+        permitDeadline: 0n,
+        v: 0,
+        r: `0x${'00'.repeat(32)}` as const,
+        s: `0x${'00'.repeat(32)}` as const,
+      },
+    };
+    await expect(adapter.relayLock(signedLock)).rejects.toMatchObject({
+      code: 'RELAY_LOCK_REVERTED',
+    });
+  });
+
   it('handles refund after deadline and rejects premature refund', async () => {
     const secret = `0x${'77'.repeat(32)}` as const;
     const hashLock = sha256(secret);

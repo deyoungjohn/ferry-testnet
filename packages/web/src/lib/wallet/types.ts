@@ -53,6 +53,8 @@ export interface EvmWallet {
   disconnect(): Promise<void>;
   signTypedData(params: TypedDataDefinition): Promise<Hex>;
   readPermitNonce(owner: Address): Promise<bigint>;
+  /** Base-unit USDC balance of `owner`, read before any signature. */
+  readTokenBalance(owner: Address): Promise<bigint>;
   refundLock(id: Hex): Promise<Hex>;
   claimLock(id: Hex, secret: Hex): Promise<Hex>;
 }
