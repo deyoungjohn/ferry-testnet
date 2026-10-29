@@ -51,6 +51,8 @@ const erc20PermitAbi = parseAbi([
   'function nonces(address owner) external view returns (uint256)',
   'function decimals() external view returns (uint8)',
   'function balanceOf(address account) external view returns (uint256)',
+  'function allowance(address owner, address spender) external view returns (uint256)',
+  'function approve(address spender, uint256 amount) external returns (bool)',
 ]);
 
 export class RelayLockRejectedError extends Error {
@@ -292,6 +294,26 @@ export class EvmChainAdapter implements ChainAdapter {
 
     if (!this.walletClient || !this.walletClient.account) {
       throw new Error('WalletClient with account required to lock');
+    }
+
+    // The locker owns its approvals: top up exactly what this lock needs.
+    const token = getAddress(terms.counterAsset.address);
+    const allowance = await this.client.readContract({
+      address: token,
+      abi: erc20PermitAbi,
+      functionName: 'allowance',
+      args: [this.walletClient.account.address, this.htlcAddress],
+    });
+    if (allowance < terms.counterAmount) {
+      const approveHash = await this.walletClient.writeContract({
+        address: token,
+        abi: erc20PermitAbi,
+        functionName: 'approve',
+        args: [this.htlcAddress, terms.counterAmount],
+        chain: null,
+        account: this.walletClient.account,
+      });
+      await this.client.waitForTransactionReceipt({ hash: approveHash });
     }
 
     const hash = await this.walletClient.writeContract({

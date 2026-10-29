@@ -389,6 +389,58 @@ describe('EvmChainAdapter on local anvil', () => {
     expect(retryTx.txId).toBe(relayTx.txId);
   });
 
+  it('tops up the exact allowance before a solver lock', async () => {
+    const allowanceAbi = parseAbi([
+      'function approve(address spender, uint256 amount) external returns (bool)',
+      'function allowance(address owner, address spender) external view returns (uint256)',
+    ]);
+    await solverClient.writeContract({
+      address: usdcAddress,
+      abi: allowanceAbi,
+      functionName: 'approve',
+      args: [htlcAddress, 1n],
+    });
+    const hashLock = sha256(`0x${'58'.repeat(32)}` as const);
+    const chainNow = Number((await publicClient.getBlock()).timestamp);
+    const terms: OrderTerms = parseOrderTerms({
+      version: 1,
+      direction: 'BCH_TO_COUNTER',
+      bchToken: 'PUSD',
+      bchTokenCategory: `0x${'ab'.repeat(32)}`,
+      bchTokenAmount: 2485n,
+      counterAmount: 7_000_000n,
+      counterChain: 'base',
+      counterNetworkId: 31337,
+      counterAsset: { symbol: 'USDC', decimals: 6, address: usdcAddress },
+      counterHtlc: htlcAddress,
+      userCounterAddress: userAccount.address,
+      userBchLockingBytecode: `0x76a914${'44'.repeat(20)}88ac`,
+      solverCounterAddress: solverAccount.address,
+      solverBchLockingBytecode: `0x76a914${'66'.repeat(20)}88ac`,
+      hashLock,
+      counterDeadline: chainNow + 3600,
+      bchRefundHeight: 1000036,
+      bchCarrySats: 3000n,
+      bchMaxFee: 1500n,
+      quoteId: 'quote-allowance',
+      quoteExpiry: Math.floor(Date.now() / 1000) + 60,
+    });
+    const tx = await adapter.lock(terms);
+    expect(tx.txId).toMatch(/^0x[0-9a-fA-F]{64}$/);
+    const lock = await adapter.getLock(
+      adapter.lockId(solverAccount.address, hashLock),
+    );
+    expect(lock.status).toBe('locked');
+    // The approval was exactly the lock amount and the lock spent it.
+    const left = await publicClient.readContract({
+      address: usdcAddress,
+      abi: allowanceAbi,
+      functionName: 'allowance',
+      args: [solverAccount.address, htlcAddress],
+    });
+    expect(left).toBe(0n);
+  });
+
   it('rejects relayLock with a typed error when the owner cannot cover the amount', async () => {
     const hashLock = sha256(`0x${'56'.repeat(32)}` as const);
     const signedLock = {

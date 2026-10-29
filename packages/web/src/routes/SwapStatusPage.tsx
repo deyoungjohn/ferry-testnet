@@ -75,6 +75,7 @@ export function SwapStatusPage() {
   const claimInFlight = useRef(false);
   const autoClaimFor = useRef<string | null>(null);
   const claimActionRef = useRef<() => Promise<void>>(async () => undefined);
+  const reverseClaimRef = useRef<() => Promise<void>>(async () => undefined);
 
   const id =
     orderId && ORDER_ID_PATTERN.test(orderId) ? (orderId as Hex32) : null;
@@ -158,7 +159,7 @@ export function SwapStatusPage() {
   const [bchClaimCheckError, setBchClaimCheckError] = useState<string | null>(
     null,
   );
-  const bchClaimCopy = bchClaimConfirmationCopy(bchClaimConfirmations);
+  const bchClaimCopy = bchClaimConfirmationCopy(bchClaimConfirmations, reverse);
   const bchLockTx = useMemo(
     () => order?.transactions.find((tx) => tx.label === 'BCH lock') ?? null,
     [order],
@@ -331,8 +332,8 @@ export function SwapStatusPage() {
       setClaimPhase('onchain');
       setActionMessage(
         result.already
-          ? `BCH claim is already on chain: ${truncateAddress(result.txid, 10, 6)}. Waiting for the solver to release your USDC.`
-          : `BCH claim broadcast: ${truncateAddress(result.txid, 10, 6)}. Waiting for the solver to release your USDC.`,
+          ? `BCH claim is already on chain: ${truncateAddress(result.txid, 10, 6)}. Your ${PUSD_SYMBOL} arrives after 1 confirmation; the solver settles its USDC separately.`
+          : `BCH claim broadcast: ${truncateAddress(result.txid, 10, 6)}. Your ${PUSD_SYMBOL} arrives after 1 confirmation; the solver settles its USDC separately.`,
       );
       try {
         await solver.submitSecret(id, secret);
@@ -370,20 +371,16 @@ export function SwapStatusPage() {
 
   useEffect(() => {
     claimActionRef.current = handleClaim;
+    reverseClaimRef.current = () => handleReverseClaim(true);
   });
 
   useEffect(() => {
-    if (
-      !id ||
-      !order ||
-      reverse ||
-      !view?.claimAvailable ||
-      autoClaimFor.current === id
-    ) {
+    if (!id || !order || !view?.claimAvailable || autoClaimFor.current === id) {
       return;
     }
     autoClaimFor.current = id;
-    void claimActionRef.current();
+    // The gasless reverse claim needs only the secret: no wallet prompt.
+    void (reverse ? reverseClaimRef.current() : claimActionRef.current());
   }, [id, order, reverse, view?.claimAvailable]);
 
   async function handleReverseClaim(gasless: boolean): Promise<void> {

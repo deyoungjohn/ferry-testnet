@@ -1,3 +1,5 @@
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import pino from 'pino';
 import { createPublicClient, createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -11,20 +13,43 @@ import { TestnetStubPriceSource } from './pricing/price-source.js';
 import { runStartupSelfCheck } from './ops/self-check.js';
 
 async function main(): Promise<void> {
-  const logger = pino({
-    level: process.env.LOG_LEVEL || 'info',
-    redact: {
-      paths: [
-        'req.body.secret',
-        'body.secret',
-        'secret',
-        'solverEvmPrivateKey',
-        'solverBchWif',
-      ],
-      censor: '[REDACTED]',
+  // Full log goes to a file; the terminal only shows warnings and errors.
+  const logFile =
+    process.env.LOG_FILE ||
+    join(
+      process.env.DATABASE_PATH ? dirname(process.env.DATABASE_PATH) : '.',
+      'solver.log',
+    );
+  mkdirSync(dirname(logFile), { recursive: true });
+  const logger = pino(
+    {
+      level: process.env.LOG_LEVEL || 'info',
+      redact: {
+        paths: [
+          'req.body.secret',
+          'body.secret',
+          'secret',
+          'solverEvmPrivateKey',
+          'solverBchWif',
+        ],
+        censor: '[REDACTED]',
+      },
     },
-  });
+    pino.multistream([
+      {
+        level: 'info',
+        stream: pino.destination({ dest: logFile, sync: false }),
+      },
+      {
+        level: process.env.CONSOLE_LOG_LEVEL || 'warn',
+        stream: process.stdout,
+      },
+    ]),
+  );
 
+  console.log(
+    `Ferryman solver starting. Full log: ${logFile} (tail -f it; the terminal shows warnings and errors only).`,
+  );
   logger.info('Starting Ferryman solver daemon...');
 
   // 1. Load config
@@ -129,6 +154,9 @@ async function main(): Promise<void> {
   logger.info(
     { port: config.port, host: config.host },
     'Ferryman HTTP API listening',
+  );
+  console.log(
+    `Ferryman ready on http://${config.host}:${config.port} (${config.network}).`,
   );
 
   // Graceful shutdown

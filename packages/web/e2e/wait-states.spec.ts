@@ -48,12 +48,7 @@ test('a solver-side BCH claim delay is separate from the user USDC arrival', asy
 }) => {
   test.setTimeout(75_000);
   await reachReverseStatus(page, 'holdAfterClaim=1');
-  const claimButton = page.getByRole('button', {
-    name: 'Claim USDC (gasless)',
-  });
-  await expect(claimButton).toBeVisible({ timeout: 20_000 });
-  await claimButton.click();
-
+  // The gasless USDC claim runs automatically.
   await expect(page.getByText('Your USDC arrived')).toBeVisible({
     timeout: 20_000,
   });

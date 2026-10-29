@@ -121,10 +121,7 @@ test('UI-03 reverse BCH to USDC happy path through DONE', async ({ page }) => {
   ).toBeVisible();
   await expect(page.getByText('QR / manual funding fallback')).toBeVisible();
   await page.getByRole('button', { name: 'Sign with BCH wallet' }).click();
-  await expect(
-    page.getByRole('button', { name: 'Claim USDC (gasless)' }),
-  ).toBeVisible({ timeout: 20_000 });
-  await page.getByRole('button', { name: 'Claim USDC (gasless)' }).click();
+  // The gasless USDC claim runs automatically; no click.
 
   await expect(
     page.getByRole('heading', { level: 1, name: /done/i }),
