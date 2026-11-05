@@ -33,6 +33,7 @@ import { bchElectrumUrls, bchQuoteConfigError } from '../lib/bch/tip';
 import { formatUsdMicros } from '../lib/format';
 import { useQuoteAutoRefresh } from '../lib/quote/auto-refresh';
 import { assertQuoteStillOpen } from '../lib/quote/expiry';
+import { saveOrderSource } from '../lib/orders/context';
 import { saveQuoteRecord } from '../lib/orders/store';
 import { useSolver } from '../lib/solver/context';
 import { describeSolverError, type SolverFailure } from '../lib/solver/errors';
@@ -246,6 +247,7 @@ export function PayLinkPage() {
         return false;
       }
       await saveQuoteRecord(next, solverIsLive());
+      saveOrderSource(next.orderId, link.kind === 'open' ? 'tip' : 'invoice');
       const file = buildRecoveryFile(
         next.orderId,
         next.terms,

@@ -10,6 +10,7 @@ import { BchQuorumClient } from './bch/quorum-client.js';
 import { SolverEngine } from './engine/runner.js';
 import { buildServer } from './api/server.js';
 import { TestnetStubPriceSource } from './pricing/price-source.js';
+import { createConsoleStream } from './ops/console-stream.js';
 import { runStartupSelfCheck } from './ops/self-check.js';
 
 async function main(): Promise<void> {
@@ -42,7 +43,7 @@ async function main(): Promise<void> {
       },
       {
         level: process.env.CONSOLE_LOG_LEVEL || 'warn',
-        stream: process.stdout,
+        stream: createConsoleStream(),
       },
     ]),
   );
@@ -123,7 +124,10 @@ async function main(): Promise<void> {
     solverBchWif: config.solverBchWif,
     logger,
   });
-  console.log(selfCheck.report);
+  logger.info({ report: selfCheck.report }, 'Startup self-check passed');
+  console.log(
+    `Self-check passed on ${config.network}. Full report in ${logFile}.`,
+  );
 
   // 6. Initialize Engine
   const engine = new SolverEngine(

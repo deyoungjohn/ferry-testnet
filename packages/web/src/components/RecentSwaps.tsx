@@ -1,8 +1,11 @@
+import { useState } from 'react';
 import { explorerTxUrl } from '../lib/config';
 import { formatBaseUnits, formatUtcTimestamp } from '../lib/format';
 import { formatDuration } from '../lib/solver/view';
 import type { DataResource, RecentSwap } from '../lib/stats/types';
 import { truncateAddress } from '../lib/swap';
+
+export const RECENT_SWAPS_PAGE_SIZE = 10;
 
 function swapLabel(swap: RecentSwap): string {
   const counter = `${formatBaseUnits(swap.counterAmount, swap.counterDecimals)} ${swap.counterSymbol}`;
@@ -42,7 +45,14 @@ export function RecentSwaps({
 }: {
   readonly resource: DataResource<readonly RecentSwap[]>;
 }) {
-  const swaps = resource.status === 'ready' ? resource.data : [];
+  const all = resource.status === 'ready' ? resource.data : [];
+  const [page, setPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(all.length / RECENT_SWAPS_PAGE_SIZE));
+  const current = Math.min(page, pageCount - 1);
+  const swaps = all.slice(
+    current * RECENT_SWAPS_PAGE_SIZE,
+    (current + 1) * RECENT_SWAPS_PAGE_SIZE,
+  );
   const emptyMessage =
     resource.status === 'loading'
       ? 'Loading recent settlements…'
@@ -153,6 +163,33 @@ export function RecentSwaps({
               </li>
             ))}
           </ul>
+
+          {pageCount > 1 ? (
+            <nav
+              aria-label="Recent swaps pages"
+              className="mt-5 flex items-center justify-between text-[11px] text-text-muted"
+            >
+              <button
+                type="button"
+                onClick={() => setPage(current - 1)}
+                disabled={current === 0}
+                className="rounded-pill border border-hairline px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span className="tabular-nums">
+                Page {current + 1} of {pageCount}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage(current + 1)}
+                disabled={current >= pageCount - 1}
+                className="rounded-pill border border-hairline px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Next
+              </button>
+            </nav>
+          ) : null}
         </>
       )}
     </section>

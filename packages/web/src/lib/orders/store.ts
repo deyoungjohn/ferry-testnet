@@ -109,6 +109,22 @@ export async function loadOrderRecord(
   }
 }
 
+/** Every order saved in this browser, newest first (My Activity). */
+export async function listOrderRecords(): Promise<PersistedOrder[]> {
+  const db = await openDatabase();
+  try {
+    const read = db.transaction(STORE, 'readonly');
+    const records = await request<PersistedOrder[]>(
+      read.objectStore(STORE).getAll(),
+    );
+    return records
+      .filter((record) => record.status !== 'QUOTED')
+      .sort((a, b) => b.createdAt - a.createdAt);
+  } finally {
+    db.close();
+  }
+}
+
 export async function deleteOrderDatabase(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const deletion = indexedDB.deleteDatabase(DB_NAME);

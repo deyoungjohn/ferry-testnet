@@ -63,6 +63,12 @@ export function NavBar() {
               Pay links
             </Link>
             <Link
+              to="/activity"
+              className="text-sm text-text-muted transition-colors hover:text-text"
+            >
+              My Activity
+            </Link>
+            <Link
               to="/recover"
               className="text-sm text-text-muted transition-colors hover:text-text"
             >

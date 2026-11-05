@@ -12,6 +12,10 @@ const RecoverPage = lazy(async () => {
   const module = await import('./routes/RecoverPage');
   return { default: module.RecoverPage };
 });
+const ActivityPage = lazy(async () => {
+  const module = await import('./routes/ActivityPage');
+  return { default: module.ActivityPage };
+});
 const PayLinkPage = lazy(async () => {
   const module = await import('./routes/PayLinkPage');
   return { default: module.PayLinkPage };
@@ -57,6 +61,14 @@ export function App() {
           element={
             <Suspense fallback={<RouteLoading />}>
               <RecoverPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="activity"
+          element={
+            <Suspense fallback={<RouteLoading />}>
+              <ActivityPage />
             </Suspense>
           }
         />

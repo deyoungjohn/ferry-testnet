@@ -18,6 +18,11 @@ import {
 import { addressFromLockingBytecode } from '../lib/bch/address';
 import { bchClaimConfirmationCopy } from '../lib/bch/confirmations';
 import {
+  loadOrderSource,
+  payeeName,
+  statusWording,
+} from '../lib/orders/context';
+import {
   ClaimSpentError,
   ClaimVerificationError,
   broadcastClaimIdempotent,
@@ -159,7 +164,15 @@ export function SwapStatusPage() {
   const [bchClaimCheckError, setBchClaimCheckError] = useState<string | null>(
     null,
   );
-  const bchClaimCopy = bchClaimConfirmationCopy(bchClaimConfirmations, reverse);
+  const source = useMemo(() => (id ? loadOrderSource(id) : 'swap'), [id]);
+  const wording = statusWording(source);
+  const bchClaimCopy = bchClaimConfirmationCopy(
+    bchClaimConfirmations,
+    reverse,
+    order
+      ? { source, amount: formatPusd(order.terms.bchTokenAmount) }
+      : undefined,
+  );
   const bchLockTx = useMemo(
     () => order?.transactions.find((tx) => tx.label === 'BCH lock') ?? null,
     [order],
@@ -332,8 +345,8 @@ export function SwapStatusPage() {
       setClaimPhase('onchain');
       setActionMessage(
         result.already
-          ? `BCH claim is already on chain: ${truncateAddress(result.txid, 10, 6)}. Your ${PUSD_SYMBOL} arrives after 1 confirmation; the solver settles its USDC separately.`
-          : `BCH claim broadcast: ${truncateAddress(result.txid, 10, 6)}. Your ${PUSD_SYMBOL} arrives after 1 confirmation; the solver settles its USDC separately.`,
+          ? `BCH claim is already on chain: ${truncateAddress(result.txid, 10, 6)}. ${claimArrivalText()}`
+          : `BCH claim broadcast: ${truncateAddress(result.txid, 10, 6)}. ${claimArrivalText()}`,
       );
       try {
         await solver.submitSecret(id, secret);
@@ -382,6 +395,13 @@ export function SwapStatusPage() {
     // The gasless reverse claim needs only the secret: no wallet prompt.
     void (reverse ? reverseClaimRef.current() : claimActionRef.current());
   }, [id, order, reverse, view?.claimAvailable]);
+
+  function claimArrivalText(): string {
+    if (source === 'swap' || !order) {
+      return `Your ${PUSD_SYMBOL} arrives after 1 confirmation; the solver settles its USDC separately.`;
+    }
+    return `${payeeName(source)} receives ${formatPusd(order.terms.bchTokenAmount)} ${PUSD_SYMBOL} after 1 confirmation; the solver settles its USDC separately.`;
+  }
 
   async function handleReverseClaim(gasless: boolean): Promise<void> {
     if (!id || !order) return;
@@ -549,15 +569,12 @@ export function SwapStatusPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs font-medium tracking-[0.16em] text-text-muted uppercase">
-            Swap status
+            {wording.eyebrow}
           </p>
           <h1 className="mt-1 font-serif text-3xl italic text-text sm:text-4xl">
             {view ? view.statusLabel : 'Reading the order…'}
           </h1>
         </div>
-        <span className="rounded-pill border border-hairline bg-surface-2 px-3 py-1.5 font-mono text-[10px] text-text-muted">
-          {truncateAddress(id, 10, 8)}
-        </span>
       </div>
 
       {!solverIsLive() ? (
@@ -641,7 +658,7 @@ export function SwapStatusPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[10px] font-medium tracking-[0.14em] text-text-muted uppercase">
-                  You send
+                  {wording.sendLabel}
                 </p>
                 <p className="mt-1 text-2xl font-medium tabular-nums text-text">
                   {sendAmount}
@@ -658,7 +675,7 @@ export function SwapStatusPage() {
               </span>
               <div className="text-right">
                 <p className="text-[10px] font-medium tracking-[0.14em] text-text-muted uppercase">
-                  You receive
+                  {wording.receiveLabel}
                 </p>
                 <p className="mt-1 text-2xl font-medium tabular-nums text-lime">
                   {receiveAmount}
