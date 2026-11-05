@@ -52,6 +52,7 @@ export const BCH_ELECTRUM_URL = BCH_ELECTRUM_URLS[0] ?? '';
 
 export const FERRY_HTLC_ADDRESS = NETWORK_PROFILE.base
   .htlcAddress as `0x${string}`;
+export const FERRY_HTLC_DEPLOY_BLOCK = NETWORK_PROFILE.base.htlcDeployBlock;
 export const FERRY_HTLC_CODE_HASH = NETWORK_PROFILE.base
   .htlcCodeHash as `0x${string}`;
 

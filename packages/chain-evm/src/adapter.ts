@@ -195,6 +195,29 @@ export class EvmChainAdapter implements ChainAdapter {
     };
   }
 
+  private sendQueue: Promise<unknown> = Promise.resolve();
+
+  /**
+   * One signer, one send queue: a transaction is sent and mined before the next
+   * one is built, so concurrent refund, lock and claim paths cannot reuse a
+   * nonce.
+   */
+  private send(
+    args: Parameters<WalletClient['writeContract']>[0],
+  ): Promise<Hash> {
+    const run = async (): Promise<Hash> => {
+      if (!this.walletClient) {
+        throw new Error('WalletClient required to send a transaction');
+      }
+      const hash = await this.walletClient.writeContract(args);
+      await this.client.waitForTransactionReceipt({ hash });
+      return hash;
+    };
+    const result = this.sendQueue.then(run, run);
+    this.sendQueue = result.catch(() => undefined);
+    return result;
+  }
+
   async relayLock(signed: SignedLock): Promise<TxRef> {
     const payload = signed.payload as RelayLockPayload;
     const lockId = this.lockId(payload.owner, payload.hashLock);
@@ -247,7 +270,7 @@ export class EvmChainAdapter implements ChainAdapter {
     if (!this.walletClient || !this.walletClient.account) {
       throw new Error('WalletClient with account required to relay lock');
     }
-    return this.walletClient.writeContract({
+    return this.send({
       address: this.htlcAddress,
       abi: ferryHtlcAbi,
       functionName: 'lockWithIntent',
@@ -305,7 +328,7 @@ export class EvmChainAdapter implements ChainAdapter {
       args: [this.walletClient.account.address, this.htlcAddress],
     });
     if (allowance < terms.counterAmount) {
-      const approveHash = await this.walletClient.writeContract({
+      const approveHash = await this.send({
         address: token,
         abi: erc20PermitAbi,
         functionName: 'approve',
@@ -316,7 +339,7 @@ export class EvmChainAdapter implements ChainAdapter {
       await this.client.waitForTransactionReceipt({ hash: approveHash });
     }
 
-    const hash = await this.walletClient.writeContract({
+    const hash = await this.send({
       address: this.htlcAddress,
       abi: ferryHtlcAbi,
       functionName: 'lock',
@@ -356,7 +379,7 @@ export class EvmChainAdapter implements ChainAdapter {
     }
 
     try {
-      const hash = await this.walletClient.writeContract({
+      const hash = await this.send({
         address: this.htlcAddress,
         abi: ferryHtlcAbi,
         functionName: 'claim',
@@ -400,7 +423,7 @@ export class EvmChainAdapter implements ChainAdapter {
       throw new Error('WalletClient with account required to refund');
     }
 
-    const hash = await this.walletClient.writeContract({
+    const hash = await this.send({
       address: this.htlcAddress,
       abi: ferryHtlcAbi,
       functionName: 'refund',

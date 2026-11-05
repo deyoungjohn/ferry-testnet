@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
+import { MockWalletProvider } from '../lib/wallet/mock';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveOrderSource } from '../lib/orders/context';
 import type { PersistedOrder } from '../lib/orders/store';
@@ -64,7 +65,9 @@ describe('My Activity', () => {
   it('says so when there is nothing yet', async () => {
     render(
       <MemoryRouter>
-        <ActivityPage />
+        <MockWalletProvider>
+          <ActivityPage />
+        </MockWalletProvider>
       </MemoryRouter>,
     );
     expect(await screen.findByText(/Nothing here yet/)).toBeTruthy();
@@ -76,7 +79,9 @@ describe('My Activity', () => {
     saveOrderSource(record.orderId, 'invoice');
     render(
       <MemoryRouter>
-        <ActivityPage />
+        <MockWalletProvider>
+          <ActivityPage />
+        </MockWalletProvider>
       </MemoryRouter>,
     );
     expect(await screen.findByText(/Invoice payment/)).toBeTruthy();

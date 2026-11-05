@@ -389,6 +389,47 @@ describe('EvmChainAdapter on local anvil', () => {
     expect(retryTx.txId).toBe(relayTx.txId);
   });
 
+  it('never builds a second transaction before the first is mined', async () => {
+    const events: string[] = [];
+    const fake = new EvmChainAdapter({
+      chain: 'base',
+      chainId: 31337,
+      rpcUrl: RPC_URL,
+      htlcAddress,
+      usdcAddress,
+      confirmations: 1,
+      walletClient: {
+        account: solverAccount,
+        writeContract: async (args: { functionName: string }) => {
+          events.push(`start:${args.functionName}`);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          events.push(`sent:${args.functionName}`);
+          return `0x${'cd'.repeat(32)}` as const;
+        },
+      } as never,
+    });
+    fake['client'].waitForTransactionReceipt = (async () => {
+      events.push('mined');
+      return {} as never;
+    }) as never;
+    const send = (name: string) =>
+      (fake as unknown as { send(a: unknown): Promise<string> }).send({
+        functionName: name,
+      });
+    await Promise.all([send('refund'), send('lock'), send('claim')]);
+    expect(events).toEqual([
+      'start:refund',
+      'sent:refund',
+      'mined',
+      'start:lock',
+      'sent:lock',
+      'mined',
+      'start:claim',
+      'sent:claim',
+      'mined',
+    ]);
+  });
+
   it('tops up the exact allowance before a solver lock', async () => {
     const allowanceAbi = parseAbi([
       'function approve(address spender, uint256 amount) external returns (bool)',

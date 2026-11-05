@@ -17,6 +17,8 @@ export interface BaseNetworkProfile {
   readonly usdcDomainVersion: string;
   readonly htlcAddress: string;
   readonly htlcCodeHash: string;
+  /** First block of the HTLC contract; history scans never go earlier. 0 = unknown. */
+  readonly htlcDeployBlock: number;
 }
 
 export interface BchNetworkProfile {
@@ -70,6 +72,7 @@ export const TESTNET_PROFILE: NetworkProfile = {
     htlcAddress: '0x5A0C062f4B7b8fF2263530e12bc15De9C836a641',
     htlcCodeHash:
       '0x684ed535a307fb57a0ee587c1421b9534a19138e2d18f8f91ab8ad3bc069440d',
+    htlcDeployBlock: 49759583, // binary search of eth_getCode on Base Sepolia, 2026-11-05
   },
   bch: {
     network: 'chipnet',
@@ -110,6 +113,7 @@ export const MAINNET_PROFILE: NetworkProfile = {
     usdcDomainVersion: '',
     htlcAddress: '',
     htlcCodeHash: '',
+    htlcDeployBlock: 0,
   },
   bch: {
     network: 'mainnet',
