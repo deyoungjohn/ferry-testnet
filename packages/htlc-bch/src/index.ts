@@ -3,3 +3,4 @@ export * from './byte-order.js';
 export * from './contract.js';
 export * from './spends.js';
 export * from './lock.js';
+export * from './parse.js';

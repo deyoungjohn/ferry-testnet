@@ -74,7 +74,7 @@ describe('mergeActivity', () => {
   } as unknown as PersistedOrder;
 
   it('joins a local order and a chain lock by hash lock', () => {
-    const merged = mergeActivity([order], [lock()]);
+    const merged = mergeActivity({ bch: [], orders: [order], locks: [lock()] });
     expect(merged).toHaveLength(1);
     expect(merged[0]?.order).toBe(order);
     expect(merged[0]?.chain?.state).toBe('claimed');
@@ -87,7 +87,11 @@ describe('mergeActivity', () => {
       role: 'recipient',
       lockedAt: 300,
     });
-    const merged = mergeActivity([order], [lock(), other]);
+    const merged = mergeActivity({
+      bch: [],
+      orders: [order],
+      locks: [lock(), other],
+    });
     expect(merged.map((entry) => entry.key)).toEqual([other.id, order.orderId]);
     expect(merged[0]?.direction).toBe('BCH_TO_COUNTER');
     expect(merged[0]?.order).toBeNull();

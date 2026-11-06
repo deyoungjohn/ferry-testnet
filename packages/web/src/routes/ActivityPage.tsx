@@ -1,10 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router';
 import { createPublicClient, http, type PublicClient } from 'viem';
+import { fetchBchActivity, type BchActivityItem } from '../lib/activity/bch';
 import { fetchChainLocks, type ChainLock } from '../lib/activity/chain';
 import { mergeActivity, type ActivityEntry } from '../lib/activity/merge';
+import { parseBchAddress } from '../lib/bch/address';
+import { ElectrumClient } from '../recover/core';
 import {
   BASE_RPC_URL,
+  BCH_ELECTRUM_URL,
+  MUSD_CATEGORY,
+  PUSD_CATEGORY,
   explorerTxUrl,
   FERRY_HTLC_ADDRESS,
   FERRY_HTLC_DEPLOY_BLOCK,
@@ -29,25 +35,43 @@ const SOURCE_LABEL: Readonly<Record<OrderSource, string>> = {
 // Base Sepolia produced about 500,000 blocks a day in November 2026; read a day at a time.
 const SCAN_WINDOW = 500_000n;
 
-function amounts(entry: ActivityEntry): string {
-  if (entry.order) {
-    const bch = `${formatPusd(entry.order.terms.bchTokenAmount)} ${PUSD_SYMBOL}`;
-    const counter = `${formatUsdc(entry.order.terms.counterAmount)} USDC`;
-    return entry.direction === 'BCH_TO_COUNTER'
-      ? `${bch} → ${counter}`
-      : `${counter} → ${bch}`;
-  }
-  const usdc = entry.chain ? `${formatUsdc(entry.chain.amount)} USDC` : '';
-  return entry.direction === 'BCH_TO_COUNTER'
-    ? `${PUSD_SYMBOL} → ${usdc}`
-    : `${usdc} → ${PUSD_SYMBOL}`;
-}
+const BCH_STATE_LABEL: Readonly<Record<BchActivityItem['state'], string>> = {
+  received: `${PUSD_SYMBOL} received`,
+  claimed: `${PUSD_SYMBOL} locked and claimed by the solver`,
+  refunded: `${PUSD_SYMBOL} refunded to you`,
+  locked: `${PUSD_SYMBOL} locked, waiting for the solver`,
+};
 
 const CHAIN_STATE_LABEL: Readonly<Record<ChainLock['state'], string>> = {
   locked: 'USDC locked on Base',
   claimed: 'USDC claimed on Base',
   refunded: 'USDC refunded on Base',
 };
+
+function amounts(entry: ActivityEntry): string {
+  const bchAmount = entry.order
+    ? entry.order.terms.bchTokenAmount
+    : (entry.bch?.tokenAmount ?? null);
+  const bch =
+    bchAmount === null
+      ? PUSD_SYMBOL
+      : `${formatPusd(bchAmount)} ${PUSD_SYMBOL}`;
+  const counterAmount = entry.order
+    ? entry.order.terms.counterAmount
+    : (entry.chain?.amount ?? null);
+  const counter =
+    counterAmount === null ? 'USDC' : `${formatUsdc(counterAmount)} USDC`;
+  return entry.direction === 'BCH_TO_COUNTER'
+    ? `${bch} → ${counter}`
+    : `${counter} → ${bch}`;
+}
+
+function entryLabel(entry: ActivityEntry): string {
+  if (entry.order) return buildOrderViewModel(entry.order).statusLabel;
+  if (entry.bch) return BCH_STATE_LABEL[entry.bch.state];
+  if (entry.chain) return CHAIN_STATE_LABEL[entry.chain.state];
+  return '';
+}
 
 function useChainLocks(address: string | null) {
   const [locks, setLocks] = useState<ChainLock[]>([]);
@@ -120,11 +144,99 @@ function useChainLocks(address: string | null) {
   };
 }
 
+const BCH_PAGE = 30;
+
+function useBchActivity(lockingBytecode: string | null) {
+  const [items, setItems] = useState<BchActivityItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [more, setMore] = useState(false);
+  const [limit, setLimit] = useState(BCH_PAGE);
+
+  useEffect(() => {
+    setLimit(BCH_PAGE);
+  }, [lockingBytecode]);
+
+  useEffect(() => {
+    if (!lockingBytecode || !solverIsLive() || BCH_ELECTRUM_URL === '') {
+      setItems([]);
+      setMore(false);
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    setError(null);
+    const electrum = new ElectrumClient(BCH_ELECTRUM_URL);
+    void (async () => {
+      try {
+        await electrum.connect();
+        const result = await fetchBchActivity({
+          electrum,
+          userLockingBytecode: lockingBytecode,
+          categories: [PUSD_CATEGORY, MUSD_CATEGORY].filter(Boolean),
+          limit,
+        });
+        if (!active) return;
+        setItems(result.items);
+        setMore(result.readTransactions < result.totalTransactions);
+      } catch (cause) {
+        if (active) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : 'Could not read Bitcoin Cash',
+          );
+        }
+      } finally {
+        electrum.close();
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+      electrum.close();
+    };
+  }, [lockingBytecode, limit]);
+
+  return {
+    items,
+    loading,
+    error,
+    canLoadMore: more,
+    loadMore: () => setLimit((current) => current + BCH_PAGE),
+  };
+}
+
 export function ActivityPage() {
-  const { evm } = useWallets();
+  const { evm, bch: bchWallet } = useWallets();
   const [orders, setOrders] = useState<PersistedOrder[] | null>(null);
   const [page, setPage] = useState(0);
+  const [lookupInput, setLookupInput] = useState('');
+  const [lookupBytecode, setLookupBytecode] = useState<string | null>(null);
+  const [lookupError, setLookupError] = useState<string | null>(null);
+
+  const walletBytecode = bchWallet.address?.lockingBytecode ?? null;
+  const bytecode = lookupBytecode ?? walletBytecode;
+  const bchActivity = useBchActivity(bytecode);
   const chain = useChainLocks(evm.address);
+
+  function handleLookup(event: FormEvent): void {
+    event.preventDefault();
+    const text = lookupInput.trim();
+    if (text === '') {
+      setLookupBytecode(null);
+      setLookupError(null);
+      return;
+    }
+    const parsed = parseBchAddress(text);
+    if (!parsed.ok) {
+      setLookupError(parsed.error);
+      return;
+    }
+    setLookupError(null);
+    setPage(0);
+    setLookupBytecode(parsed.value.lockingBytecode);
+  }
 
   useEffect(() => {
     let active = true;
@@ -142,7 +254,14 @@ export function ActivityPage() {
     };
   }, []);
 
-  const all = orders === null ? [] : mergeActivity(orders, chain.locks);
+  const all =
+    orders === null
+      ? []
+      : mergeActivity({
+          bch: bchActivity.items,
+          orders: lookupBytecode ? [] : orders,
+          locks: lookupBytecode ? [] : chain.locks,
+        });
   const pageCount = Math.max(1, Math.ceil(all.length / ACTIVITY_PAGE_SIZE));
   const current = Math.min(page, pageCount - 1);
   const visible = all.slice(
@@ -159,32 +278,67 @@ export function ActivityPage() {
         Your swaps and payments
       </h1>
       <p className="mt-3 text-sm leading-6 text-text-muted">
-        Read from the chain for your connected Base wallet, plus the orders
-        saved in this browser. Orders made on another device show their Base
-        side only.
+        Rebuilt from Bitcoin Cash for your BCH address: every claim, lock and
+        refund Ferry made for you. Counter-chain details (Base) are added when
+        your Base wallet is connected, and orders saved in this browser fill in
+        the rest.
       </p>
 
-      {solverIsLive() && !evm.address ? (
+      <form onSubmit={handleLookup} className="mt-5 flex flex-wrap gap-2">
+        <label className="sr-only" htmlFor="activity-address">
+          BCH address
+        </label>
+        <input
+          id="activity-address"
+          value={lookupInput}
+          onChange={(event) => setLookupInput(event.target.value)}
+          placeholder={
+            walletBytecode
+              ? 'Using your connected BCH wallet. Paste another BCH address to look it up'
+              : 'Paste a BCH address, or connect your BCH wallet'
+          }
+          className="min-w-0 flex-1 rounded-pill border border-hairline bg-surface-2 px-4 py-2 font-mono text-[11px] text-text placeholder:text-text-muted"
+        />
+        <button
+          type="submit"
+          className="rounded-pill border border-hairline bg-surface-2 px-4 py-2 text-[11px] text-text"
+        >
+          {lookupInput.trim() === '' && lookupBytecode
+            ? 'Use my wallet'
+            : 'Look up'}
+        </button>
+      </form>
+      {lookupError ? (
+        <p role="alert" className="mt-2 text-[11px] text-warn">
+          {lookupError}
+        </p>
+      ) : null}
+
+      {solverIsLive() && !bytecode ? (
         <p
           role="note"
           className="mt-4 rounded-well border border-hairline bg-surface-1 px-4 py-3 text-[11px] leading-5 text-text-muted"
         >
-          Connect your Base wallet to load your activity from the chain on any
-          device.
+          Connect your BCH wallet or paste a BCH address to load your activity
+          from Bitcoin Cash on any device.
         </p>
       ) : null}
-      {chain.scanning ? (
+      {bchActivity.loading || chain.scanning ? (
         <p role="status" className="mt-4 text-[11px] text-text-muted">
-          Reading Base for your locks…
+          {bchActivity.loading
+            ? 'Reading Bitcoin Cash for your address…'
+            : 'Reading Base for your locks…'}
         </p>
       ) : null}
-      {chain.error ? (
+      {bchActivity.error || chain.error ? (
         <p
           role="alert"
           className="mt-4 rounded-well border border-warn/25 bg-warn/5 px-4 py-3 text-[11px] leading-5 text-warn"
         >
-          Could not read the chain: {chain.error}. Showing this browser’s saved
-          orders.
+          {bchActivity.error
+            ? `Could not read Bitcoin Cash: ${bchActivity.error}.`
+            : `Could not read Base: ${chain.error}.`}{' '}
+          Showing what is available.
         </p>
       ) : null}
 
@@ -210,26 +364,31 @@ export function ActivityPage() {
               const source = entry.order
                 ? loadOrderSource(entry.order.orderId)
                 : 'swap';
-              const label = entry.order
-                ? buildOrderViewModel(entry.order).statusLabel
-                : entry.chain
-                  ? CHAIN_STATE_LABEL[entry.chain.state]
-                  : '';
               const links: Array<{
                 key: string;
                 chain: 'base' | 'bch';
                 label: string;
                 hash: string;
-              }> = (entry.order?.transactions ?? []).map((tx) => ({
-                key: `${tx.label}-${tx.hash}`,
-                chain: tx.chain,
+              }> = (entry.bch?.txs ?? []).map((tx) => ({
+                key: `bch-${tx.hash}`,
+                chain: 'bch',
                 label: tx.label,
                 hash: tx.hash,
               }));
+              const known = new Set(
+                links.map((link) => link.hash.toLowerCase()),
+              );
+              for (const tx of entry.order?.transactions ?? []) {
+                if (known.has(tx.hash.toLowerCase())) continue;
+                known.add(tx.hash.toLowerCase());
+                links.push({
+                  key: `${tx.label}-${tx.hash}`,
+                  chain: tx.chain,
+                  label: tx.label,
+                  hash: tx.hash,
+                });
+              }
               if (entry.chain) {
-                const known = new Set(
-                  links.map((link) => link.hash.toLowerCase()),
-                );
                 if (!known.has(entry.chain.lockTx.toLowerCase())) {
                   links.push({
                     key: `lock-${entry.chain.lockTx}`,
@@ -275,7 +434,7 @@ export function ActivityPage() {
                       </p>
                     </div>
                     <span className="rounded-pill border border-hairline bg-surface-2 px-3 py-1 text-[11px] text-text-muted">
-                      {label}
+                      {entryLabel(entry)}
                     </span>
                   </div>
                   <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hairline pt-3 text-[11px]">
@@ -286,11 +445,7 @@ export function ActivityPage() {
                       >
                         Open status
                       </Link>
-                    ) : (
-                      <span className="text-text-muted">
-                        From the chain · BCH side not saved on this device
-                      </span>
-                    )}
+                    ) : null}
                     {links.map((link) => (
                       <a
                         key={link.key}
@@ -337,14 +492,24 @@ export function ActivityPage() {
         </>
       )}
 
-      {chain.canLoadOlder ? (
+      {bchActivity.canLoadMore ? (
+        <button
+          type="button"
+          onClick={bchActivity.loadMore}
+          disabled={bchActivity.loading}
+          className="mt-6 rounded-pill border border-hairline bg-surface-2 px-4 py-2 text-[11px] text-text disabled:opacity-50"
+        >
+          {bchActivity.loading ? 'Reading…' : 'Load older activity'}
+        </button>
+      ) : null}
+      {chain.canLoadOlder && !lookupBytecode ? (
         <button
           type="button"
           onClick={() => void chain.loadOlder()}
           disabled={chain.scanning}
-          className="mt-6 rounded-pill border border-hairline bg-surface-2 px-4 py-2 text-[11px] text-text disabled:opacity-50"
+          className="mt-6 ml-3 rounded-pill border border-hairline bg-surface-2 px-4 py-2 text-[11px] text-text-muted disabled:opacity-50"
         >
-          {chain.scanning ? 'Reading…' : 'Load older activity'}
+          {chain.scanning ? 'Reading…' : 'Load older Base activity'}
         </button>
       ) : null}
     </div>
